@@ -5,6 +5,15 @@ import { IAgent, IMemory, IToolRegistry, AgentConfig, IAgentTool } from './types
 
 dotenv.config();
 
+const Color = {
+    cyan: (text: string) => `\x1b[36m${text}\x1b[0m`,
+    green: (text: string) => `\x1b[32m${text}\x1b[0m`,
+    yellow: (text: string) => `\x1b[33m${text}\x1b[0m`,
+    red: (text: string) => `\x1b[31m${text}\x1b[0m`,
+    magenta: (text: string) => `\x1b[35m${text}\x1b[0m`,
+    bold: (text: string) => `\x1b[1m${text}\x1b[0m`
+};
+
 /**
  * 1. 工具注册中心依然稳固支持 IToolRegistry
  */
@@ -13,7 +22,7 @@ export class ToolRegistry implements IToolRegistry {
 
     register(tool: IAgentTool): void {
         this.tools.set(tool.name, tool);
-        console.log(`🔧 [Claude Mini 注册中心] 成功挂载原子工具: [${tool.name}]`);
+        console.log(Color.green(`🔧 [Claude Mini 注册中心] 成功挂载原子工具: [${tool.name}]`));
     }
 
     getSchemas(): OpenAI.Chat.Completions.ChatCompletionTool[] {
@@ -64,11 +73,11 @@ export class ClaudeMiniAgent implements IAgent {
 
             // 防防御性安全熔断，防止大模型陷入死循环疯狂烧你的 Token
             if (stepCount > this.config.maxLoopSteps) {
-                console.log(`\n🚨 [安全熔断] 侦测到当前任务链式思考已达 ${this.config.maxLoopSteps} 步上限，强行终止。`);
+                console.log(Color.red(`\n🚨 [安全熔断] 侦测到当前任务链式思考已达步数上限 (${this.config.maxLoopSteps} 步)，为保护您的账户额度，已强制熔断。`));
                 break;
             }
 
-            console.log(`\n🧠 [Agent Planning] 正在进行第 ${stepCount} 轮自适应任务拆解与评估...`);
+            console.log(Color.cyan(`\n🧠 [Step ${stepCount}] Agent 正在审视环境并推演下一步规划...`));
 
             try {
                 // 让大模型全面审视当前的上下文记忆与前几步工具的回执结果
@@ -129,11 +138,9 @@ export class ClaudeMiniAgent implements IAgent {
 
                 // 决策分支检查：大模型是否需要申请调用Tool
                 if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-                    console.log(`\n⚙️  [Planning 决策] 大模型判断当前任务未完成，申请执行本地工具...`);
-
                     for (const toolCall of aiMessage.tool_calls) {
                         if (toolCall.type !== "function") {
-                            console.warn(`⚠️ 警告：目前仅支持 function 类型的工具调用，跳过这个 ${toolCall.type} 类型的调用请求。`);
+                            console.warn(Color.yellow(`⚠️ 警告：目前仅支持 function 类型的工具调用，跳过这个 ${toolCall.type} 类型的调用请求。`));
                             continue;
                         }
 
@@ -141,12 +148,21 @@ export class ClaudeMiniAgent implements IAgent {
                         const toolArgsStr = toolCall.function.arguments;
 
                         if (this.registry.has(toolName)) {
-                            console.log(`🔌 [正在激活] 原子工具: [${toolName}] -> 参数: ${toolArgsStr}`);
+                            console.log(Color.magenta(`🔌 [激活工具] [${toolName}] -> 参数: ${toolArgsStr}`));
 
-                            // 动态反射执行真实的文件读写或系统 Shell 命令
-                            const observationText = await this.registry.execute(toolName, toolArgsStr);
-
-                            console.log(`💾 [工具反馈成功]`);
+                            let observationText = "";
+                            try {
+                                observationText = await this.registry.execute(toolName, toolArgsStr);
+                                console.log(Color.green(`💾 [工具反馈成功]`));
+                            } catch (toolError: any) {
+                                // 如果物理工具执行失败，捕捉它、不崩溃、做成 Observation 喂给大模型！
+                                observationText = JSON.stringify({
+                                    status: "runtime_error",
+                                    error: toolError.message,
+                                    hint: "请检查您的参数格式、路径正确性或命令合法性，修正后重试。"
+                                });
+                                console.log(Color.yellow(`⚠️ [运行时自愈] 工具执行发生异常，已将错误捕获并回喂给大模型进行 Replanning。`));
+                            }
 
                             // 将物理世界的真实回执，以 role: "tool" 身份喂回记忆芯片
                             this.memory.append({
@@ -155,11 +171,11 @@ export class ClaudeMiniAgent implements IAgent {
                                 content: observationText
                             });
                         } else {
-                            console.warn(`⚠️ 无法匹配到注册工具: ${toolName}`);
+                            console.warn(Color.yellow(`⚠️ 无法匹配到注册工具: ${toolName}`));
                         }
                     }
 
-                    console.log(`📡 [Replanning] 多步工具回执已成功同步，正在驱动大脑进入下一轮修正思考...`);
+                    console.log(Color.cyan(`📡 [Replanning] 数据链已更新，重新唤醒大脑决策...`));
                 } else {
                     // 终结条件：大模型没有输出任何 tool_calls，说明它已经通过之前的工具回执完全达成了目标
                     finalOutput = currentContent;
@@ -167,7 +183,7 @@ export class ClaudeMiniAgent implements IAgent {
                 }
 
             } catch (error: any) {
-                console.error(`🚨 [核心状态机故障]: ${error.message}`);
+                console.log(Color.red(`\n🚨 [系统级严重故障拦截]: ${error.message}`));
                 keepLooping = false;
             }
         }
