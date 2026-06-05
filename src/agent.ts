@@ -41,8 +41,8 @@ export class ClaudeMiniAgent implements IAgent {
 
     constructor(
         public config: AgentConfig,
-        public memory: IMemory,       // 外部注入的记忆组件
-        public registry: IToolRegistry // 外部注入的工具组件
+        public memory: IMemory,         // 外部注入的记忆组件
+        public registry: IToolRegistry  // 外部注入的工具组件
     ) {
         this.client = new OpenAI({
             baseURL: 'https://api.deepseek.com/v1',

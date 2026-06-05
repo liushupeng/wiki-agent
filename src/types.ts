@@ -1,18 +1,16 @@
 import OpenAI from 'openai';
 
+// +-----------------------------------------------------------+
+// |                         IAgent                            |
+// +-----------------------------------------------------------+
+// | LLM(AgentConfig) | Tool(IToolRegistry) | Memory(IMemory)  |
+// +-----------------------------------------------------------+
+
 // Agent 运行时的配置项
 export interface AgentConfig {
     modelName: string;
     temperature: number;
-    maxLoopSteps: number; // 防烧卡熔断步数
-}
-
-// Agent 核心契约接口
-export interface IAgent {
-    config: AgentConfig;
-    memory: IMemory;
-    registry: IToolRegistry;
-    run(userInstruction: string, onTextChunk: (text: string) => void): Promise<string>;
+    maxLoopSteps: number; // 熔断步数
 }
 
 // Memory 核心契约接口
@@ -35,4 +33,12 @@ export interface IToolRegistry {
     getSchemas(): OpenAI.Chat.Completions.ChatCompletionTool[];
     execute(name: string, argsStr: string): Promise<string>;
     has(name: string): boolean;
+}
+
+// Agent 核心契约接口
+export interface IAgent {
+    config: AgentConfig;
+    memory: IMemory;
+    registry: IToolRegistry;
+    run(userInstruction: string, onTextChunk: (text: string) => void): Promise<string>;
 }
