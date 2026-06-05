@@ -20,6 +20,7 @@ export class MemoryManager implements IMemory {
 
     /**
      * 契约实现：获取全量上下文消息
+     * @returns 消息数组，包含 system + 历史对话
      */
     getMessages(): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
         // 返回浅拷贝副本，防止外部直接操作导致内部状态混乱
@@ -28,6 +29,8 @@ export class MemoryManager implements IMemory {
 
     /**
      * 契约实现：安全追加单条消息
+     * @param message 要追加的消息，必须至少包含 content 或 tool_calls 中的一个，否则视为无效消息将被拦截
+     *                这是一道防御性编程的安全防线，旨在防止大模型输出空消息导致的记忆污染和无效循环
      */
     append(message: OpenAI.Chat.Completions.ChatCompletionMessage): void {
         if (!message.content && (!message.tool_calls || message.tool_calls.length === 0)) {
@@ -39,6 +42,7 @@ export class MemoryManager implements IMemory {
 
     /**
      * 契约实现：一键清空记忆（但由于系统性格不能丢，我们会保留首位的 system 提示词）
+     * @returns void
      */
     clear(): void {
         const systemMsg = this.history.find(msg => msg.role === "system");
@@ -48,6 +52,7 @@ export class MemoryManager implements IMemory {
 
     /**
      * 高阶扩展功能：查看当前记忆池里的总轮数（不包含 system 提示词）
+     * @return 当前记忆轮数
      */
     getRoundCount(): number {
         return this.history.filter(msg => msg.role === "user").length;

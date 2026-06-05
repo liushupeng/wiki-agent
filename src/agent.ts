@@ -52,6 +52,9 @@ export class ClaudeMiniAgent implements IAgent {
 
     /**
      * Agent 核心工作流驱动入口
+     * @param userInstruction 用户的复杂指令输入
+     * @param onTextChunk 代理生成文本的回调函数，用于实时输出
+     * @returns 最终的完整回复文本
      */
     async run(userInstruction: string, onTextChunk: (text: string) => void): Promise<string> {
         console.log(`\n🤖 [Agent 工作流] 接收到复杂指令，启动自适应 Planning 机制...`);
