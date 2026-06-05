@@ -6,56 +6,41 @@ import { ListDirTool, ReadFileTool, WriteFileTool } from './tools/fileTool.js';
 
 async function main() {
     console.log("=================================================");
-    console.log("🚀 Claude Code Mini 工厂：Day 25 真·终端命令工具链就绪");
+    console.log("🚀 Claude Code Mini");
     console.log("=================================================\n");
 
-    const CLAUDE_CODE_SOUL = "你是一个高度专业且具备本地真实终端命令执行特权的 AI 智能体。";
+    // 让智能体使用 思维链(COT) 进行思考和规划
+    const CLAUDE_AUDITOR_SOUL = `
+    你是一个极其资深的软件架构师兼高级自动化智能体 (Claude Code Mini)。
+    现在你的主任务是对用户指定的代码库进行全量的技术栈与架构设计审计。
 
-    // 1. 初始化核心组件
-    const config: AgentConfig = { modelName: 'deepseek-chat', temperature: 0.1, maxLoopSteps: 5 };
-    const memory = new MemoryManager(CLAUDE_CODE_SOUL);
+    【你的标准行动剖析路线】：
+    1. 首先，务必使用 list_dir 或 Shell 命令查看项目根目录有哪些文件，切忌凭空盲猜。
+    2. 发现核心配置文件（如 requirements.txt, package.json）时，优先调用 read_file 研判其依赖关系。
+    3. 深入关键源码文件（如 main.py, database.py），读取内容并深度分析它们之间的模块引用与数据流向。
+    4. 允许自发调用 Shell 命令（如 python -m py_compile 等或基础诊断）辅助你确认项目合法性。
+    5. 汇总所有线索，最终输出一份结构极其漂亮、技术细节拉满的【项目全盘深度分析报告】。
+    `.trim();
 
-    // 2. 将昨天的文件系统和今天的 Shell 外壳工具全部注册进底盘
+    // 初始化所有工程积木
+    const config: AgentConfig = { modelName: process.env.DEEPSEEK_MODEL_NAME ?? "deepseek-v4-pro", temperature: 0.1, maxLoopSteps: 20 };
+    const memory = new MemoryManager(CLAUDE_AUDITOR_SOUL);
     const registry = new ToolRegistry();
+
+    // 挂载所有物理大杀器工具
     registry.register(new ListDirTool());
     registry.register(new ReadFileTool());
     registry.register(new WriteFileTool());
-    registry.register(new ShellExecuteTool()); // 🎯 注入系统级外壳超能力
+    registry.register(new ShellExecuteTool());
 
     const agent = new ClaudeMiniAgent(config, memory, registry);
 
-    // ===================================================
-    // 🧪 物理层真实终端链路压测
-    // ===================================================
-    console.log("\n--- 💻 阶段一：进行操作系统真实 Shell 链路测试 ---");
+    const AUDIT_INSTRUCTION = "分析当前安全沙盒内的 Python 项目。请帮我理清它的项目拓扑结构、核心功能模块、数据库设计情况、以及它引入了哪些外部依赖。最后在终端吐出最终报告。";
 
-    // 测试 1：执行基础安全命令（查看当前沙盒的绝对路径）
-    // 提示：Windows 下用 'cd'，Mac/Linux 下用 'pwd'。为了跨平台兼容，我们测试跑一个通用的查看平台命令
-    const isWin = process.platform === "win32";
-    const testCmd = isWin ? "echo %cd%" : "pwd";
-
-    console.log(`\n[测试] 尝试让子进程执行查看路径命令: [${testCmd}]...`);
-    const pathResult = await registry.execute("execute_command", JSON.stringify({ command: testCmd }));
-    console.log(`操作系统回执 -> ${pathResult}`);
-
-    // 测试 2：利用 Shell 列出当前沙盒目录（与昨天的 fs 形成跨界双重验证）
-    const listCmd = isWin ? "dir /b" : "ls";
-    console.log(`\n[测试] 尝试让子进程执行列出目录命令: [${listCmd}]...`);
-    const listResult = await registry.execute("execute_command", JSON.stringify({ command: listCmd }));
-    console.log(`操作系统回执 -> ${listResult}`);
-
-    // 测试 3：高危命令毁灭性拦截测试
-    console.log("\n[高危测试] 故意让大模型执行 rm -rf 毁灭性删除命令，验证防火墙是否有效...");
-    const dangerResult = await registry.execute("execute_command", JSON.stringify({ command: "rm -rf subfolder" }));
-    console.log(`安全卫士拦截反馈 -> ${dangerResult}`);
-
-    // 3. 工作流握手
-    console.log("\n--- 🪐 阶段二：工作流握手 ---");
-    await agent.run("确认命令外壳工作状态", (chunk) => {
-        console.log(`🤖 Agent > ${chunk}`);
+    await agent.run(AUDIT_INSTRUCTION, (chunk) => {
+        // 实时流式打印大模型的自我思考
+        process.stdout.write(chunk);
     });
-
-    console.log("\n🎉 Day 25 真实系统终端操控接口完美激活！防线坚不可摧。");
 }
 
 main();
