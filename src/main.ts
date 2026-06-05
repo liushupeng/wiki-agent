@@ -1,52 +1,61 @@
 import { AgentConfig } from './types.js';
 import { ClaudeMiniAgent, ToolRegistry } from './agent.js';
 import { MemoryManager } from './memory.js';
+import { ListDirTool, ReadFileTool, WriteFileTool } from './tools/fileTool.js';
 
 async function main() {
     console.log("=================================================");
-    console.log("🚀 Claude Code Mini 工厂：Day 23 记忆芯片装配完毕");
+    console.log("🚀 Claude Code Mini 工厂：Day 24 真·文件工具链就绪");
     console.log("=================================================\n");
 
-    // 1. 定义 Claude Code Mini 的灵魂 System Prompt
-    const CLAUDE_CODE_SOUL = `
-    你是一个由 Node.js 驱动、高度专业且极其硬核的终端自动化 Agent (Claude Code Mini)。
-    你拥有直接操作本地文件和执行 Shell 命令的最高特权。
-    请始终保持冷静、严谨、多用数据说话，完美达成用户的重构与分析指标。
-    `.trim();
+    const CLAUDE_CODE_SOUL = "你是一个具备真实本地文件系统读写能力的硬核终端自动化 Agent。";
 
-    // 2. 初始化核心配置与组件
-    const config: AgentConfig = {
-        modelName: 'deepseek-chat',
-        temperature: 0.1,
-        maxLoopSteps: 5
-    };
-
-    // 🎯 核心变更：实例化真正的工业级记忆管理器，注入灵魂 Prompt
+    // 1. 初始化核心组件
+    const config: AgentConfig = { modelName: 'deepseek-chat', temperature: 0.1, maxLoopSteps: 5 };
     const memory = new MemoryManager(CLAUDE_CODE_SOUL);
-    const registry = new ToolRegistry();
 
-    // 3. 实例化 Agent
+    // 2. 实例化工具注册中心，并将工具疯狂挂载上去
+    const registry = new ToolRegistry();
+    registry.register(new ListDirTool());
+    registry.register(new ReadFileTool());
+    registry.register(new WriteFileTool());
+
+    // 3. 实例化大脑
     const agent = new ClaudeMiniAgent(config, memory, registry);
 
-    // 4. 驱动测试第一轮
-    console.log("--- 🪐 模拟测试：注入第一轮对话 ---");
-    await agent.run("列出当前项目目录", (chunk) => {
-        console.log(`🤖 Agent 响应 > ${chunk}`);
+    // ===================================================
+    // 🧪 物理层真实链路压测
+    // ===================================================
+    console.log("\n--- 🔧 阶段一：进行本地文件系统真实 I/O 测试 ---");
+
+    // 测试 1：动态写入一个真正的物理文件
+    console.log("\n[测试] 尝试调用 write_file 写入磁盘...");
+    const writeResult = await registry.execute("write_file", JSON.stringify({
+        filename: "subfolder/hello_day24.txt",
+        content: "Hello Node.js Real File System! This is written by Day24 Tool."
+    }));
+    console.log(`回执回显 -> ${writeResult}`);
+
+    // 测试 2：扫描当前沙盒目录，验证文件是否真实存在
+    console.log("\n[测试] 尝试调用 list_dir 扫描沙盒根目录...");
+    const listResult = await registry.execute("list_dir", JSON.stringify({ relativePath: "." }));
+    console.log(`目录扫描回显 -> ${listResult}`);
+
+    // 测试 3：拦截恶意逃逸测试
+    console.log("\n[安全测试] 故意传入逃逸相对路径，验证守卫是否有效...");
+    try {
+        await registry.execute("read_file", JSON.stringify({ filename: "../../../../etc/passwd" }));
+    } catch (err: any) {
+        console.log(`🚨 安全防火墙成功拦截报错: ${err.message}`);
+    }
+
+    // 4. 驱动大脑跑通最基础的工作流接口
+    console.log("\n--- 🪐 阶段二：工作流握手 ---");
+    await agent.run("确认工具箱工作状态", (chunk) => {
+        console.log(`🤖 Agent > ${chunk}`);
     });
 
-    // 5. 验证记忆状态
-    console.log("\n--- 🔍 记忆状态深度审计 ---");
-    console.log(`当前记忆池中总消息数: ${memory.getMessages().length} 条`);
-    console.log(`大模型感知到的多轮有效对话轮数: ${memory.getRoundCount()} 轮`);
-    console.log("首条锁定记忆内容:", memory.getMessages()[0]);
-
-    // 6. 测试重置
-    console.log("\n--- 🧹 触发紧急重置防护 ---");
-    memory.clear();
-    console.log(`重置后剩余消息数: ${memory.getMessages().length} 条 (验证是否仅保留 System Prompt)`);
-    console.log("剩余记忆:", memory.getMessages());
-
-    console.log("\n🎉 Day 23 记忆芯片功能完美闭环！随时可向 Day 24 进化。");
+    console.log("\n🎉 Day 24 真实文件操控双手完美接入！且防御拉满。");
 }
 
 main();

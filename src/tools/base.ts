@@ -5,7 +5,7 @@ import OpenAI from 'openai';
  */
 export abstract class BaseAgentTool {
     // 工具的名字，例如 'execute_shell'
-    abstract readonly name: string;
+    // abstract readonly name: string;
 
     // 给大模型看的工具说明书
     abstract readonly schema: OpenAI.Chat.Completions.ChatCompletionTool;
