@@ -129,7 +129,7 @@ npm start                                # 运行编译后的 JS
 - 文件操作限制在 `AGENT_SANDBOX_ROOT` 内，默认 `C:\AgentSandbox`，具有路径穿越保护。
 - Shell 执行采用 allowlist 和危险 token 拦截，并强制超时。
 - `write_file`、`apply_patch`、`run_tests` 和 `execute_command` 默认需要 HITL 审批。
-- `APPROVAL_MODE=auto` 或 `AUTO_APPROVE_DANGEROUS_TOOLS=true` 会跳过人工确认，仅建议在受控环境中使用。
+- `APPROVAL_MODE=auto` 会跳过人工确认，仅建议在受控环境中使用。
 - 工具参数会在执行前校验；无效参数会返回 `invalid_args` observation。
 - 大文件读取、Shell 输出、Git diff 和测试输出会按配置截断。
 - `src/tests/` 提供最小安全回归测试，覆盖路径沙箱、权限策略和输出截断。
