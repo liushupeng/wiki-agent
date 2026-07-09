@@ -1,17 +1,22 @@
 {
-  "name": "mini-claude-code",
+  "name": "wiki-agent",
   "version": "1.0.0",
-  "description": "A mini claude code built with OpenAI SDK",
+  "description": "A local Markdown wiki agent built with Agentic RAG",
   "type": "module",
   "scripts": {
     "dev": "tsx src/main.ts",
+    "ask": "tsx src/main.ts",
+    "index:notes": "tsx src/scripts/indexKnowledgeBase.ts",
+    "eval:rag": "tsx src/scripts/evaluateRag.ts",
+    "chmod:files": "node scripts/set-file-modes.mjs",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc",
     "start": "node dist/main.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run clean && npm run build && node --test \"dist/tests/*.test.js\""
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/liushupeng/mini-claude-code.git"
+    "url": "git+https://github.com/liushupeng/wiki-agent.git"
   },
   "keywords": [],
   "author": "LiuShuPeng",
@@ -26,7 +31,7 @@
     "typescript": "^6.0.3"
   },
   "bugs": {
-    "url": "https://github.com/liushupeng/mini-claude-code/issues"
+    "url": "https://github.com/liushupeng/wiki-agent/issues"
   },
-  "homepage": "https://github.com/liushupeng/mini-claude-code#readme"
+  "homepage": "https://github.com/liushupeng/wiki-agent#readme"
 }
