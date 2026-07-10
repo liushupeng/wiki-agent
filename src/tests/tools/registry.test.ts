@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ToolRegistry } from '../tools/registry.js';
-import { SafeTool } from './helpers.js';
+import { ToolRegistry } from '../../tools/registry.js';
+import { SafeTool } from '../helpers.js';
 
 class ValidatedTool extends SafeTool {
     readonly name = 'validated_tool';

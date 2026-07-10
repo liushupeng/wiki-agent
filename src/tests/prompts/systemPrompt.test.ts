@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { WIKI_AGENT_SYSTEM_PROMPT } from '../prompts/systemPrompt.js';
+import { WIKI_AGENT_SYSTEM_PROMPT } from '../../prompts/systemPrompt.js';
 
 test('wiki-agent system prompt includes skill lazy loading guidance', () => {
     assert.match(WIKI_AGENT_SYSTEM_PROMPT, /load_skill/);

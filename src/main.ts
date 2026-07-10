@@ -4,13 +4,14 @@ import { AgentConfig } from './types.js';
 import { askToolApproval } from './cli/approvalPrompt.js';
 import { getApprovalMode } from './config.js';
 import { MemoryManager } from './memory.js';
-import { WikiAgent, ToolRegistry } from './agent.js';
+import { WikiAgent } from './agent.js';
 import { WIKI_AGENT_SYSTEM_PROMPT } from './prompts/systemPrompt.js';
 import { buildSkillManifestPrompt, loadSkillManifests } from './skills.js';
 import { ShellExecuteTool } from './tools/shellTool.js';
 import { ListDirTool, ReadFileTool, WriteFileTool } from './tools/fileTool.js';
 import { GlobSearchTool, GrepSearchTool } from './tools/searchTool.js';
 import { ReadNoteTool, RelatedNotesTool, SearchNotesTool } from './tools/ragTool.js';
+import { ToolRegistry } from './tools/registry.js';
 import { ApplyPatchTool, GitDiffTool, GitStatusTool, RunTestsTool } from './tools/codingTool.js';
 import { LoadSkillTool } from './tools/skillTool.js';
 
@@ -22,13 +23,12 @@ async function main() {
     const rl = readline.createInterface({ input, output });
 
     // 初始化 Agent 运行时配置
-    const approvalMode = getApprovalMode();
     const config: AgentConfig = {
         modelName: process.env.DEEPSEEK_MODEL_NAME ?? "deepseek-v4-pro",
         temperature: 0.1,
         maxLoopSteps: Number(process.env.MAX_LOOP_STEPS ?? 20),
         traceDir: process.env.TRACE_DIR ?? 'trace_dir',
-        approvalMode,
+        approvalMode: getApprovalMode(),
         requestApproval: request => askToolApproval(rl, request)
     };
 
@@ -70,8 +70,8 @@ async function main() {
 
     while (true) {
         const instruction = (await rl.question('\n你 > ')).trim();
-        if (!instruction) continue;
-        if (['exit', 'quit'].includes(instruction.toLowerCase())) break;
+        if (!instruction) { continue; }
+        if (['exit', 'quit'].includes(instruction.toLowerCase())) { break; }
         if (instruction.toLowerCase() === 'clear') {
             memory.clear();
             continue;
