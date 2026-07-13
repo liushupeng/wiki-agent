@@ -1,15 +1,18 @@
-import path from 'path';
 import { exec } from 'child_process';
 import { BaseAgentTool } from './base.js';
+import { getSandboxRoot } from '../sandbox.js';
+import { limitText } from '../limits.js';
+import { ToolResult } from '../types.js';
 
-// 锁死命令执行的主战场：安全沙盒绝对路径
-const SANDBOX_ROOT = path.resolve('C:\\AgentSandbox');
-
-// 严苛的命令黑名单（防止破坏磁盘或恶意出海下载病毒）
-const FORBIDDEN_KEYWORDS = ['rm', 'mv', 'wget', 'curl', 'shutdown', 'fdisk', 'mkfs', 'chmod'];
+// 工具内保留一层危险 token 拦截；结构化 allowlist 和审批由 PermissionPolicy 处理。
+const FORBIDDEN_KEYWORDS = ['rm', 'mv', 'del', 'erase', 'rmdir', 'rd', 'wget', 'curl', 'shutdown', 'fdisk', 'mkfs', 'format', 'chmod', 'chown'];
 
 export class ShellExecuteTool extends BaseAgentTool {
     readonly name = 'execute_command';
+    readonly permission = 'shell' as const;
+    readonly riskLevel = 'shell' as const;
+    readonly isReadOnly = false;
+    readonly requiresApproval = true;
     readonly schema = {
         type: 'function' as const,
         function: {
@@ -28,44 +31,53 @@ export class ShellExecuteTool extends BaseAgentTool {
         }
     };
 
-    async execute(args: { command: string }): Promise<string> {
+    validateArgs(args: unknown): string[] {
+        if (typeof args !== 'object' || args === null) return ['args must be an object'];
+        const command = (args as { command?: unknown }).command;
+        return typeof command === 'string' && command.trim() ? [] : ['command must be a non-empty string'];
+    }
+
+    async execute(args: { command: string }): Promise<ToolResult> {
         const rawCommand = args.command.trim();
 
-        // 🛡️ 安全防火墙第一关：黑名单关键词拦截
         const hasViolation = FORBIDDEN_KEYWORDS.some(keyword => {
-            // 使用正则确保是独立的单词匹配，防止误伤（比如把名为 "farm" 的文件夹也拦截了）
             const regex = new RegExp(`\\b${keyword}\\b`, 'i');
             return regex.test(rawCommand);
         });
 
         if (hasViolation) {
-            return JSON.stringify({
-                status: "security_error",
-                message: `[安全机制拦截] 侦测到该命令包含高危黑名单关键词，已被拒绝执行。`
-            });
+            return this.securityError('command contains forbidden shell token');
         }
 
-        // 🛡️ 安全防火墙第二关：强行拉起子进程并绑定执行路径
-        return new Promise((resolve) => {
-            // exec 会在后台悄悄孵化一个独立的系统子进程
-            exec(rawCommand, { cwd: SANDBOX_ROOT, timeout: 5000 }, (error, stdout, stderr) => {
+        const timeout = Number(process.env.SHELL_TIMEOUT_MS ?? 5000);
+        return new Promise<ToolResult>((resolve) => {
+            const sandboxRoot = getSandboxRoot();
+            exec(rawCommand, { cwd: sandboxRoot, timeout, maxBuffer: Number(process.env.SHELL_MAX_BUFFER_BYTES ?? 1024 * 1024) }, (error, stdout, stderr) => {
+                const limitedStdout = limitText(stdout.trim());
+                const limitedStderr = limitText(stderr.trim());
+                const metadata = {
+                    cwd: sandboxRoot,
+                    timeoutMs: timeout,
+                    stdoutTruncated: limitedStdout.truncated,
+                    stderrTruncated: limitedStderr.truncated,
+                    stdoutOriginalLength: limitedStdout.originalLength,
+                    stderrOriginalLength: limitedStderr.originalLength
+                };
+
                 if (error) {
-                    // 命令跑失败了（比如语法错误），返回错误回执给大模型
-                    resolve(JSON.stringify({
-                        status: "execution_failed",
+                    resolve(this.executionFailed(error.message, {
+                        ...metadata,
                         code: error.code,
-                        message: error.message,
-                        stderr: stderr.trim()
+                        stderr: limitedStderr.text
                     }));
                     return;
                 }
 
-                // 执行成功，将命令的标准输出打包回执
-                resolve(JSON.stringify({
-                    status: "success",
-                    stdout: stdout.trim(),
-                    stderr: stderr.trim()
-                }));
+                resolve(this.ok({
+                    command: rawCommand,
+                    stdout: limitedStdout.text,
+                    stderr: limitedStderr.text
+                }, metadata));
             });
         });
     }
