@@ -27,7 +27,7 @@ async function main() {
         modelName: process.env.DEEPSEEK_MODEL_NAME ?? "deepseek-v4-pro",
         temperature: 0.1,
         maxLoopSteps: Number(process.env.MAX_LOOP_STEPS ?? 20),
-        traceDir: process.env.TRACE_DIR ?? 'trace_dir',
+        traceDir: process.env.TRACE_DIR ?? 'var/traces',
         approvalMode: getApprovalMode(),
         requestApproval: request => askToolApproval(rl, request)
     };

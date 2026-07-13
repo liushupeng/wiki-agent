@@ -27,7 +27,10 @@ export type ToolPermission = 'read' | 'write' | 'shell' | 'rag';
 export type ToolRiskLevel = 'safe' | 'write' | 'network' | 'shell' | 'dangerous';
 
 /**
- * 控制通过静态安全检查后的副作用工具如何执行。
+ * 运行时审批模式，表示“如果某次工具调用需要审批，系统应该怎么处理”。
+ *
+ * 它是全局配置，不是单次工具调用的最终结果。单次工具调用的最终结果
+ * 由 PermissionPolicy 根据 ApprovalMode、工具风险和工具参数计算得到。
  *
  * - prompt: write/shell/network 工具执行前先询问用户。
  * - auto: 不弹出确认，直接执行已通过风险检查的工具；dangerous 工具和被拦截的 shell 命令仍会失败。

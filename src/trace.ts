@@ -13,7 +13,7 @@ export type TraceEvent =
 export class TraceLogger {
     readonly filePath: string;
 
-    constructor(traceDir = 'trace_dir') {
+    constructor(traceDir = 'var/traces') {
         const safeTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
         this.filePath = path.resolve(traceDir, `trace-${safeTimestamp}.jsonl`);
     }
