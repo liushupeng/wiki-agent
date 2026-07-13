@@ -195,6 +195,17 @@ export class WikiAgent implements IAgent {
         return typeof aiMessage.content === 'string' ? aiMessage.content : '';
     }
 
+    /**
+     * 处理模型在同一轮 assistant message 中提出的所有工具调用。
+     *
+     * 这个方法只做 agent loop 层面的调度：
+     * - 过滤出当前支持的 function tool calls，不支持的 tool call 会转换成标准 tool observation。
+     * - 只读工具并发执行，减少检索、读取等无副作用操作的等待时间。
+     * - 写入、Shell、测试等可能有副作用的工具串行执行，避免并发修改外部状态。
+     * - 最后按模型原始 tool call 顺序把 tool messages 写回 memory，保持 OpenAI 工具调用协议顺序稳定。
+     *
+     * 单个工具的参数校验、权限判断、人工审批和真实执行由 executeToolCall() / ToolExecutor 继续处理。
+     */
     private async handleToolCalls(
         toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[],
         step: number,
@@ -238,6 +249,15 @@ export class WikiAgent implements IAgent {
         });
     }
 
+    /**
+     * 执行一个 function tool call，并把执行结果包装成可写回 memory 的 tool message。
+     *
+     * 这个方法是 agent loop 和工具执行管线之间的边界：
+     * - 从 OpenAI tool call 协议对象中取出工具名、参数字符串和 tool_call_id。
+     * - 委托 ToolExecutor 完成找工具、解析参数、权限决策、人工审批和执行。
+     * - 将 ToolResult 序列化成 observation，写入 trace 便于调试和复盘。
+     * - 返回 role="tool" 的消息，供下一轮模型调用读取工具反馈并继续规划。
+     */
     private async executeToolCall(
         toolCall: FunctionToolCall,
         originalIndex: number,

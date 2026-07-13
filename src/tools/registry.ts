@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { Color } from '../cli/colors.js';
 import { IAgentTool, IToolRegistry, ToolResult } from '../types.js';
+import { parseToolArguments } from '../utils/json.js';
 
 export class ToolRegistry implements IToolRegistry {
     private tools = new Map<string, IAgentTool>();
@@ -18,19 +19,17 @@ export class ToolRegistry implements IToolRegistry {
         const tool = this.tools.get(name);
         if (!tool) throw new Error(`未找到工具: ${name}`);
 
-        let args: unknown;
-        try {
-            args = argsStr.trim() ? JSON.parse(argsStr) : {};
-        } catch (error: any) {
-            return { status: 'invalid_args', error: `invalid JSON arguments: ${error.message}` };
+        const parsedArgs = parseToolArguments(argsStr);
+        if (!parsedArgs.ok) {
+            return { status: 'invalid_args', error: `invalid JSON arguments: ${parsedArgs.error}` };
         }
 
-        const validationErrors = tool.validateArgs?.(args) ?? [];
+        const validationErrors = tool.validateArgs?.(parsedArgs.value) ?? [];
         if (validationErrors.length > 0) {
             return { status: 'invalid_args', error: validationErrors.join('; ') };
         }
 
-        return await tool.execute(args);
+        return await tool.execute(parsedArgs.value);
     }
 
     getTool(name: string): IAgentTool | undefined {
