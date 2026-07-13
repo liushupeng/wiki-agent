@@ -8,7 +8,6 @@
     "ask": "tsx src/main.ts",
     "index:notes": "tsx src/scripts/indexKnowledgeBase.ts",
     "eval:rag": "tsx src/scripts/evaluateRag.ts",
-    "chmod:files": "node scripts/set-file-modes.mjs",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc",
     "start": "node dist/main.js",

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { preview, TraceLogger } from '../trace.js';
+import { getTraceLevelFromEnv, preview, shouldWriteTraceLevel, TraceLogger } from '../trace.js';
 
 test('TraceLogger creates a JSONL file path inside the trace directory', async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-trace-'));
@@ -24,15 +24,45 @@ test('TraceLogger appends events as JSON lines', async () => {
 
     assert.equal(lines.length, 2);
     assert.deepEqual(JSON.parse(lines[0]), {
+        level: 'info',
         type: 'run_start',
         instruction: 'hello',
         at: '2026-01-01T00:00:00.000Z'
     });
     assert.deepEqual(JSON.parse(lines[1]), {
+        level: 'info',
         type: 'step_start',
         step: 1,
         at: '2026-01-01T00:00:01.000Z'
     });
+});
+
+test('TraceLogger filters events below the configured level', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-trace-'));
+    const logger = new TraceLogger(tempDir, 'info');
+
+    await logger.write({
+        type: 'permission_decision',
+        level: 'debug',
+        toolName: 'write_file',
+        action: 'ask',
+        reason: 'approval required',
+        riskLevel: 'write',
+        at: '2026-01-01T00:00:00.000Z'
+    });
+    await logger.write({ type: 'step_start', step: 1, at: '2026-01-01T00:00:01.000Z' });
+
+    const lines = (await fs.readFile(logger.filePath, 'utf-8')).trim().split('\n');
+
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).type, 'step_start');
+});
+
+test('Trace level helpers parse and compare levels', () => {
+    assert.equal(getTraceLevelFromEnv({ TRACE_LEVEL: 'debug' }), 'debug');
+    assert.equal(getTraceLevelFromEnv({ TRACE_LEVEL: 'invalid' }), 'info');
+    assert.equal(shouldWriteTraceLevel('debug', 'info'), false);
+    assert.equal(shouldWriteTraceLevel('error', 'info'), true);
 });
 
 test('preview normalizes whitespace and truncates long text', () => {

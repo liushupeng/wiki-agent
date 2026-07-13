@@ -1,137 +1,280 @@
 # wiki-agent
 
-`wiki-agent` 是一个面向个人和团队知识库的 Agentic RAG 助手。项目目标是连接多种知识来源（Markdown 笔记、文档库、网页、数据库、API 等），由 Agent 根据任务自主规划检索、读取和推理步骤，并基于可引用证据生成回答。
+`wiki-agent` 是一个本地优先的 Agentic RAG 助手。它把 Markdown 笔记索引成可检索的知识库，把检索、文件读取、代码观察、测试运行等能力暴露为工具，由 LLM 按任务自主选择工具、读取证据并生成回答。
 
-当前版本聚焦本地 Markdown 笔记库和基础 Coding Agent 能力，提供索引构建、结构化切分、轻量检索、工具调用、HITL 审批、权限策略、运行 trace 和基础评测能力。
+项目适合学习和实验：
 
-## 架构
+- Agent loop 如何处理 `tool_calls`。
+- RAG 索引、embedding、向量检索如何组合。
+- 工具权限、人工审批、沙箱和 trace 如何形成安全边界。
+- 多种 chunker、embedding、vector store 如何逐步替换实验。
 
-项目由运行时源码、知识源、索引产物、技能提示词和文档组成：
-
-```bash
-wiki-agent/
-├── src/                  # Agent 运行时源码：loop、memory、tools、RAG、sandbox、trace
-├── skills/               # 启动时加载进 system prompt 的任务方法和行为策略
-├── notes/                # 默认 Markdown 知识源示例，可替换为外部笔记库
-├── knowledge/            # RAG 索引、评测问题和生成产物（如 knowledge/index.json）
-├── docs/                 # 学习文档、业务实践说明和代码导读
-├── .env.example          # 运行配置模板：模型、沙箱、trace、RAG 参数
-├── package.json          # npm 命令和依赖声明
-└── package-lock.json     # 依赖锁定文件
-```
-
-`src/` 包含 Agent 运行时实现：
-
-```bash
-src/
-├── main.ts              # 程序入口：初始化 Agent、工具和记忆
-├── agent.ts             # 核心智能体循环 + ToolRegistry
-├── memory.ts            # 对话记忆管理（system prompt + 历史消息）
-├── types.ts             # TypeScript 接口（IAgent, IAgentTool, IMemory 等）
-├── permissions.ts       # 工具风险级别、审批和 Shell 命令权限策略
-├── limits.ts            # 工具输出和文件读取大小限制
-├── sandbox.ts           # 沙箱路径解析与越权保护
-├── trace.ts             # Agent 运行 trace 记录
-├── rag/                 # RAG chunk、embedding、检索（当前支持 Markdown-aware）
-├── scripts/             # 知识库索引与评测脚本
-└── tools/
-    ├── base.ts          # 抽象基类 BaseAgentTool
-    ├── fileTool.ts      # 文件系统工具（list_dir, read_file, write_file）
-    ├── searchTool.ts    # 只读搜索工具（glob_search, grep_search）
-    ├── ragTool.ts       # 知识库检索工具（当前提供 search_notes, read_note, related_notes）
-    ├── codingTool.ts    # Coding Agent 工具（git_status, git_diff, apply_patch, run_tests）
-    └── shellTool.ts     # Shell 命令执行工具
-```
-
-**核心设计：**
-
-- **ReAct 循环** — Agent 迭代执行“模型决策 -> 工具调用 -> 观察结果 -> 重新规划”的控制流。当模型不再请求工具调用或触发熔断器时，循环结束。
-- **工具注册中心** — 工具通过 `ToolRegistry` 统一注册和分发。新增工具只需实现 `BaseAgentTool` 并在入口注册，Agent 核心不依赖具体工具实现。
-- **权限分级与并发调度** — 工具分为 `read` / `write` / `shell` / `rag`，并声明 `riskLevel`。同一轮只读工具可并发执行，有副作用工具串行执行并受审批策略保护。
-- **HITL 审批** — `write`、`shell`、`network` 等风险工具默认进入人工确认流程。CLI 会展示工具名、风险级别、审批原因和参数，并等待用户确认。
-- **工具结果标准化** — 工具统一返回 `{ status, data, error, metadata }`，Agent trace 可稳定记录状态、参数、耗时和摘要。
-- **流式响应** — LLM 响应通过 OpenAI SDK 流式传输。文本增量实时输出，工具调用增量按索引组装为完整请求。
-- **Agentic RAG** — 知识检索以工具形式暴露给 Agent，由 Agent 自主决定检索、读取和关联策略。当前内置工具包括 `search_notes`、`read_note` 和 `related_notes`。
-- **可扩展知识源** — Markdown 索引保留标题层级、frontmatter、tags、`[[wiki links]]` 和来源引用。后续可扩展到网页、数据库、API、PDF 等知识源。
-- **Trace 可观测性** — 每次运行都会在 `traces/` 生成 JSONL，记录 step、工具调用、结果摘要和耗时。
-- **沙箱隔离** — 文件工具将路径限制在 `C:\AgentSandbox` 内，并阻止目录穿越。Shell 工具使用命令 allowlist 和危险 token 拦截，并强制 `cwd` 为沙箱目录。
-- **上下文与输出控制** — Memory 支持消息数和字符预算；文件读取、Shell 输出、Git diff 和测试输出会按配置截断，避免大结果污染上下文。
-- **错误反馈** — 工具执行错误会被捕获并序列化为 JSON observation，反馈给模型用于后续规划。
-- **熔断器** — `maxLoopSteps`（默认 20）限制单次任务的最大规划步数，避免非预期资源消耗。
-
-## 技术栈
-
-| 层级 | 技术 |
-|---|---|
-| 语言 | TypeScript 6.x (ESM) |
-| 运行时 | Node.js |
-| LLM SDK | OpenAI SDK（指向 DeepSeek API） |
-| 开发运行 | tsx（无需预编译） |
-
-## 配置
-
-`.env.example` 提供主要运行时配置：
-
-- `DEEPSEEK_BASE_URL` / `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL_NAME`：模型服务配置。
-- `AGENT_SANDBOX_ROOT`：文件和通用 Shell 工具的沙箱根目录。
-- `AGENT_WORKSPACE_ROOT`：Coding Agent 工具的工作区根目录，默认使用当前进程目录。
-- `APPROVAL_MODE`：审批模式，支持 `prompt`、`auto`、`deny`。
-- `TOOL_OUTPUT_MAX_CHARS` / `READ_FILE_MAX_BYTES`：工具输出和文件读取上限。
-- `MEMORY_MAX_MESSAGES` / `MEMORY_MAX_CHARS`：上下文压缩触发阈值。
-- `TRACE_DIR`：JSONL trace 输出目录。
-
-## 安装
+## 快速开始
 
 ```bash
 npm install
-cp .env.example .env   # 编辑 .env 填入你的 DeepSeek API Key
+cp .env.example .env
 ```
 
-## 使用
+编辑 `.env`，至少填入：
+
+```env
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_MODEL_NAME=deepseek-v4-pro
+```
+
+常用命令：
 
 ```bash
-npm run dev                              # 启动多轮 REPL
-npm run ask -- "检索我的 Agent 笔记"      # 单次运行
-npm run index:notes -- notes             # 将 notes/ 索引到 knowledge/index.json
-npm run eval:rag                         # 用 knowledge/eval-questions.json 评测 RAG 命中率
-npm test                                 # 构建并运行 Node 内置测试
-npm run build                            # 编译 TypeScript 到 dist/
-npm start                                # 运行编译后的 JS
+npm run dev
+npm run ask -- "检索我的 Agent 笔记"
+npm run index:notes -- notes
+npm run eval:rag
+npm test
 ```
 
-系统提示词在 `src/main.ts` 中配置。`skills/` 下的 Markdown 文件会在启动时加载进系统上下文，用于提供可复用任务策略。
+## 目录结构
 
-## 当前支持：本地 Markdown 笔记
+```text
+wiki-agent/
+├── src/                 # TypeScript 源码
+├── skills/              # 可按需加载的 skill Markdown
+├── notes/               # 默认 Markdown 知识源示例
+├── var/                 # 运行产物：索引、trace 等，不进入 Git
+├── docs/                # 代码导读
+├── .env.example         # 运行配置模板
+└── package.json
+```
 
-1. 将 Markdown 笔记放入 `notes/`，或通过命令行参数指定外部目录。
-2. 运行 `npm run index:notes -- notes` 生成 `knowledge/index.json`。
-3. 启动 REPL 后提交问题，Agent 会按需调用 `search_notes`、`read_note` 或 `related_notes`。
-4. 回答结果包含可用的 `source`、`titlePath`、`tags`、`links` 和 citation。
-5. `knowledge/eval-questions.json` 提供固定评测问题，可通过 `npm run eval:rag` 评估检索命中情况。
+`src/` 主要模块：
 
-## 知识库工具
+```text
+src/
+├── main.ts              # CLI 入口，初始化 memory、registry、agent
+├── agent.ts             # Agent loop：模型调用、工具调度、trace 写入
+├── memory.ts            # 对话记忆和自动压缩
+├── trace.ts             # JSONL trace 和 trace level 过滤
+├── permissions.ts       # 工具权限决策
+├── sandbox.ts           # 本地沙箱路径保护
+├── limits.ts            # 工具输出和文件读取限制
+├── config.ts            # 环境变量解析
+├── cli/                 # CLI 适配器
+├── prompts/             # system prompt
+├── protocol/            # OpenAI tool-call 协议适配
+├── rag/                 # RAG 文档加载、chunk、embedding、vector store、pipeline
+├── scripts/             # 索引和评测脚本
+├── tools/               # Agent 工具实现
+├── utils/               # 通用工具函数
+└── tests/               # Node 内置测试
+```
 
-- `search_notes`：按问题或关键词检索当前已索引的 Markdown 笔记。
-- `read_note`：按相对路径读取某篇笔记在索引中的结构化片段。
-- `related_notes`：根据某篇笔记的标题、正文、tags、wiki links 找相关笔记。
+## 运行流程
 
-## Coding Agent 工具
+### Agent Loop
 
-- `glob_search` / `grep_search`：在沙箱内执行文件名和文本搜索。
-- `git_status` / `git_diff`：读取工作区 Git 状态和 diff。
-- `apply_patch`：在工作区内执行单文件精确替换，默认需要审批。
-- `run_tests`：在工作区运行测试或构建命令，默认需要审批。
-- `execute_command`：在沙箱内执行 allowlist 命令，默认需要审批。
+```text
+用户输入
+-> MemoryManager 追加 user message
+-> WikiAgent 调用 LLM
+-> LLM 返回文本或 tool_calls
+-> handleToolCalls 调度工具
+-> ToolExecutor 执行权限检查、审批、参数校验和工具调用
+-> 工具结果写回 memory
+-> LLM 继续规划或输出最终答案
+```
 
+`handleToolCalls()` 会按工具的 `isReadOnly` 分流：
 
-## 安全性
+- 只读工具并发执行。
+- 写文件、Shell、测试等有副作用工具串行执行。
+- 工具结果按原始 tool call 顺序写回 memory，保持 OpenAI tool 协议合法。
 
-- 文件操作限制在 `AGENT_SANDBOX_ROOT` 内，默认 `C:\AgentSandbox`，具有路径穿越保护。
-- Shell 执行采用 allowlist 和危险 token 拦截，并强制超时。
-- `write_file`、`apply_patch`、`run_tests` 和 `execute_command` 默认需要 HITL 审批。
-- `APPROVAL_MODE=auto` 会跳过人工确认，仅建议在受控环境中使用。
-- 工具参数会在执行前校验；无效参数会返回 `invalid_args` observation。
-- 大文件读取、Shell 输出、Git diff 和测试输出会按配置截断。
-- `src/tests/` 提供最小安全回归测试，覆盖路径沙箱、权限策略和输出截断。
-- 默认索引和检索本地文件。若使用云端 LLM，最终被发送的是用户问题和检索出的相关片段。
-- 仅建议在受信任环境中运行。当前沙箱是应用层约束，不是容器级隔离。
+### RAG 索引
+
+默认索引命令：
+
+```bash
+npm run index:notes -- notes
+```
+
+默认输出：
+
+```text
+var/knowledge/index.json
+```
+
+索引数据流：
+
+```text
+loadSourceDocuments
+-> chunkDocument
+-> Embedder.embed
+-> VectorStore.upsertChunks
+```
+
+默认实现：
+
+- `RAG_CHUNKER=auto`：Markdown 使用 Markdown-aware chunker，文本使用固定长度 chunker。
+- `RAG_EMBEDDER=tf`：本地词频向量，不依赖外部 embedding 服务。
+- `RAG_STORE=json`：写入 JSON 文件，查询时全量加载并计算余弦相似度。
+
+核心接口在：
+
+- `src/rag/embeddings.ts`：`Embedder`
+- `src/rag/vectorStore.ts`：`VectorStore`
+- `src/rag/indexPipeline.ts`：索引编排
+
+后续实验 LanceDB、pgvector、Qdrant、OpenAI embedding、本地 embedding 模型时，优先新增 adapter，不需要重写索引入口。
+
+## 工具能力
+
+工具统一继承 `BaseAgentTool`，并声明：
+
+- `name`：LLM 调用工具时使用的唯一名称。
+- `schema`：暴露给 LLM 的工具说明和参数结构。
+- `permission`：能力类别，例如 `read`、`write`、`shell`、`rag`。
+- `riskLevel`：权限策略使用的风险等级。
+- `isReadOnly`：决定同一轮工具调用可否并发。
+- `requiresApproval`：是否强制人工审批。
+
+内置工具：
+
+- 文件工具：`list_dir`、`read_file`、`write_file`
+- 搜索工具：`glob_search`、`grep_search`
+- RAG 工具：`search_notes`、`read_note`、`related_notes`
+- Skill 工具：`load_skill`
+- Coding 工具：`git_status`、`git_diff`、`apply_patch`、`run_tests`
+- Shell 工具：`execute_command`
+
+## 安全边界
+
+### 审批模式
+
+`APPROVAL_MODE` 支持：
+
+- `prompt`：风险工具执行前询问用户。
+- `auto`：通过安全检查的工具自动执行。
+- `deny`：拒绝所有需要审批的工具。
+
+`PermissionPolicy` 会综合工具风险、Shell 命令 allowlist、危险 token 和审批模式，返回 `allow`、`ask` 或 `deny`。
+
+### 沙箱
+
+文件、搜索和通用 Shell 工具使用 `AGENT_SANDBOX_ROOT`：
+
+```env
+AGENT_SANDBOX_ROOT=C:\AgentSandbox
+```
+
+`resolveSafePath()` 会拒绝目录穿越。`ShellExecuteTool` 的 `cwd` 固定为沙箱根目录。
+
+Coding 工具使用独立工作区根目录：
+
+```env
+AGENT_WORKSPACE_ROOT=.
+```
+
+`ApplyPatchTool`、`GitStatusTool`、`GitDiffTool`、`RunTestsTool` 都在该工作区内运行。
+
+## Trace
+
+每次 `WikiAgent.run()` 都会写一个 JSONL trace：
+
+```env
+TRACE_DIR=var/traces
+TRACE_LEVEL=info
+```
+
+基础事件：
+
+- `run_start`
+- `step_start`
+- `assistant_message`
+- `tool_result`
+- `run_end`
+
+`TRACE_LEVEL=debug` 时会写入更多内部事件：
+
+- `permission_decision`
+- `rag_search`
+- `memory_compaction`
+
+建议排查顺序：
+
+1. 看 `run_start.instruction`。
+2. 看 `assistant_message.toolCalls`。
+3. 看 `tool_result.args`。
+4. 看 `tool_result.status` 和 `observationPreview`。
+5. 需要更细信息时开启 `TRACE_LEVEL=debug`。
+
+## Skill 懒加载
+
+启动时只把 `skills/` 下每个 skill 的 `name` 和 `description` 注入 system prompt。任务命中 skill manifest 时，LLM 需要先调用：
+
+```text
+load_skill({ "name": "..." })
+```
+
+工具返回 skill 全文后，下一轮模型才能按 skill 的具体方法执行。这样避免把所有 skill 全文一次性塞进上下文。
+
+## 配置
+
+`.env.example` 中的主要配置：
+
+```env
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_MODEL_NAME=deepseek-v4-pro
+
+AGENT_SANDBOX_ROOT=C:\AgentSandbox
+AGENT_WORKSPACE_ROOT=.
+MAX_LOOP_STEPS=20
+TRACE_DIR=var/traces
+TRACE_LEVEL=info
+APPROVAL_MODE=prompt
+
+TOOL_OUTPUT_MAX_CHARS=12000
+READ_FILE_MAX_BYTES=200000
+SHELL_TIMEOUT_MS=5000
+SHELL_MAX_BUFFER_BYTES=1048576
+RUN_TESTS_MAX_TIMEOUT_MS=120000
+
+MEMORY_MAX_MESSAGES=40
+MEMORY_KEEP_RECENT_MESSAGES=18
+MEMORY_MAX_CHARS=60000
+
+NOTES_ROOT=notes
+KNOWLEDGE_INDEX_PATH=var/knowledge/index.json
+RAG_STORE=json
+RAG_EMBEDDER=tf
+RAG_CHUNKER=auto
+RAG_CHUNK_SIZE=900
+RAG_CHUNK_OVERLAP=120
+```
+
+## 测试
+
+```bash
+npm test
+```
+
+测试脚本会清理 `dist/`、编译 TypeScript，然后递归运行：
+
+```text
+dist/tests/**/*.test.js
+```
+
+测试覆盖：
+
+- Agent loop
+- tool call 协议适配
+- 工具注册和执行管线
+- 权限策略
+- 沙箱、限制和 trace
+- 文件、搜索、Shell、Coding、RAG 工具
+- RAG pipeline 和 JSON vector store
+- memory 压缩
+- skill manifest 懒加载
+
+`npm run eval:rag` 默认读取 `eval/questions.json`，可以通过第一个命令行参数指定评测问题文件。

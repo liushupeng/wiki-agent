@@ -74,6 +74,9 @@ export class WikiAgent implements IAgent {
         // 将用户的原始长指令压入记忆芯片
         this.memory.append({ role: "user", content: userInstruction });
         const traceLogger = new TraceLogger(this.config.traceDir);
+        if ('setTraceLogger' in this.memory && typeof this.memory.setTraceLogger === 'function') {
+            this.memory.setTraceLogger(traceLogger);
+        }
         await traceLogger.write({ type: 'run_start', instruction: userInstruction, at: new Date().toISOString() });
 
         let stepCount = 0;
@@ -267,10 +270,14 @@ export class WikiAgent implements IAgent {
         const toolName = toolCall.function.name;
         const toolArgsStr = toolCall.function.arguments;
         const startedAt = Date.now();
+        const tool = this.registry.getTool(toolName);
+        if (tool && 'setTraceLogger' in tool && typeof tool.setTraceLogger === 'function') {
+            tool.setTraceLogger(traceLogger);
+        }
 
         console.log(Color.magenta(`🔌 [激活工具] [${toolName}] -> 参数: ${toolArgsStr}`));
 
-        const observation = await this.toolExecutor.execute(toolName, toolArgsStr);
+        const observation = await this.toolExecutor.execute(toolName, toolArgsStr, traceLogger);
         const observationText = JSON.stringify(observation);
         await this.writeToolResultTrace(traceLogger, {
             step,
