@@ -535,7 +535,7 @@ JSON 工具函数：
 npm test
 ```
 
-测试命令会先清理 `dist/`，再编译，然后运行 `dist/tests/**/*.test.js`。
+测试命令会先清理 `dist/`，再编译，然后运行 `dist/src/tests/**/*.test.js`。
 
 ## 扩展建议
 

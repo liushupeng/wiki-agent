@@ -272,7 +272,7 @@ npm test
 测试脚本会清理 `dist/`、编译 TypeScript，然后递归运行：
 
 ```text
-dist/tests/**/*.test.js
+dist/src/tests/**/*.test.js
 ```
 
 测试覆盖：
