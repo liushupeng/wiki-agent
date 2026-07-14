@@ -7,13 +7,8 @@ import { MemoryManager } from './memory.js';
 import { WikiAgent } from './agent.js';
 import { WIKI_AGENT_SYSTEM_PROMPT } from './prompts/systemPrompt.js';
 import { buildSkillManifestPrompt, loadSkillManifests } from './skills.js';
-import { ShellExecuteTool } from './tools/shellTool.js';
-import { ListDirTool, ReadFileTool, WriteFileTool } from './tools/fileTool.js';
-import { GlobSearchTool, GrepSearchTool } from './tools/searchTool.js';
-import { ReadNoteTool, RelatedNotesTool, SearchNotesTool } from './tools/ragTool.js';
+import { createDefaultTools } from './tools/defaultTools.js';
 import { ToolRegistry } from './tools/registry.js';
-import { ApplyPatchTool, GitDiffTool, GitStatusTool, RunTestsTool } from './tools/codingTool.js';
-import { LoadSkillTool } from './tools/skillTool.js';
 
 async function main() {
     console.log("=================================================");
@@ -41,20 +36,9 @@ async function main() {
 
     // 初始化工具注册中心 (TODO: 未来可以支持动态加载工具)
     const registry = new ToolRegistry();
-    registry.register(new ListDirTool());
-    registry.register(new ReadFileTool());
-    registry.register(new WriteFileTool());
-    registry.register(new GlobSearchTool());
-    registry.register(new GrepSearchTool());
-    registry.register(new SearchNotesTool());
-    registry.register(new ReadNoteTool());
-    registry.register(new RelatedNotesTool());
-    registry.register(new LoadSkillTool());
-    registry.register(new GitStatusTool());
-    registry.register(new GitDiffTool());
-    registry.register(new ApplyPatchTool());
-    registry.register(new RunTestsTool());
-    registry.register(new ShellExecuteTool());
+    for (const tool of createDefaultTools()) {
+        registry.register(tool);
+    }
 
     const agent = new WikiAgent(config, memory, registry);
 
