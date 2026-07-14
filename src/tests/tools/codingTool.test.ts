@@ -47,6 +47,22 @@ test('ApplyPatchTool replaces text inside the runtime workspace', async () => {
     });
 });
 
+test('coding tools validate optional and required arguments', () => {
+    assert.deepEqual(new ApplyPatchTool().validateArgs({}), [
+        'filePath must be a non-empty string',
+        'oldText must be a non-empty string',
+        'newText must be a string'
+    ]);
+    assert.deepEqual(new GitDiffTool().validateArgs({ staged: 'yes', statOnly: 1 }), [
+        'staged must be a boolean',
+        'statOnly must be a boolean'
+    ]);
+    assert.deepEqual(new RunTestsTool().validateArgs({ command: 123, timeoutMs: 0 }), [
+        'command must be a string',
+        'timeoutMs must be a positive number'
+    ]);
+});
+
 test('ApplyPatchTool rejects paths outside the runtime workspace', async () => {
     await withWorkspace(async () => {
         const result = await new ApplyPatchTool().execute({
@@ -75,6 +91,15 @@ test('ApplyPatchTool requires oldText to match exactly once', async () => {
     });
 });
 
+test('GitStatusTool reports execution failure outside a git repository', async () => {
+    await withWorkspace(async () => {
+        const result = await new GitStatusTool().execute();
+
+        assert.equal(result.status, 'execution_failed');
+        assert.match(result.error ?? '', /git status/);
+    });
+});
+
 test('GitStatusTool and GitDiffTool run inside the runtime workspace', async () => {
     await withWorkspace(async root => {
         await execFileAsync('git', ['init'], { cwd: root });
@@ -90,6 +115,19 @@ test('GitStatusTool and GitDiffTool run inside the runtime workspace', async () 
     });
 });
 
+test('GitDiffTool supports staged diff command construction', async () => {
+    await withWorkspace(async root => {
+        await execFileAsync('git', ['init'], { cwd: root });
+        await fs.writeFile(path.join(root, 'note.txt'), 'initial\n', 'utf-8');
+        await execFileAsync('git', ['add', 'note.txt'], { cwd: root });
+
+        const result = await new GitDiffTool().execute({ staged: true, statOnly: true });
+
+        assert.equal(result.status, 'success');
+        assert.match((result.data as { command: string }).command, /--staged --stat/);
+    });
+});
+
 test('RunTestsTool runs a command inside the runtime workspace', async () => {
     await withWorkspace(async root => {
         await fs.writeFile(path.join(root, 'script.js'), 'console.log("ok from workspace")', 'utf-8');
@@ -101,6 +139,19 @@ test('RunTestsTool runs a command inside the runtime workspace', async () => {
 
         assert.equal(result.status, 'success');
         assert.match((result.data as { stdout: string }).stdout, /ok from workspace/);
+    });
+});
+
+test('RunTestsTool returns execution_failed for failing commands', async () => {
+    await withWorkspace(async () => {
+        const result = await new RunTestsTool().execute({
+            command: 'node -e "process.exit(7)"',
+            timeoutMs: 5000
+        });
+
+        assert.equal(result.status, 'execution_failed');
+        assert.equal(result.metadata?.code, 7);
+        assert.equal(result.metadata?.timeoutMs, 5000);
     });
 });
 

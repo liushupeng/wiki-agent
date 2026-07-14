@@ -37,6 +37,27 @@ test('ListDirTool lists files and directories inside the runtime sandbox', async
     });
 });
 
+test('file tools validate required arguments', () => {
+    assert.deepEqual(new ListDirTool().validateArgs({ relativePath: 1 }), ['relativePath must be a string']);
+    assert.deepEqual(new ReadFileTool().validateArgs({ filename: '', maxBytes: 0 }), [
+        'filename must be a non-empty string',
+        'maxBytes must be a positive number'
+    ]);
+    assert.deepEqual(new WriteFileTool().validateArgs({ filename: '', content: 1 }), [
+        'filename must be a non-empty string',
+        'content must be a string'
+    ]);
+});
+
+test('ListDirTool returns an error for missing directories', async () => {
+    await withSandbox(async () => {
+        const result = await new ListDirTool().execute({ relativePath: 'missing' });
+
+        assert.equal(result.status, 'error');
+        assert.match(result.error ?? '', /ENOENT|no such file/i);
+    });
+});
+
 test('ReadFileTool reads and truncates files inside the runtime sandbox', async () => {
     await withSandbox(async root => {
         process.env.READ_FILE_MAX_BYTES = '5';
@@ -51,6 +72,15 @@ test('ReadFileTool reads and truncates files inside the runtime sandbox', async 
         assert.equal(result.metadata?.readBytes, 5);
         assert.equal(result.metadata?.truncated, true);
         assert.equal(result.metadata?.maxBytes, 5);
+    });
+});
+
+test('ReadFileTool returns an error for missing files', async () => {
+    await withSandbox(async () => {
+        const result = await new ReadFileTool().execute({ filename: 'missing.txt' });
+
+        assert.equal(result.status, 'error');
+        assert.match(result.error ?? '', /ENOENT|no such file/i);
     });
 });
 
