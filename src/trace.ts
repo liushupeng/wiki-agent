@@ -17,7 +17,7 @@ export type TraceEvent =
     | (TraceEventBase & { type: 'tool_result'; step: number; toolName: string; args: unknown; status: string; durationMs: number; observationPreview: string })
     | (TraceEventBase & { type: 'permission_decision'; toolName: string; action: string; reason: string; riskLevel: string })
     | (TraceEventBase & { type: 'rag_search'; toolName: string; query: string; indexPath: string; topK: number; matchCount: number; topMatches: Array<{ source: string; score: number }> })
-    | (TraceEventBase & { type: 'memory_compaction'; beforeCount: number; afterCount: number; summarizedCount: number; retainedCount: number; reason: string })
+    | (TraceEventBase & { type: 'memory_compaction'; beforeCount: number; afterCount: number; summarizedCount: number; retainedCount: number; shortTermCount?: number; midTermEntryCount?: number; longTermItemCount?: number; reason: string })
     | (TraceEventBase & { type: 'run_end'; finalOutputPreview: string; terminationReason: TerminationReason });
 
 export class TraceLogger {
