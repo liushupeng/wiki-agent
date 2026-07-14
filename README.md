@@ -2,6 +2,15 @@
 
 `wiki-agent` 是一个本地优先的 Agentic RAG 助手。它把 Markdown 笔记索引成可检索的知识库，把检索、文件读取、代码观察、测试运行等能力暴露为工具，由 LLM 按任务自主选择工具、读取证据并生成回答。
 
+这个项目采用一个简单的 Agent 视角：
+
+```text
+概念上：agent = loop + memory + tool
+工程上：agent = loop + memory + tool + policy + observability
+```
+
+其中 `loop` 负责持续规划和执行，`memory` 负责保存上下文和任务状态，`tool` 是广义工具，代表模型可调用的外部能力：RAG 检索、skill 加载、文件系统、Shell、API、测试命令都属于这个范畴。`policy` 提供权限、审批、预算和终止约束，`observability` 通过 trace、日志和评测让 Agent 行为可解释、可调试。
+
 项目适合学习和实验：
 
 - Agent loop 如何处理 `tool_calls`。
@@ -39,8 +48,10 @@ npm test
 ```text
 wiki-agent/
 ├── src/                 # TypeScript 源码
+├── scripts/             # 项目级辅助脚本，例如 RAG 索引和评测
 ├── skills/              # 可按需加载的 skill Markdown
 ├── notes/               # 默认 Markdown 知识源示例
+├── examples/            # 示例数据，例如 RAG 评测问题
 ├── var/                 # 运行产物：索引、trace 等，不进入 Git
 ├── docs/                # 代码导读
 ├── .env.example         # 运行配置模板
@@ -63,7 +74,6 @@ src/
 ├── prompts/             # system prompt
 ├── protocol/            # OpenAI tool-call 协议适配
 ├── rag/                 # RAG 文档加载、chunk、embedding、vector store、pipeline
-├── scripts/             # 索引和评测脚本
 ├── tools/               # Agent 工具实现
 ├── utils/               # 通用工具函数
 └── tests/               # Node 内置测试
@@ -277,4 +287,4 @@ dist/tests/**/*.test.js
 - memory 压缩
 - skill manifest 懒加载
 
-`npm run eval:rag` 默认读取 `eval/questions.json`，可以通过第一个命令行参数指定评测问题文件。
+`npm run eval:rag` 默认读取 `examples/rag-eval/questions.json`，可以通过第一个命令行参数指定评测问题文件。

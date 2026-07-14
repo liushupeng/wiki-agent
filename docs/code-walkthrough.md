@@ -14,7 +14,7 @@
 6. `src/trace.ts`
 7. `src/rag/`
 8. `src/tools/`
-9. `src/scripts/`
+9. `scripts/rag/`
 10. `src/tests/`
 
 ## 运行时总览
@@ -442,9 +442,9 @@ Coding 工具使用 `AGENT_WORKSPACE_ROOT`：
 
 `load_skill` 工具按名称读取单个 skill 全文。任务匹配某个 skill 时，LLM 应先调用 `load_skill`，再按 skill 内容继续执行。
 
-## `src/scripts/indexKnowledgeBase.ts`
+## `scripts/rag/indexKnowledgeBase.ts`
 
-索引入口脚本。它只负责读取 CLI/env 配置并调用 `runIndexPipeline()`。
+RAG 索引入口脚本。它位于顶层 `scripts/rag/`，作为项目级辅助命令使用；核心索引逻辑仍在 `src/rag/indexPipeline.ts`。
 
 用法：
 
@@ -464,14 +464,14 @@ npm run index:notes -- D:\my-notes var/knowledge/index.json
 - `RAG_CHUNK_SIZE`
 - `RAG_CHUNK_OVERLAP`
 
-## `src/scripts/evaluateRag.ts`
+## `scripts/rag/evaluateRag.ts`
 
-RAG 检索层评测脚本。它不调用 LLM，只验证检索是否召回预期内容。
+RAG 检索层评测脚本。它位于顶层 `scripts/rag/`，不调用 LLM，只验证检索是否召回预期内容。
 
 默认输入：
 
 ```text
-eval/questions.json
+examples/rag-eval/questions.json
 ```
 
 默认索引：
@@ -539,15 +539,6 @@ npm test
 
 ## 扩展建议
 
-新增工具：
-
-1. 继承 `BaseAgentTool`。
-2. 定义 `name` 和 `schema`。
-3. 根据副作用设置 `permission`、`riskLevel`、`isReadOnly`、`requiresApproval`。
-4. 实现 `validateArgs()` 和 `execute()`。
-5. 在 `main.ts` 注册。
-6. 在 `src/tests/tools/` 增加测试。
-
 新增向量库：
 
 1. 实现 `VectorStore`。
@@ -560,10 +551,3 @@ npm test
 1. 实现 `Embedder`。
 2. 在 `createEmbedderFromEnv()` 中增加 `RAG_EMBEDDER` 分支。
 3. 用 `indexPipeline` 测试验证生成索引。
-
-新增文件类型：
-
-1. 增加 loader 支持的扩展名。
-2. 实现新的 chunker。
-3. 在 `selectChunker()` 中按扩展名分发。
-4. 增加 chunker 测试。
