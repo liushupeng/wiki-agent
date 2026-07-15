@@ -8,7 +8,7 @@
 
 1. `src/main.ts`
 2. `src/agent.ts`
-3. `src/tools/base.ts`、`src/tools/registry.ts`、`src/tools/executor.ts`
+3. `src/tools/base.ts`、`src/tools/registry.ts`、`src/tools/exposure.ts`、`src/tools/executor.ts`
 4. `src/permissions.ts`
 5. `src/memory.ts`
 6. `src/trace.ts`
@@ -77,9 +77,13 @@ const systemPrompt = skillManifestPrompt
     : WIKI_AGENT_SYSTEM_PROMPT;
 ```
 
-工具注册通过 `ToolRegistry` 完成。LLM 能看到的工具 schema 来自 registry。
+工具注册通过 `ToolRegistry` 完成。registry 保存完整工具全集，但 `getSchemas()` 会经过 `ToolExposureController` 过滤，所以 LLM 默认只看到 core 工具和当前已加载分组。
 
 工具注册采用 MCP 优先策略：`registerConfiguredMcpTools()` 先按 `MCP_CONFIG_PATH` 动态加载 MCP 工具，随后 `createDefaultTools()` 注册本地工具。`getLocalToolNamesCoveredByMcp()` 会根据 MCP 暴露的远程工具名跳过等价本地工具，例如 Filesystem MCP 覆盖 `read_file`、`write_file`、`list_dir`、`glob_search`，Git MCP 覆盖 `git_status`、`git_diff`。最终内置工具和 MCP 工具都进入同一个 `ToolRegistry`，Agent loop 不需要区分来源。
+
+工具暴露采用“核心工具 + 按需分组”：`core` 默认暴露，包含 RAG、笔记读取、skill 和 `load_tool_group`；`filesystem`、`git`、`sqlite`、`coding`、`shell` 只在模型调用 `load_tool_group` 后暴露完整 schema。
+
+每次新用户任务开始前，CLI 会调用 `ToolExposureController.resetToCore()`，让 REPL 中上一轮加载过的工具组不会持续影响下一轮任务的上下文预算。
 
 ## `src/agent.ts`
 
@@ -185,11 +189,36 @@ const stream = await this.client.chat.completions.create({
 `ToolRegistry` 是工具注册中心：
 
 - `register()` 保存工具实例。
-- `getSchemas()` 返回所有工具 schema 给 LLM。
+- `getSchemas()` 返回当前允许暴露给 LLM 的工具 schema。
+- `setSchemaFilter()` 设置 schema 暴露过滤器，当前由 `ToolExposureController` 提供。
 - `getTool()` 根据名称取工具。
 - `execute()` 解析 JSON 参数、调用工具自身 `validateArgs()`，再执行工具。
 
 JSON 参数解析由 `utils/json.ts` 的 `parseToolArguments()` 完成。空参数按 `{}` 处理。
+
+注意：schema 过滤只影响 LLM 当前“看得到哪些工具”，不影响执行层按名称执行已注册工具。这样可以让 registry 保存完整工具全集，同时把上下文里的工具说明控制在较小范围。
+
+## `src/tools/exposure.ts`
+
+`ToolExposureController` 管理工具 schema 的可见性：
+
+```text
+activeGroups 初始为 core
+-> registry.getSchemas()
+-> 按 resolveToolGroup(tool.name) 过滤
+-> LLM 只看到 active group 里的工具
+```
+
+`LoadToolGroupTool` 是默认 core 工具。模型需要额外能力时调用它，例如：
+
+- 需要读写普通文件或搜索代码库：加载 `filesystem`。
+- 需要观察 Git 变更：加载 `git`。
+- 需要 SQLite MCP：加载 `sqlite`。
+- 需要改代码或跑测试：加载 `coding`。
+- 必须执行 shell 命令：加载 `shell`。
+
+工具组加载后不会在同一轮 tool call 中立刻改变模型已收到的 schema，而是在下一轮 `callModel()` 中生效。
+每个新用户任务开始时 active group 会重置为 `core`。
 
 ## `src/mcp/`
 

@@ -16,6 +16,7 @@ test('createDefaultTools returns the CLI default tool set', () => {
         'read_note',
         'related_notes',
         'load_skill',
+        'load_tool_group',
         'git_status',
         'git_diff',
         'apply_patch',

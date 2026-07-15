@@ -69,6 +69,7 @@ export interface IAgentTool {
 export interface IToolRegistry {
     register(tool: IAgentTool): void;
     getSchemas(): OpenAI.Chat.Completions.ChatCompletionTool[];
+    setSchemaFilter?(filter: (tool: IAgentTool) => boolean): void;
     getTool(name: string): IAgentTool | undefined;
     execute(name: string, argsStr: string): Promise<ToolResult>;
     has(name: string): boolean;

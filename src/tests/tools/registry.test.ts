@@ -26,6 +26,19 @@ test('ToolRegistry registers tools and exposes schemas', () => {
     }
 });
 
+test('ToolRegistry filters exposed schemas without blocking execution', async () => {
+    const registry = new ToolRegistry();
+    registry.register(new SafeTool());
+    registry.register(new ValidatedTool());
+    registry.setSchemaFilter(tool => tool.name === 'safe_tool');
+
+    const schemaNames = registry.getSchemas().map(schema => schema.type === 'function' ? schema.function.name : '');
+    const result = await registry.execute('validated_tool', '{"value":"ok"}');
+
+    assert.deepEqual(schemaNames, ['safe_tool']);
+    assert.equal(result.status, 'success');
+});
+
 test('ToolRegistry rejects invalid JSON arguments', async () => {
     const registry = new ToolRegistry();
     registry.register(new SafeTool());

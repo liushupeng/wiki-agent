@@ -9,6 +9,7 @@ import { registerConfiguredMcpTools } from './mcp/register.js';
 import { WIKI_AGENT_SYSTEM_PROMPT } from './prompts/systemPrompt.js';
 import { buildSkillManifestPrompt, loadSkillManifests } from './skills.js';
 import { createDefaultTools, getLocalToolNamesCoveredByMcp } from './tools/defaultTools.js';
+import { ToolExposureController } from './tools/exposure.js';
 import { ToolRegistry } from './tools/registry.js';
 
 async function main() {
@@ -37,17 +38,20 @@ async function main() {
 
     // 初始化工具注册中心：MCP 优先注册，等价本地工具作为兜底能力按需跳过。
     const registry = new ToolRegistry();
+    const toolExposureController = new ToolExposureController();
     const registeredMcpTools = await registerConfiguredMcpTools(registry);
     const localToolNamesCoveredByMcp = getLocalToolNamesCoveredByMcp(registeredMcpTools);
-    for (const tool of createDefaultTools({ skipToolNames: localToolNamesCoveredByMcp })) {
+    for (const tool of createDefaultTools({ skipToolNames: localToolNamesCoveredByMcp, exposureController: toolExposureController })) {
         registry.register(tool);
     }
+    registry.setSchemaFilter(tool => toolExposureController.shouldExpose(tool));
 
     const agent = new WikiAgent(config, memory, registry);
 
     // 单次运行模式: npm run ask -- "检索我的 Agent 笔记"
     const oneShotInstruction = process.argv.slice(2).join(' ').trim();
     if (oneShotInstruction) {
+        toolExposureController.resetToCore();
         await agent.run(oneShotInstruction, chunk => process.stdout.write(chunk));
         rl.close();
         return;
@@ -64,6 +68,7 @@ async function main() {
             continue;
         }
 
+        toolExposureController.resetToCore();
         await agent.run(instruction, chunk => process.stdout.write(chunk));
         process.stdout.write('\n');
     }

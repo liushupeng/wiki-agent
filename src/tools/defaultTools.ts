@@ -5,6 +5,7 @@ import { GrepNotesTool, ReadNoteTool, RelatedNotesTool, SearchNotesTool } from '
 import { GlobSearchTool, GrepSearchTool } from './searchTool.js';
 import { ShellExecuteTool } from './shellTool.js';
 import { LoadSkillTool } from './skillTool.js';
+import { LoadToolGroupTool, ToolExposureController } from './exposure.js';
 
 export type McpToolCoverageInfo = {
     remoteToolName: string;
@@ -12,6 +13,7 @@ export type McpToolCoverageInfo = {
 
 type CreateDefaultToolsOptions = {
     skipToolNames?: Iterable<string>;
+    exposureController?: ToolExposureController;
 };
 
 const LOCAL_TOOLS_COVERED_BY_MCP_REMOTE_TOOL: Record<string, string[]> = {
@@ -36,6 +38,7 @@ const LOCAL_TOOLS_COVERED_BY_MCP_REMOTE_TOOL: Record<string, string[]> = {
  */
 export function createDefaultTools(options: CreateDefaultToolsOptions = {}): IAgentTool[] {
     const skipToolNames = new Set(options.skipToolNames ?? []);
+    const exposureController = options.exposureController ?? new ToolExposureController();
     return [
         new ListDirTool(),
         new ReadFileTool(),
@@ -47,6 +50,7 @@ export function createDefaultTools(options: CreateDefaultToolsOptions = {}): IAg
         new ReadNoteTool(),
         new RelatedNotesTool(),
         new LoadSkillTool(),
+        new LoadToolGroupTool(exposureController),
         new GitStatusTool(),
         new GitDiffTool(),
         new ApplyPatchTool(),

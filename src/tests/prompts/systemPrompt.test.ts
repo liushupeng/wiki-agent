@@ -22,3 +22,9 @@ test('wiki-agent system prompt guides vector versus grep note search', () => {
     assert.match(WIKI_AGENT_SYSTEM_PROMPT, /grep_notes 做关键词\/正则检索/);
     assert.match(WIKI_AGENT_SYSTEM_PROMPT, /先用 grep_notes 查精确线索，再用 search_notes/);
 });
+
+test('wiki-agent system prompt guides on-demand tool group loading', () => {
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /默认只暴露 core 工具/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /load_tool_group/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /下一轮规划/);
+});

@@ -5,6 +5,7 @@ import { parseToolArguments } from '../utils/json.js';
 
 export class ToolRegistry implements IToolRegistry {
     private tools = new Map<string, IAgentTool>();
+    private schemaFilter?: (tool: IAgentTool) => boolean;
 
     register(tool: IAgentTool): void {
         this.tools.set(tool.name, tool);
@@ -12,7 +13,13 @@ export class ToolRegistry implements IToolRegistry {
     }
 
     getSchemas(): OpenAI.Chat.Completions.ChatCompletionTool[] {
-        return Array.from(this.tools.values()).map(tool => tool.schema);
+        return Array.from(this.tools.values())
+            .filter(tool => this.schemaFilter?.(tool) ?? true)
+            .map(tool => tool.schema);
+    }
+
+    setSchemaFilter(filter: (tool: IAgentTool) => boolean): void {
+        this.schemaFilter = filter;
     }
 
     async execute(name: string, argsStr: string): Promise<ToolResult> {

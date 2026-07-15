@@ -197,15 +197,22 @@ loadSourceDocuments
 - `isReadOnly`：决定同一轮工具调用可否并发。
 - `requiresApproval`：是否强制人工审批。
 
-内置工具：
+工具加载采用“核心工具 + 按需分组”：
 
-- 文件工具：`list_dir`、`read_file`、`write_file`
-- 搜索工具：`glob_search`、`grep_search`
-- RAG 工具：`search_notes`、`grep_notes`、`read_note`、`related_notes`
-- Skill 工具：`load_skill`
-- Coding 工具：`git_status`、`git_diff`、`apply_patch`、`run_tests`
-- Shell 工具：`execute_command`
-- MCP 工具：通过 `MCP_CONFIG_PATH` 指向的配置文件从外部 MCP server 动态加载
+- 启动时所有本地工具和 MCP 工具都会注册到 `ToolRegistry`，因此执行层知道完整工具全集。
+- 每轮发给 LLM 的 schema 只包含当前已暴露的工具，避免工具数量增长后持续占用上下文。
+- 默认暴露 `core` 工具：`search_notes`、`grep_notes`、`read_note`、`related_notes`、`load_skill`、`load_tool_group`。
+- 当任务需要文件、Git、SQLite、代码修改或 shell 能力时，LLM 先调用 `load_tool_group` 激活对应分组；下一轮模型调用才会看到该组完整 schema。
+- 每个新的用户任务开始前会重置为 `core`，避免 REPL 中上一轮加载过的工具组长期占用后续上下文。
+
+工具分组：
+
+- `core`：RAG 检索、笔记读取、skill 加载和 `load_tool_group`。
+- `filesystem`：`list_dir`、`read_file`、`write_file`、`glob_search`、`grep_search`，以及 Filesystem MCP 工具。
+- `git`：`git_status`、`git_diff`，以及 Git MCP 工具。
+- `sqlite`：SQLite MCP 工具。
+- `coding`：`apply_patch`、`run_tests`。
+- `shell`：`execute_command`。
 
 启动时会先注册 MCP 工具，再注册本地工具。如果 MCP 已经提供等价能力，本地对应工具会跳过，避免模型同时看到两套做同一件事的工具。当前过滤规则：
 
