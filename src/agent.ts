@@ -8,6 +8,7 @@ import { appendToolCallDeltas, buildSkippedToolResult, buildToolCalls, FunctionT
 import { preview, TerminationReason, TraceLogger } from './trace.js';
 import { ToolExecutor } from './tools/executor.js';
 import { parseJsonForTrace } from './utils/json.js';
+import { estimateMessagesSize, estimateTextSize, estimateToolSchemasSize } from './utils/tokenBudget.js';
 
 dotenv.config();
 
@@ -118,7 +119,7 @@ export class WikiAgent implements IAgent {
         console.log(Color.cyan(`\n🧠 [Step ${step}] Agent 正在审视环境并推演下一步规划...`));
         await traceLogger.write({ type: 'step_start', step, at: new Date().toISOString() });
 
-        const aiMessage = await this.callModel(onTextChunk);
+        const aiMessage = await this.callModel(step, traceLogger, onTextChunk);
         const assistantText = this.getAssistantText(aiMessage);
 
         // 必须立刻把大模型的这次决策和思考过程记入历史，否则后续上下文契约会错乱。
@@ -141,12 +142,13 @@ export class WikiAgent implements IAgent {
         return { type: 'final', content: assistantText };
     }
 
-    private async callModel(onTextChunk: (text: string) => void): Promise<OpenAI.Chat.Completions.ChatCompletionMessage> {
+    private async callModel(step: number, traceLogger: TraceLogger, onTextChunk: (text: string) => void): Promise<OpenAI.Chat.Completions.ChatCompletionMessage> {
         // 让大模型全面审视当前的上下文记忆与前几步工具的回执结果
         const toolSchemas = this.registry.getSchemas();
+        const messages = this.memory.getMessages();
         const stream = await this.client.chat.completions.create({
             model: this.config.modelName,
-            messages: this.memory.getMessages() as any,
+            messages: messages as any,
             temperature: this.config.temperature,
             reasoning_effort: "high",
             tools: toolSchemas.length > 0 ? toolSchemas : undefined,
@@ -183,6 +185,19 @@ export class WikiAgent implements IAgent {
                 tool_calls: buildToolCalls(toolCallsBuffer)
             })
         };
+
+        await traceLogger.write({
+            type: 'model_call_budget',
+            level: 'debug',
+            step,
+            inputMessageCount: messages.length,
+            input: estimateMessagesSize(messages),
+            toolSchemaCount: toolSchemas.length,
+            toolSchemas: estimateToolSchemasSize(toolSchemas),
+            output: estimateTextSize(currentContent),
+            toolCallCount: aiMessage.tool_calls?.length ?? 0,
+            at: new Date().toISOString()
+        });
 
         return aiMessage;
     }
@@ -317,6 +332,8 @@ export class WikiAgent implements IAgent {
             status: input.observation.status,
             durationMs: input.durationMs,
             observationPreview: preview(input.observationText),
+            observation: estimateTextSize(input.observationText),
+            truncated: input.observation.metadata?.truncated === true,
             at: new Date().toISOString()
         });
     }

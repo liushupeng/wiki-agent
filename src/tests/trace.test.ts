@@ -42,6 +42,17 @@ test('TraceLogger filters events below the configured level', async () => {
     const logger = new TraceLogger(tempDir, 'info');
 
     await logger.write({
+        type: 'model_call_budget',
+        step: 1,
+        inputMessageCount: 2,
+        input: { chars: 100, approxTokens: 25 },
+        toolSchemaCount: 3,
+        toolSchemas: { chars: 80, approxTokens: 20 },
+        output: { chars: 20, approxTokens: 5 },
+        toolCallCount: 1,
+        at: '2026-01-01T00:00:00.000Z'
+    });
+    await logger.write({
         type: 'permission_decision',
         level: 'debug',
         toolName: 'write_file',

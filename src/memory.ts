@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { TraceLogger } from './trace.js';
 import { IMemory } from './types.js';
+import { estimateMessagesSize } from './utils/tokenBudget.js';
 
 type FunctionToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
     type: "function";
@@ -170,6 +171,7 @@ export class MemoryManager implements IMemory {
 
     private compactIfNeeded(): void {
         const beforeCount = this.getMessages().length;
+        const beforeSize = estimateMessagesSize(this.getMessages());
         const shortTermMessages = this.shortTerm.getMessages();
         const rawMessageCount = shortTermMessages.length + (this.systemMessage ? 1 : 0);
         const historyChars = this.estimateHistoryChars();
@@ -188,16 +190,19 @@ export class MemoryManager implements IMemory {
 
         this.midTerm.mergeMessages(old);
         this.shortTerm.replace(recent);
+        const afterMessages = this.getMessages();
         void this.traceLogger?.write({
             type: 'memory_compaction',
             level: 'debug',
             beforeCount,
-            afterCount: this.getMessages().length,
+            afterCount: afterMessages.length,
             summarizedCount: old.length,
             retainedCount: recent.length,
             shortTermCount: recent.length,
             midTermEntryCount: this.midTerm.getEntryCount(),
             longTermItemCount: this.longTerm.getItemCount(),
+            before: beforeSize,
+            after: estimateMessagesSize(afterMessages),
             reason: countExceeded ? 'max_messages' : 'max_chars',
             at: new Date().toISOString()
         });
@@ -205,11 +210,7 @@ export class MemoryManager implements IMemory {
     }
 
     private estimateHistoryChars(): number {
-        return this.getMessages().reduce((sum, msg) => {
-            const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '');
-            const toolCalls = 'tool_calls' in msg && msg.tool_calls ? JSON.stringify(msg.tool_calls) : '';
-            return sum + content.length + toolCalls.length;
-        }, 0);
+        return estimateMessagesSize(this.getMessages()).chars;
     }
 }
 

@@ -317,6 +317,15 @@ debug 事件：
 - `permission_decision`
 - `rag_search`
 - `memory_compaction`
+- `model_call_budget`
+
+轻量成本观测使用 `utils/tokenBudget.ts` 里的估算函数。它不依赖 tokenizer，只记录字符数和 `chars / 4` 得到的近似 token，用来定位上下文体量来源：
+
+- `model_call_budget.input`：本轮发给模型的 messages 体量。
+- `model_call_budget.toolSchemas`：工具 schema 体量，MCP 工具增多时重点看这里。
+- `model_call_budget.output`：模型输出文本体量。
+- `tool_result.observation`：工具结果写回 memory 前的体量。
+- `memory_compaction.before/after`：压缩前后上下文体量。
 
 排查问题时优先看 trace：
 
@@ -325,7 +334,7 @@ debug 事件：
 3. `tool_result.args`
 4. `tool_result.status`
 5. `observationPreview`
-6. 需要内部细节时开启 `TRACE_LEVEL=debug`
+6. 怀疑 token 消耗过大时看 `model_call_budget`、`tool_result.observation`、`memory_compaction`
 
 ## `src/protocol/toolCalls.ts`
 

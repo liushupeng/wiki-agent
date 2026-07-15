@@ -293,6 +293,15 @@ TRACE_LEVEL=info
 - `permission_decision`
 - `rag_search`
 - `memory_compaction`
+- `model_call_budget`
+
+轻量成本观测也写在 trace 中，用字符数和 `chars / 4` 估算 token，不做精确计费：
+
+- `model_call_budget.input`：本轮发给模型的 messages 体量。
+- `model_call_budget.toolSchemas`：本轮工具 schema 体量。
+- `model_call_budget.output`：本轮模型输出文本体量。
+- `tool_result.observation`：单个工具 observation 写回模型前的体量。
+- `memory_compaction.before/after`：memory 压缩前后的上下文体量。
 
 建议排查顺序：
 
@@ -300,7 +309,7 @@ TRACE_LEVEL=info
 2. 看 `assistant_message.toolCalls`。
 3. 看 `tool_result.args`。
 4. 看 `tool_result.status` 和 `observationPreview`。
-5. 需要更细信息时开启 `TRACE_LEVEL=debug`。
+5. 如果怀疑 token 消耗过大，开启 `TRACE_LEVEL=debug`，看 `model_call_budget`、`tool_result.observation` 和 `memory_compaction`。
 
 ## Skill 懒加载
 

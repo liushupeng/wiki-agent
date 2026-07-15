@@ -10,14 +10,20 @@ type TraceEventBase = {
     at: string;
 };
 
+type SizeEstimateFields = {
+    chars: number;
+    approxTokens: number;
+};
+
 export type TraceEvent =
     | (TraceEventBase & { type: 'run_start'; instruction: string })
     | (TraceEventBase & { type: 'step_start'; step: number })
     | (TraceEventBase & { type: 'assistant_message'; step: number; contentPreview: string; toolCalls: string[] })
-    | (TraceEventBase & { type: 'tool_result'; step: number; toolName: string; args: unknown; status: string; durationMs: number; observationPreview: string })
+    | (TraceEventBase & { type: 'model_call_budget'; step: number; inputMessageCount: number; input: SizeEstimateFields; toolSchemaCount: number; toolSchemas: SizeEstimateFields; output: SizeEstimateFields; toolCallCount: number })
+    | (TraceEventBase & { type: 'tool_result'; step: number; toolName: string; args: unknown; status: string; durationMs: number; observationPreview: string; observation: SizeEstimateFields; truncated?: boolean })
     | (TraceEventBase & { type: 'permission_decision'; toolName: string; action: string; reason: string; riskLevel: string })
     | (TraceEventBase & { type: 'rag_search'; toolName: string; query: string; indexPath: string; topK: number; matchCount: number; topMatches: Array<{ source: string; score: number }> })
-    | (TraceEventBase & { type: 'memory_compaction'; beforeCount: number; afterCount: number; summarizedCount: number; retainedCount: number; shortTermCount?: number; midTermEntryCount?: number; longTermItemCount?: number; reason: string })
+    | (TraceEventBase & { type: 'memory_compaction'; beforeCount: number; afterCount: number; summarizedCount: number; retainedCount: number; shortTermCount?: number; midTermEntryCount?: number; longTermItemCount?: number; before?: SizeEstimateFields; after?: SizeEstimateFields; reason: string })
     | (TraceEventBase & { type: 'run_end'; finalOutputPreview: string; terminationReason: TerminationReason });
 
 export class TraceLogger {
@@ -53,7 +59,7 @@ function isTraceLevel(value: string): value is TraceLevel {
 }
 
 function defaultLevelForEvent(event: TraceEvent): TraceLevel {
-    if (event.type === 'memory_compaction' || event.type === 'permission_decision' || event.type === 'rag_search') {
+    if (event.type === 'memory_compaction' || event.type === 'permission_decision' || event.type === 'rag_search' || event.type === 'model_call_budget') {
         return 'debug';
     }
 
