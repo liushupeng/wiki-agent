@@ -6,7 +6,7 @@ import test from 'node:test';
 import { embedText } from '../../rag/embeddings.js';
 import { IndexedChunk } from '../../rag/types.js';
 import { JsonVectorStore } from '../../rag/vectorStore.js';
-import { ReadNoteTool, RelatedNotesTool, SearchNotesTool } from '../../tools/ragTool.js';
+import { GrepNotesTool, ReadNoteTool, RelatedNotesTool, SearchNotesTool } from '../../tools/ragTool.js';
 
 async function withKnowledgeIndex<T>(chunks: IndexedChunk[], run: (indexPath: string) => Promise<T>): Promise<T> {
     const previousIndexPath = process.env.KNOWLEDGE_INDEX_PATH;
@@ -75,6 +75,38 @@ test('SearchNotesTool validates arguments', () => {
 
     assert.deepEqual(tool.validateArgs({}), ['query must be a non-empty string']);
     assert.deepEqual(tool.validateArgs({ query: 'agent', topK: 0 }), ['topK must be a positive number']);
+});
+
+test('GrepNotesTool validates arguments', () => {
+    const tool = new GrepNotesTool();
+
+    assert.deepEqual(tool.validateArgs({}), ['query must be a non-empty string']);
+    assert.deepEqual(tool.validateArgs({ query: 'agent', regex: 'yes' }), ['regex must be a boolean']);
+    assert.deepEqual(tool.validateArgs({ query: 'agent', maxResults: 0 }), ['maxResults must be a positive number']);
+});
+
+test('GrepNotesTool returns keyword matches from NOTES_ROOT', async () => {
+    const previousNotesRoot = process.env.NOTES_ROOT;
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-tool-'));
+    process.env.NOTES_ROOT = dir;
+    await fs.writeFile(path.join(dir, 'agent.md'), 'agent = loop + memory + tool\n');
+
+    try {
+        const result = await new GrepNotesTool().execute({ query: 'memory', maxResults: 5 });
+
+        assert.equal(result.status, 'success');
+        assert.equal(result.metadata?.count, 1);
+        const data = result.data as { matches: Array<{ source: string; line: number; text: string }> };
+        assert.equal(data.matches[0].source, 'agent.md');
+        assert.equal(data.matches[0].line, 1);
+        assert.match(data.matches[0].text, /memory/);
+    } finally {
+        if (previousNotesRoot === undefined) {
+            delete process.env.NOTES_ROOT;
+        } else {
+            process.env.NOTES_ROOT = previousNotesRoot;
+        }
+    }
 });
 
 test('SearchNotesTool returns formatted search matches', async () => {

@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { EvalQuestion, evaluateRag } from '../../src/rag/evaluation.js';
+import { EvalComparisonSummary, EvalQuestion, evaluateRag, evaluateRetriever } from '../../src/rag/evaluation.js';
+import { grepMatchesToSearchResults, grepNotes } from '../../src/rag/grep.js';
 import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
 
 /**
@@ -11,16 +12,48 @@ import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
  * - npm run eval:rag -- <questionsFile>
  * - npm run eval:rag -- <questionsFile> <indexFile>
  *
- * 这个脚本只评估检索层，不调用 LLM。它适合在调整 chunker、embedding
- * 或 vector store 后，快速观察 topK 召回是否仍然命中预期笔记和关键词。
+ * 这个脚本只评估检索层，不调用 LLM。RAG_EVAL_MODE 支持 vector、grep、both。
+ * 它适合在调整 chunker、embedding、vector store 或 grep 策略后，
+ * 快速观察 topK 召回是否仍然命中预期笔记和关键词。
  */
 async function main() {
     const questionsFile = path.resolve(process.argv[2] ?? 'examples/rag-eval/questions.json');
     const indexFile = path.resolve(process.argv[3] ?? process.env.KNOWLEDGE_INDEX_PATH ?? 'var/knowledge/index.json');
+    const notesRoot = path.resolve(process.env.NOTES_ROOT ?? 'notes');
+    const mode = (process.env.RAG_EVAL_MODE ?? 'vector').toLowerCase();
     const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
     const vectorStore = createVectorStoreFromEnv({ filePath: indexFile });
 
-    console.log(JSON.stringify(await evaluateRag(questions, vectorStore), null, 2));
+    if (mode === 'vector') {
+        console.log(JSON.stringify(await evaluateRag(questions, vectorStore), null, 2));
+        return;
+    }
+
+    const grepSummary = () => evaluateRetriever(questions, {
+        name: 'grep',
+        async search(item, topK) {
+            const query = item.grepQuery ?? item.question;
+            return grepMatchesToSearchResults(await grepNotes(notesRoot, query, { maxResults: topK }), query);
+        }
+    });
+
+    if (mode === 'grep') {
+        console.log(JSON.stringify(await grepSummary(), null, 2));
+        return;
+    }
+
+    if (mode === 'both') {
+        const comparison: EvalComparisonSummary = {
+            status: 'success',
+            mode: 'both',
+            vector: await evaluateRag(questions, vectorStore),
+            grep: await grepSummary()
+        };
+        console.log(JSON.stringify(comparison, null, 2));
+        return;
+    }
+
+    throw new Error(`unsupported RAG_EVAL_MODE: ${mode}`);
 }
 
 main().catch(error => {

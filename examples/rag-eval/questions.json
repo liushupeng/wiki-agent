@@ -1,11 +1,13 @@
 [
   {
     "question": "wiki-agent 为什么把检索做成工具，而不是固定在回答前执行一次？",
+    "grepQuery": "检索 工具",
     "expectedSource": "agent-rag.md",
     "expectedTerms": ["工具", "Agent", "检索"]
   },
   {
     "question": "Markdown 笔记索引应该保留哪些结构化信息？",
+    "grepQuery": "frontmatter tags wiki links",
     "expectedSource": "markdown-notes.md",
     "expectedTerms": ["文件路径", "标题层级", "frontmatter", "tags", "wiki links"]
   }

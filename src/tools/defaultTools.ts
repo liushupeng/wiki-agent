@@ -1,7 +1,7 @@
 import { IAgentTool } from '../types.js';
 import { ApplyPatchTool, GitDiffTool, GitStatusTool, RunTestsTool } from './codingTool.js';
 import { ListDirTool, ReadFileTool, WriteFileTool } from './fileTool.js';
-import { ReadNoteTool, RelatedNotesTool, SearchNotesTool } from './ragTool.js';
+import { GrepNotesTool, ReadNoteTool, RelatedNotesTool, SearchNotesTool } from './ragTool.js';
 import { GlobSearchTool, GrepSearchTool } from './searchTool.js';
 import { ShellExecuteTool } from './shellTool.js';
 import { LoadSkillTool } from './skillTool.js';
@@ -43,6 +43,7 @@ export function createDefaultTools(options: CreateDefaultToolsOptions = {}): IAg
         new GlobSearchTool(),
         new GrepSearchTool(),
         new SearchNotesTool(),
+        new GrepNotesTool(),
         new ReadNoteTool(),
         new RelatedNotesTool(),
         new LoadSkillTool(),

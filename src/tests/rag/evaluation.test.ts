@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { evaluateRag, scoreQuestion } from '../../rag/evaluation.js';
+import { evaluateRag, evaluateRetriever, scoreQuestion } from '../../rag/evaluation.js';
 import { SearchResult } from '../../rag/types.js';
 
 const matches: SearchResult[] = [
@@ -56,7 +56,27 @@ test('evaluateRag searches each question and summarizes accuracy', async () => {
 
     assert.deepEqual(searchedQueries, ['hit question', 'miss question']);
     assert.equal(summary.status, 'success');
+    assert.equal(summary.retriever, 'vector');
     assert.equal(summary.passed, 1);
     assert.equal(summary.total, 2);
     assert.equal(summary.accuracy, 0.5);
+});
+
+test('evaluateRetriever supports custom grep-style query fields', async () => {
+    const searchedQueries: string[] = [];
+
+    const summary = await evaluateRetriever([
+        { question: 'what is the agent formula?', grepQuery: 'loop memory tool', expectedSource: 'agent.md', expectedTerms: ['Agent', 'retrieval'] }
+    ], {
+        name: 'grep',
+        async search(item): Promise<SearchResult[]> {
+            searchedQueries.push(item.grepQuery ?? item.question);
+            return matches;
+        }
+    });
+
+    assert.deepEqual(searchedQueries, ['loop memory tool']);
+    assert.equal(summary.retriever, 'grep');
+    assert.equal(summary.passed, 1);
+    assert.equal(summary.accuracy, 1);
 });

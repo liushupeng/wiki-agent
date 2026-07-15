@@ -16,3 +16,9 @@ test('wiki-agent system prompt requires evidence-aware answers', () => {
     assert.match(WIKI_AGENT_SYSTEM_PROMPT, /不要编造不存在的笔记内容/);
     assert.match(WIKI_AGENT_SYSTEM_PROMPT, /笔记中明确写到的内容/);
 });
+
+test('wiki-agent system prompt guides vector versus grep note search', () => {
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /search_notes 做语义检索/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /grep_notes 做关键词\/正则检索/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /先用 grep_notes 查精确线索，再用 search_notes/);
+});

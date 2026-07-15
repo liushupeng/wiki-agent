@@ -3,6 +3,7 @@ import { VectorStore } from './vectorStore.js';
 
 export type EvalQuestion = {
     question: string;
+    grepQuery?: string;
     expectedSource?: string;
     expectedTerms?: string[];
 };
@@ -17,10 +18,23 @@ export type EvalQuestionResult = {
 
 export type EvalSummary = {
     status: 'success';
+    retriever: string;
     passed: number;
     total: number;
     accuracy: number;
     results: EvalQuestionResult[];
+};
+
+export type EvalComparisonSummary = {
+    status: 'success';
+    mode: 'both';
+    vector: EvalSummary;
+    grep: EvalSummary;
+};
+
+export type EvalRetriever = {
+    name: string;
+    search(question: EvalQuestion, topK: number): Promise<SearchResult[]>;
 };
 
 export async function evaluateRag(
@@ -28,16 +42,28 @@ export async function evaluateRag(
     vectorStore: Pick<VectorStore, 'search'>,
     topK = 5
 ): Promise<EvalSummary> {
+    return evaluateRetriever(questions, {
+        name: 'vector',
+        search: item => vectorStore.search(item.question, topK)
+    }, topK);
+}
+
+export async function evaluateRetriever(
+    questions: EvalQuestion[],
+    retriever: EvalRetriever,
+    topK = 5
+): Promise<EvalSummary> {
     const results: EvalQuestionResult[] = [];
 
     for (const item of questions) {
-        const matches = await vectorStore.search(item.question, topK);
+        const matches = await retriever.search(item, topK);
         results.push(scoreQuestion(item, matches));
     }
 
     const passedCount = results.filter(result => result.passed).length;
     return {
         status: 'success',
+        retriever: retriever.name,
         passed: passedCount,
         total: results.length,
         accuracy: results.length ? Number((passedCount / results.length).toFixed(2)) : 0,

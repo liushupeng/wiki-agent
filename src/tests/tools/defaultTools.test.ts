@@ -12,6 +12,7 @@ test('createDefaultTools returns the CLI default tool set', () => {
         'glob_search',
         'grep_search',
         'search_notes',
+        'grep_notes',
         'read_note',
         'related_notes',
         'load_skill',
@@ -42,6 +43,7 @@ test('createDefaultTools skips local tools covered by MCP tools', () => {
     assert.equal(toolNames.includes('git_diff'), false);
 
     assert.equal(toolNames.includes('grep_search'), true);
+    assert.equal(toolNames.includes('grep_notes'), true);
     assert.equal(toolNames.includes('search_notes'), true);
     assert.equal(toolNames.includes('apply_patch'), true);
     assert.equal(toolNames.includes('run_tests'), true);

@@ -201,7 +201,7 @@ loadSourceDocuments
 
 - 文件工具：`list_dir`、`read_file`、`write_file`
 - 搜索工具：`glob_search`、`grep_search`
-- RAG 工具：`search_notes`、`read_note`、`related_notes`
+- RAG 工具：`search_notes`、`grep_notes`、`read_note`、`related_notes`
 - Skill 工具：`load_skill`
 - Coding 工具：`git_status`、`git_diff`、`apply_patch`、`run_tests`
 - Shell 工具：`execute_command`
@@ -381,3 +381,25 @@ dist/src/tests/**/*.test.js
 - skill manifest 懒加载
 
 `npm run eval:rag` 默认读取 `examples/rag-eval/questions.json`，可以通过第一个命令行参数指定评测问题文件。
+
+RAG eval 支持对比向量检索和 grep 检索：
+
+```bash
+# 默认：只评估向量检索 search_notes
+npm run eval:rag
+
+# 只评估 grep 检索 grep_notes
+$env:RAG_EVAL_MODE="grep"; npm run eval:rag
+
+# 同时输出 vector 和 grep 两组结果，方便比较 accuracy、topSources
+$env:RAG_EVAL_MODE="both"; npm run eval:rag
+```
+
+评测问题可以额外提供 `grepQuery`。`question` 用于向量检索，`grepQuery` 用于 grep 检索，适合把自然语言问题改写成明确关键词、配置名或函数名。
+
+实际运行 Agent 时，可以用 trace 看 grep 是否有帮助：
+
+- `assistant_message.toolCalls`：模型是否选择了 `grep_notes`。
+- `rag_search.toolName`：区分 `search_notes` 和 `grep_notes`。
+- `rag_search.matchCount/topMatches`：grep 是否命中正确文件和行。
+- `tool_result.observation`：grep 返回内容是否过大、是否需要降低 `maxResults` 或 `contextLines`。
