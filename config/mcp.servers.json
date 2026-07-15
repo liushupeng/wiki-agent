@@ -1,0 +1,29 @@
+[
+  {
+    "name": "filesystem",
+    "command": "mcp-server-filesystem",
+    "args": ["C:\\AgentSandbox"],
+    "toolNamePrefix": "mcp_fs",
+    "defaultPermission": "mcp",
+    "defaultRiskLevel": "write",
+    "enabled": true
+  },
+  {
+    "name": "git",
+    "command": "mcp-server-git",
+    "args": ["--repository", "."],
+    "toolNamePrefix": "mcp_git",
+    "defaultPermission": "mcp",
+    "defaultRiskLevel": "safe",
+    "enabled": true
+  },
+  {
+    "name": "sqlite",
+    "command": "mcp-server-sqlite",
+    "args": ["--db-path", "var\\memory\\agent.db"],
+    "toolNamePrefix": "mcp_sqlite",
+    "defaultPermission": "mcp",
+    "defaultRiskLevel": "write",
+    "enabled": true
+  }
+]

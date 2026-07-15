@@ -12,10 +12,11 @@
 4. `src/permissions.ts`
 5. `src/memory.ts`
 6. `src/trace.ts`
-7. `src/rag/`
-8. `src/tools/`
-9. `scripts/rag/`
-10. `src/tests/`
+7. `src/mcp/`
+8. `src/rag/`
+9. `src/tools/`
+10. `scripts/rag/`
+11. `src/tests/`
 
 ## 运行时总览
 
@@ -77,6 +78,8 @@ const systemPrompt = skillManifestPrompt
 ```
 
 工具注册通过 `ToolRegistry` 完成。LLM 能看到的工具 schema 来自 registry。
+
+工具注册采用 MCP 优先策略：`registerConfiguredMcpTools()` 先按 `MCP_CONFIG_PATH` 动态加载 MCP 工具，随后 `createDefaultTools()` 注册本地工具。`getLocalToolNamesCoveredByMcp()` 会根据 MCP 暴露的远程工具名跳过等价本地工具，例如 Filesystem MCP 覆盖 `read_file`、`write_file`、`list_dir`、`glob_search`，Git MCP 覆盖 `git_status`、`git_diff`。最终内置工具和 MCP 工具都进入同一个 `ToolRegistry`，Agent loop 不需要区分来源。
 
 ## `src/agent.ts`
 
@@ -187,6 +190,44 @@ const stream = await this.client.chat.completions.create({
 - `execute()` 解析 JSON 参数、调用工具自身 `validateArgs()`，再执行工具。
 
 JSON 参数解析由 `utils/json.ts` 的 `parseToolArguments()` 完成。空参数按 `{}` 处理。
+
+## `src/mcp/`
+
+`src/mcp/` 是通用 MCP 接入层，用来把外部 MCP server 暴露的 tools 适配成项目内部的 `IAgentTool`。
+
+主要文件：
+
+- `config.ts`：读取 `MCP_CONFIG_PATH` 指向的 JSON 文件，得到一组 stdio MCP server 配置。
+- `client.ts`：用 MCP SDK 创建 `StdioMcpClient`，负责 `connect()`、`listTools()` 和 `callTool()`。
+- `toolAdapter.ts`：把单个 MCP `Tool` 包装成 `McpAgentTool`。
+- `register.ts`：连接配置中的 server，读取 tools，并注册到 `ToolRegistry`。
+
+数据流：
+
+```text
+MCP_CONFIG_PATH
+-> config/mcp.servers.json
+-> loadMcpServerConfigs()
+-> StdioMcpClient.connect()
+-> client.listTools()
+-> new McpAgentTool(...)
+-> registry.register(...)
+```
+
+`McpAgentTool` 做三件关键事情：
+
+1. 把 MCP tool 的 `inputSchema` 转成 OpenAI function tool 的 `parameters`。
+2. 用 `toolNamePrefix + remoteTool.name` 生成本地唯一工具名。
+3. 根据 MCP annotation 和默认配置推断 `riskLevel`、`permission`、`isReadOnly`。
+
+风险推断规则：
+
+- `readOnlyHint=true`：`riskLevel=safe`。
+- `destructiveHint=true`：`riskLevel=write`。
+- `openWorldHint=true`：`riskLevel=network`。
+- 没有 annotation：使用 server 配置的 `defaultRiskLevel`，默认是 `write`。
+
+这个默认值偏保守。因为 MCP server 是外部能力入口，未知工具默认进入审批流程更合适。
 
 ## `src/tools/executor.ts`
 

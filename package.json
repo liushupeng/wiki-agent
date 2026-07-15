@@ -8,6 +8,7 @@
     "ask": "tsx src/main.ts",
     "index:notes": "tsx scripts/rag/indexKnowledgeBase.ts",
     "eval:rag": "tsx scripts/rag/evaluateRag.ts",
+    "mcp:check": "tsx scripts/mcp/checkMcpServers.ts",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc",
     "start": "node dist/src/main.js",
@@ -22,6 +23,8 @@
   "author": "LiuShuPeng",
   "license": "ISC",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/server-filesystem": "^2026.7.10",
     "dotenv": "^17.4.2",
     "openai": "^6.42.0"
   },

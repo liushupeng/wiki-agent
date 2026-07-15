@@ -23,7 +23,7 @@ export interface IMemory {
     clear(): void;
 }
 
-export type ToolPermission = 'read' | 'write' | 'shell' | 'rag';
+export type ToolPermission = 'read' | 'write' | 'shell' | 'rag' | 'mcp';
 export type ToolRiskLevel = 'safe' | 'write' | 'network' | 'shell' | 'dangerous';
 
 /**

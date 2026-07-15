@@ -18,6 +18,52 @@
 - 工具权限、人工审批、沙箱和 trace 如何形成安全边界。
 - 多种 chunker、embedding、vector store 如何逐步替换实验。
 
+## 前置要求
+
+需要先准备这些本机依赖：
+
+```powershell
+# Node.js / npm
+winget install OpenJS.NodeJS
+node --version
+npm --version
+
+# Git，本地 Git 工具和 Git MCP 都会用到
+winget install Git.Git
+git --version
+
+# uv / uvx，Git 和 SQLite MCP 使用 uv tool 安装 Python MCP server
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+uvx --version
+```
+
+项目依赖和 MCP server 工具安装：
+
+```powershell
+# 如果是从代码库安装已有依赖，执行这一条即可
+npm install
+
+# 如果是从零给项目补齐 npm 依赖，对应的具体包安装命令是：
+npm install openai dotenv @modelcontextprotocol/sdk @modelcontextprotocol/server-filesystem
+npm install --save-dev typescript tsx @types/node
+
+# 安装 Git / SQLite MCP server
+uv tool install mcp-server-git
+uv tool install mcp-server-sqlite
+
+# 确认 MCP server 命令可被当前 shell 找到
+where.exe mcp-server-filesystem
+where.exe mcp-server-git
+where.exe mcp-server-sqlite
+
+# 检查 MCP server 是否能启动并列出工具
+npm run mcp:check
+```
+
+安装完成后，`config/mcp.servers.json` 会直接调用 `mcp-server-filesystem`、`mcp-server-git` 和 `mcp-server-sqlite`，启动时不再依赖临时拉取。
+
+还需要准备 DeepSeek 或其他 OpenAI-compatible LLM API key，并写入本地 `.env`。
+
 ## 快速开始
 
 ```bash
@@ -40,6 +86,7 @@ npm run dev
 npm run ask -- "检索我的 Agent 笔记"
 npm run index:notes -- notes
 npm run eval:rag
+npm run mcp:check
 npm test
 ```
 
@@ -52,6 +99,7 @@ wiki-agent/
 ├── skills/              # 可按需加载的 skill Markdown
 ├── notes/               # 默认 Markdown 知识源示例
 ├── examples/            # 示例数据，例如 RAG 评测问题
+├── config/              # 示例配置，例如 MCP server 列表
 ├── var/                 # 运行产物：索引、trace 等，不进入 Git
 ├── docs/                # 代码导读
 ├── .env.example         # 运行配置模板
@@ -73,6 +121,7 @@ src/
 ├── cli/                 # CLI 适配器
 ├── prompts/             # system prompt
 ├── protocol/            # OpenAI tool-call 协议适配
+├── mcp/                 # MCP server 配置、client 和 tool adapter
 ├── rag/                 # RAG 文档加载、chunk、embedding、vector store、pipeline
 ├── tools/               # Agent 工具实现
 ├── utils/               # 通用工具函数
@@ -156,6 +205,41 @@ loadSourceDocuments
 - Skill 工具：`load_skill`
 - Coding 工具：`git_status`、`git_diff`、`apply_patch`、`run_tests`
 - Shell 工具：`execute_command`
+- MCP 工具：通过 `MCP_CONFIG_PATH` 指向的配置文件从外部 MCP server 动态加载
+
+启动时会先注册 MCP 工具，再注册本地工具。如果 MCP 已经提供等价能力，本地对应工具会跳过，避免模型同时看到两套做同一件事的工具。当前过滤规则：
+
+- Filesystem MCP 覆盖 `list_dir`、`read_file`、`write_file`、`glob_search`。
+- Git MCP 覆盖 `git_status`、`git_diff`。
+- `grep_search`、RAG、skill、`apply_patch`、`run_tests`、`execute_command` 仍由本地工具提供。
+
+## MCP 接入
+
+项目通过 `src/mcp/` 提供通用 MCP 接入层：
+
+```text
+MCP server config
+-> StdioMcpClient
+-> listTools()
+-> McpAgentTool adapter
+-> ToolRegistry
+-> LLM tool schema
+```
+
+Agent loop 不感知具体 MCP server。Filesystem、Git、SQLite 或后续其他 MCP 都以相同方式接入：在 `.env` 中用 `MCP_CONFIG_PATH` 指向 MCP 配置文件，配置文件声明 stdio server 的 `command`、`args`、工具名前缀和默认风险等级。
+
+```env
+MCP_CONFIG_PATH=config/mcp.servers.json
+```
+
+MCP tool 的风险等级按以下顺序确定：
+
+- server tool 标注 `readOnlyHint=true` 时视为 `safe`。
+- server tool 标注 `destructiveHint=true` 时视为 `write`。
+- server tool 标注 `openWorldHint=true` 时视为 `network`。
+- 没有 annotation 时使用 server 配置中的 `defaultRiskLevel`。
+
+因此，新增 MCP server 时通常只需要补一段配置；如果某个 server 的工具风险无法通过 annotation 表达，再调整该 server 的默认风险等级。
 
 ## 安全边界
 

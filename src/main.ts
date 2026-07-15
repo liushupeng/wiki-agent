@@ -5,9 +5,10 @@ import { askToolApproval } from './cli/approvalPrompt.js';
 import { getApprovalMode } from './config.js';
 import { MemoryManager } from './memory.js';
 import { WikiAgent } from './agent.js';
+import { registerConfiguredMcpTools } from './mcp/register.js';
 import { WIKI_AGENT_SYSTEM_PROMPT } from './prompts/systemPrompt.js';
 import { buildSkillManifestPrompt, loadSkillManifests } from './skills.js';
-import { createDefaultTools } from './tools/defaultTools.js';
+import { createDefaultTools, getLocalToolNamesCoveredByMcp } from './tools/defaultTools.js';
 import { ToolRegistry } from './tools/registry.js';
 
 async function main() {
@@ -34,9 +35,11 @@ async function main() {
         : WIKI_AGENT_SYSTEM_PROMPT;
     const memory = new MemoryManager(systemPrompt);
 
-    // 初始化工具注册中心 (TODO: 未来可以支持动态加载工具)
+    // 初始化工具注册中心：MCP 优先注册，等价本地工具作为兜底能力按需跳过。
     const registry = new ToolRegistry();
-    for (const tool of createDefaultTools()) {
+    const registeredMcpTools = await registerConfiguredMcpTools(registry);
+    const localToolNamesCoveredByMcp = getLocalToolNamesCoveredByMcp(registeredMcpTools);
+    for (const tool of createDefaultTools({ skipToolNames: localToolNamesCoveredByMcp })) {
         registry.register(tool);
     }
 
