@@ -1,0 +1,20 @@
+[
+  {
+    "question": "请查看当前 git diff 并总结这次改动。",
+    "expectedFirstTool": "load_tool_group",
+    "expectedGroup": "git",
+    "expectedLaterTools": ["git_diff"]
+  },
+  {
+    "question": "在知识库里查找 MCP_CONFIG_PATH 的说明。",
+    "expectedFirstTool": "grep_notes",
+    "expectedGroup": "core",
+    "expectedLaterTools": []
+  },
+  {
+    "question": "帮我修改代码后运行测试。",
+    "expectedFirstTool": "load_tool_group",
+    "expectedGroup": "coding",
+    "expectedLaterTools": ["apply_patch", "run_tests"]
+  }
+]

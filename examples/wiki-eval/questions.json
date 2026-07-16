@@ -1,0 +1,14 @@
+[
+  {
+    "question": "wiki-agent 回答知识库问题时，为什么应该优先查询 maintained wiki？",
+    "grepQuery": "maintained wiki raw sources",
+    "expectedSource": "wiki/AGENTS.md",
+    "expectedTerms": ["wiki", "raw sources", "source of truth"]
+  },
+  {
+    "question": "发现新资料和旧结论冲突时，wiki-agent 应该如何处理？",
+    "grepQuery": "contradictions silently overwriting",
+    "expectedSource": "wiki/AGENTS.md",
+    "expectedTerms": ["contradictions.md", "conflict", "source"]
+  }
+]

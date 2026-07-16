@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { EvalComparisonSummary, EvalQuestion, evaluateRag, evaluateRetriever } from '../../src/rag/evaluation.js';
 import { grepMatchesToSearchResults, grepNotes } from '../../src/rag/grep.js';
+import { getKnowledgeSourceRoots, sourceWithPrefix } from '../../src/rag/sourceRoots.js';
 import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
 
 /**
@@ -19,7 +20,7 @@ import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
 async function main() {
     const questionsFile = path.resolve(process.argv[2] ?? 'examples/rag-eval/questions.json');
     const indexFile = path.resolve(process.argv[3] ?? process.env.KNOWLEDGE_INDEX_PATH ?? 'var/knowledge/index.json');
-    const notesRoot = path.resolve(process.env.NOTES_ROOT ?? 'notes');
+    const sourceRoots = getKnowledgeSourceRoots();
     const mode = (process.env.RAG_EVAL_MODE ?? 'vector').toLowerCase();
     const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
     const vectorStore = createVectorStoreFromEnv({ filePath: indexFile });
@@ -33,7 +34,14 @@ async function main() {
         name: 'grep',
         async search(item, topK) {
             const query = item.grepQuery ?? item.question;
-            return grepMatchesToSearchResults(await grepNotes(notesRoot, query, { maxResults: topK }), query);
+            const matches = (await Promise.all(sourceRoots.map(async sourceRoot => {
+                const matchesForRoot = await grepNotes(path.resolve(sourceRoot.root), query, { maxResults: topK });
+                return matchesForRoot.map(match => ({
+                    ...match,
+                    source: sourceWithPrefix(sourceRoot.prefix, match.source)
+                }));
+            }))).flat().slice(0, topK);
+            return grepMatchesToSearchResults(matches, query);
         }
     });
 
