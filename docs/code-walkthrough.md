@@ -422,13 +422,13 @@ RAG 模块分成几层。
 - 读取 `.md`、`.markdown`、`.txt` 文件。
 - 生成 `SourceDocument`。
 
-`sourceRoots.ts` 负责多知识源配置：
+`sourceRoots.ts` 负责多知识源配置。默认读取 `config/knowledge.sources.json`，也可以通过环境变量指定其他配置：
 
 ```text
-KNOWLEDGE_SOURCE_ROOTS=wiki=wiki;raw=notes
+KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.json
 ```
 
-每个 entry 是 `prefix=path`。prefix 会写入 `SourceDocument.source`，例如 `wiki/index.md`、`raw/agent-rag.md`。这让检索层可以区分 maintained wiki 和 raw sources。
+配置中每个 source 的 `name` 会写入 `SourceDocument.source`，例如 `wiki/index.md`、`raw/agent-rag.md`。这让检索层可以区分 maintained wiki 和 raw sources。配置还能声明 `kind`、`priority`、`ignore` 等 source policy。`enabled=false` 或 `index=false` 的 source 不会进入索引。
 
 `loadSourceDocumentsFromRoots()` 会把多个 root 合并成一组 `SourceDocument`，供索引脚本和 pipeline 使用。
 
@@ -492,7 +492,7 @@ RAG 能力被包装成四个工具：
 
 工具层通过 `createVectorStoreFromEnv()` 获取后端，不直接依赖 JSON 文件实现。
 
-当前检索策略是 wiki-first：`search_notes` 会扩大候选集，再把 `wiki/` source 排在 raw source 前面；`grep_notes` 会按 `KNOWLEDGE_SOURCE_ROOTS` 搜索多个目录。这样保留现有 RAG 管线，同时让 LLM Wiki 层成为默认优先证据来源。
+当前检索策略是 wiki-first：`search_notes` 会扩大候选集，再把 `wiki/` source 排在 raw source 前面；`grep_notes` 会按 knowledge sources 配置搜索多个目录。这样保留现有 RAG 管线，同时让 LLM Wiki 层成为默认优先证据来源。
 
 `search_notes` 在 `TRACE_LEVEL=debug` 时写 `rag_search`，包含：
 
@@ -537,6 +537,7 @@ RAG 能力被包装成四个工具：
 
 `skills/` 中的维护型 wiki skills 把业务方法论沉淀为可按需加载的流程：
 
+- `analyze_knowledge_sources`：真实目录接入前做 source audit，输出 source policy、ignore 规则和首批验证范围。
 - `ingest_source`：把 raw source 编译进 wiki。
 - `answer_from_wiki`：先查 wiki，证据不足再查 raw sources。
 - `lint_wiki`：检查 wiki 健康度。
@@ -603,7 +604,7 @@ npm run index:notes -- D:\my-notes var/knowledge/index.json
 
 相关配置：
 
-- `NOTES_ROOT`
+- `KNOWLEDGE_SOURCES_CONFIG_PATH`
 - `KNOWLEDGE_INDEX_PATH`
 - `RAG_STORE`
 - `RAG_EMBEDDER`

@@ -13,8 +13,8 @@ import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
  * - npm run index:notes -- <notesDir>
  * - npm run index:notes -- <notesDir> <indexPath>
  *
- * 默认读取 KNOWLEDGE_SOURCE_ROOTS；未配置时回退到 NOTES_ROOT 或 notes/。
- * KNOWLEDGE_SOURCE_ROOTS 支持多个知识源，例如：wiki=wiki;raw=notes。
+ * 默认读取 config/knowledge.sources.json。
+ * 可用 KNOWLEDGE_SOURCES_CONFIG_PATH 指向其他数据源配置文件。
  * CLI 显式传入 <notesDir> 时按单根目录索引，方便临时实验。
  * 默认写入 var/knowledge/index.json。
  * RAG_STORE、RAG_EMBEDDER 和 RAG_CHUNKER 控制实验方案；当前内置 json/tf/auto。
@@ -23,7 +23,7 @@ import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
  */
 async function main() {
     const cliSourceDir = process.argv[2];
-    const sourceDir = path.resolve(cliSourceDir ?? process.env.NOTES_ROOT ?? 'notes');
+    const sourceDir = path.resolve(cliSourceDir ?? 'notes');
     const outputFile = path.resolve(process.argv[3] ?? process.env.KNOWLEDGE_INDEX_PATH ?? 'var/knowledge/index.json');
     const chunkSize = Number(process.env.RAG_CHUNK_SIZE ?? 900);
     const overlap = Number(process.env.RAG_CHUNK_OVERLAP ?? 120);
@@ -34,7 +34,7 @@ async function main() {
 
     const sourceRoots = cliSourceDir
         ? undefined
-        : getKnowledgeSourceRoots();
+        : await getKnowledgeSourceRoots();
     const documents = sourceRoots
         ? await loadSourceDocumentsFromRoots(sourceRoots)
         : undefined;

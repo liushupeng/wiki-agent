@@ -15,8 +15,8 @@ function getVectorStore() {
     return createVectorStoreFromEnv({ filePath: getIndexPath() });
 }
 
-function getSearchScopeDescription(): string {
-    return getKnowledgeSourceRoots().map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ');
+async function getSearchScopeDescription(): Promise<string> {
+    return (await getKnowledgeSourceRoots()).map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ');
 }
 
 function formatChunk(match: SearchResult) {
@@ -99,7 +99,7 @@ export class SearchNotesTool extends BaseAgentTool {
             return this.ok({
                 query: args.query,
                 matches: matches.map(formatChunk)
-            }, { count: matches.length, indexPath, scope: getSearchScopeDescription() });
+            }, { count: matches.length, indexPath, scope: await getSearchScopeDescription() });
         } catch (error: any) {
             return this.error(error.message, {
                 hint: '请先运行 npm run index:notes 生成 var/knowledge/index.json。'
@@ -149,12 +149,13 @@ export class GrepNotesTool extends BaseAgentTool {
         try {
             const maxResults = Math.min(args.maxResults ?? 50, 200);
             const contextLines = Math.min(args.contextLines ?? 1, 5);
-            const sourceRoots = getKnowledgeSourceRoots();
+            const sourceRoots = await getKnowledgeSourceRoots();
             const matches = (await Promise.all(sourceRoots.map(async sourceRoot => {
                 const matchesForRoot = await grepNotes(path.resolve(sourceRoot.root), args.query, {
                     regex: args.regex,
                     maxResults,
-                    contextLines
+                    contextLines,
+                    ignorePatterns: sourceRoot.ignore
                 });
 
                 return matchesForRoot.map(match => ({
@@ -168,7 +169,7 @@ export class GrepNotesTool extends BaseAgentTool {
                 level: 'debug',
                 toolName: this.name,
                 query: args.query,
-                indexPath: getSearchScopeDescription(),
+                indexPath: await getSearchScopeDescription(),
                 topK: maxResults,
                 matchCount: matches.length,
                 topMatches: matches.slice(0, 5).map(match => ({
@@ -182,10 +183,10 @@ export class GrepNotesTool extends BaseAgentTool {
                 query: args.query,
                 regex: args.regex ?? false,
                 matches
-            }, { count: matches.length, scope: getSearchScopeDescription(), maxResults, contextLines });
+            }, { count: matches.length, scope: await getSearchScopeDescription(), maxResults, contextLines });
         } catch (error: any) {
             return this.error(error.message, {
-                hint: '请确认 KNOWLEDGE_SOURCE_ROOTS 或 NOTES_ROOT 指向本地 Markdown/text 知识库目录。'
+                hint: '请确认 KNOWLEDGE_SOURCES_CONFIG_PATH 指向有效的 knowledge sources JSON 配置。'
             });
         }
     }

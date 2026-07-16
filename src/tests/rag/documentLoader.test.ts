@@ -36,10 +36,24 @@ test('loadSourceDocumentsFromRoots prefixes sources from multiple roots', async 
     await fs.writeFile(path.join(rawDir, 'source.md'), '# Source\nraw knowledge', 'utf-8');
 
     const documents = await loadSourceDocumentsFromRoots([
-        { prefix: 'wiki', root: wikiDir },
-        { prefix: 'raw', root: rawDir }
+        { prefix: 'wiki', root: wikiDir, kind: 'wiki', priority: 100, ignore: [] },
+        { prefix: 'raw', root: rawDir, kind: 'raw', priority: 50, ignore: [] }
     ]);
     const sources = documents.map(document => document.source).sort();
 
     assert.deepEqual(sources, ['raw/source.md', 'wiki/index.md']);
+});
+
+test('loadSourceDocumentsFromRoots applies source ignore patterns', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-doc-loader-ignore-'));
+    const rawDir = path.join(dir, 'raw');
+    await fs.mkdir(path.join(rawDir, '__pycache__'), { recursive: true });
+    await fs.writeFile(path.join(rawDir, 'keep.md'), '# Keep\nindexed', 'utf-8');
+    await fs.writeFile(path.join(rawDir, '__pycache__', 'ignored.md'), '# Ignore\nnot indexed', 'utf-8');
+
+    const documents = await loadSourceDocumentsFromRoots([
+        { prefix: 'raw', root: rawDir, kind: 'raw', priority: 50, ignore: ['**/__pycache__/**'] }
+    ]);
+
+    assert.deepEqual(documents.map(document => document.source), ['raw/keep.md']);
 });

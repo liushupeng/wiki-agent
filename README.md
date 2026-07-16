@@ -244,13 +244,36 @@ raw sources
 npm run index:notes
 ```
 
-默认通过 `KNOWLEDGE_SOURCE_ROOTS` 索引多个知识源：
+默认通过 `config/knowledge.sources.json` 索引多个知识源。这个文件是机器可读的 source policy，用来声明数据源、类型、优先级和 ignore 规则。可以用环境变量指定其他配置文件：
 
 ```env
-KNOWLEDGE_SOURCE_ROOTS=wiki=wiki;raw=notes
+KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.json
 ```
 
-`prefix=path` 中的 prefix 会写入检索结果的 `source`，例如 `wiki/index.md`、`raw/agent-rag.md`。CLI 显式传入目录时仍可临时索引单根目录：
+配置文件中每个 source 的 `name` 会写入检索结果的 `source` 前缀，例如 `wiki/index.md`、`raw/agent-rag.md`。CLI 显式传入目录时仍可临时索引单根目录：
+
+```json
+[
+  {
+    "name": "wiki",
+    "root": "wiki",
+    "kind": "wiki",
+    "enabled": true,
+    "index": true,
+    "priority": 100,
+    "ignore": []
+  },
+  {
+    "name": "raw",
+    "root": "notes",
+    "kind": "raw",
+    "enabled": true,
+    "index": true,
+    "priority": 50,
+    "ignore": ["**/__pycache__/**", "**/finalData/**"]
+  }
+]
+```
 
 ```bash
 npm run index:notes -- notes
@@ -449,6 +472,7 @@ load_skill({ "name": "..." })
 
 内置维护型 wiki skills：
 
+- `analyze_knowledge_sources`：真实目录接入前做 source audit，产出 source policy、ignore 规则和首批验证范围。
 - `ingest_source`：把 raw source 整理进 maintained wiki，并更新 index/log/contradictions。
 - `answer_from_wiki`：优先基于 wiki 回答，证据不足再回查 raw sources。
 - `lint_wiki`：检查孤立页面、缺引用、重复概念、过期结论和冲突。
@@ -548,8 +572,7 @@ MEMORY_MAX_MESSAGES=40
 MEMORY_KEEP_RECENT_MESSAGES=18
 MEMORY_MAX_CHARS=60000
 
-NOTES_ROOT=notes
-KNOWLEDGE_SOURCE_ROOTS=wiki=wiki;raw=notes
+KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.json
 KNOWLEDGE_INDEX_PATH=var/knowledge/index.json
 RAG_STORE=json
 RAG_EMBEDDER=tf

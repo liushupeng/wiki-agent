@@ -20,7 +20,7 @@ import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
 async function main() {
     const questionsFile = path.resolve(process.argv[2] ?? 'examples/rag-eval/questions.json');
     const indexFile = path.resolve(process.argv[3] ?? process.env.KNOWLEDGE_INDEX_PATH ?? 'var/knowledge/index.json');
-    const sourceRoots = getKnowledgeSourceRoots();
+    const sourceRoots = await getKnowledgeSourceRoots();
     const mode = (process.env.RAG_EVAL_MODE ?? 'vector').toLowerCase();
     const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
     const vectorStore = createVectorStoreFromEnv({ filePath: indexFile });
@@ -35,7 +35,10 @@ async function main() {
         async search(item, topK) {
             const query = item.grepQuery ?? item.question;
             const matches = (await Promise.all(sourceRoots.map(async sourceRoot => {
-                const matchesForRoot = await grepNotes(path.resolve(sourceRoot.root), query, { maxResults: topK });
+                const matchesForRoot = await grepNotes(path.resolve(sourceRoot.root), query, {
+                    maxResults: topK,
+                    ignorePatterns: sourceRoot.ignore
+                });
                 return matchesForRoot.map(match => ({
                     ...match,
                     source: sourceWithPrefix(sourceRoot.prefix, match.source)

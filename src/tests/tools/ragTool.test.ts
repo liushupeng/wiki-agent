@@ -46,6 +46,13 @@ async function withEnv<T>(values: Record<string, string>, run: () => Promise<T>)
     }
 }
 
+async function writeKnowledgeSourcesConfig(entries: unknown[]): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-knowledge-sources-'));
+    const configPath = path.join(dir, 'knowledge.sources.json');
+    await fs.writeFile(configPath, JSON.stringify(entries), 'utf-8');
+    return configPath;
+}
+
 function createChunk(input: {
     id: string;
     source: string;
@@ -105,35 +112,23 @@ test('GrepNotesTool validates arguments', () => {
     assert.deepEqual(tool.validateArgs({ query: 'agent', maxResults: 0 }), ['maxResults must be a positive number']);
 });
 
-test('GrepNotesTool returns keyword matches from NOTES_ROOT', async () => {
-    const previousNotesRoot = process.env.NOTES_ROOT;
-    const previousKnowledgeSourceRoots = process.env.KNOWLEDGE_SOURCE_ROOTS;
+test('GrepNotesTool returns keyword matches from configured knowledge sources', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-tool-'));
-    process.env.NOTES_ROOT = dir;
-    delete process.env.KNOWLEDGE_SOURCE_ROOTS;
     await fs.writeFile(path.join(dir, 'agent.md'), 'agent = loop + memory + tool\n');
+    const configPath = await writeKnowledgeSourcesConfig([
+        { name: 'raw', root: dir, kind: 'raw', enabled: true, index: true }
+    ]);
 
-    try {
+    await withEnv({ KNOWLEDGE_SOURCES_CONFIG_PATH: configPath }, async () => {
         const result = await new GrepNotesTool().execute({ query: 'memory', maxResults: 5 });
 
         assert.equal(result.status, 'success');
         assert.equal(result.metadata?.count, 1);
         const data = result.data as { matches: Array<{ source: string; line: number; text: string }> };
-        assert.equal(data.matches[0].source, 'notes/agent.md');
+        assert.equal(data.matches[0].source, 'raw/agent.md');
         assert.equal(data.matches[0].line, 1);
         assert.match(data.matches[0].text, /memory/);
-    } finally {
-        if (previousNotesRoot === undefined) {
-            delete process.env.NOTES_ROOT;
-        } else {
-            process.env.NOTES_ROOT = previousNotesRoot;
-        }
-        if (previousKnowledgeSourceRoots === undefined) {
-            delete process.env.KNOWLEDGE_SOURCE_ROOTS;
-        } else {
-            process.env.KNOWLEDGE_SOURCE_ROOTS = previousKnowledgeSourceRoots;
-        }
-    }
+    });
 });
 
 test('GrepNotesTool returns prefixed matches from configured knowledge roots', async () => {
@@ -145,13 +140,36 @@ test('GrepNotesTool returns prefixed matches from configured knowledge roots', a
     await fs.writeFile(path.join(wikiDir, 'agent.md'), 'agent wiki memory\n', 'utf-8');
     await fs.writeFile(path.join(rawDir, 'source.md'), 'agent raw memory\n', 'utf-8');
 
-    await withEnv({ KNOWLEDGE_SOURCE_ROOTS: `wiki=${wikiDir};raw=${rawDir}` }, async () => {
+    const configPath = await writeKnowledgeSourcesConfig([
+        { name: 'wiki', root: wikiDir, kind: 'wiki', enabled: true, index: true, priority: 100 },
+        { name: 'raw', root: rawDir, kind: 'raw', enabled: true, index: true, priority: 50 }
+    ]);
+
+    await withEnv({ KNOWLEDGE_SOURCES_CONFIG_PATH: configPath }, async () => {
         const result = await new GrepNotesTool().execute({ query: 'memory', maxResults: 5 });
 
         assert.equal(result.status, 'success');
         assert.equal(result.metadata?.count, 2);
         const data = result.data as { matches: Array<{ source: string }> };
         assert.deepEqual(data.matches.map(match => match.source).sort(), ['raw/source.md', 'wiki/agent.md']);
+    });
+});
+
+test('GrepNotesTool applies ignore patterns from knowledge source config', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-ignore-'));
+    await fs.mkdir(path.join(dir, '__pycache__'), { recursive: true });
+    await fs.writeFile(path.join(dir, 'keep.md'), 'agent memory keep\n', 'utf-8');
+    await fs.writeFile(path.join(dir, '__pycache__', 'ignored.md'), 'agent memory ignored\n', 'utf-8');
+    const configPath = await writeKnowledgeSourcesConfig([
+        { name: 'raw', root: dir, kind: 'raw', enabled: true, index: true, ignore: ['**/__pycache__/**'] }
+    ]);
+
+    await withEnv({ KNOWLEDGE_SOURCES_CONFIG_PATH: configPath }, async () => {
+        const result = await new GrepNotesTool().execute({ query: 'memory', maxResults: 5 });
+
+        assert.equal(result.status, 'success');
+        const data = result.data as { matches: Array<{ source: string }> };
+        assert.deepEqual(data.matches.map(match => match.source), ['raw/keep.md']);
     });
 });
 
