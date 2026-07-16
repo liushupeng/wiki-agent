@@ -26,6 +26,26 @@ async function withKnowledgeIndex<T>(chunks: IndexedChunk[], run: (indexPath: st
     }
 }
 
+async function withEnv<T>(values: Record<string, string>, run: () => Promise<T>): Promise<T> {
+    const previousValues = new Map<string, string | undefined>();
+    for (const [key, value] of Object.entries(values)) {
+        previousValues.set(key, process.env[key]);
+        process.env[key] = value;
+    }
+
+    try {
+        return await run();
+    } finally {
+        for (const [key, value] of previousValues) {
+            if (value === undefined) {
+                delete process.env[key];
+            } else {
+                process.env[key] = value;
+            }
+        }
+    }
+}
+
 function createChunk(input: {
     id: string;
     source: string;
@@ -87,8 +107,10 @@ test('GrepNotesTool validates arguments', () => {
 
 test('GrepNotesTool returns keyword matches from NOTES_ROOT', async () => {
     const previousNotesRoot = process.env.NOTES_ROOT;
+    const previousKnowledgeSourceRoots = process.env.KNOWLEDGE_SOURCE_ROOTS;
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-tool-'));
     process.env.NOTES_ROOT = dir;
+    delete process.env.KNOWLEDGE_SOURCE_ROOTS;
     await fs.writeFile(path.join(dir, 'agent.md'), 'agent = loop + memory + tool\n');
 
     try {
@@ -97,7 +119,7 @@ test('GrepNotesTool returns keyword matches from NOTES_ROOT', async () => {
         assert.equal(result.status, 'success');
         assert.equal(result.metadata?.count, 1);
         const data = result.data as { matches: Array<{ source: string; line: number; text: string }> };
-        assert.equal(data.matches[0].source, 'agent.md');
+        assert.equal(data.matches[0].source, 'notes/agent.md');
         assert.equal(data.matches[0].line, 1);
         assert.match(data.matches[0].text, /memory/);
     } finally {
@@ -106,7 +128,31 @@ test('GrepNotesTool returns keyword matches from NOTES_ROOT', async () => {
         } else {
             process.env.NOTES_ROOT = previousNotesRoot;
         }
+        if (previousKnowledgeSourceRoots === undefined) {
+            delete process.env.KNOWLEDGE_SOURCE_ROOTS;
+        } else {
+            process.env.KNOWLEDGE_SOURCE_ROOTS = previousKnowledgeSourceRoots;
+        }
     }
+});
+
+test('GrepNotesTool returns prefixed matches from configured knowledge roots', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-roots-'));
+    const wikiDir = path.join(dir, 'wiki');
+    const rawDir = path.join(dir, 'raw');
+    await fs.mkdir(wikiDir, { recursive: true });
+    await fs.mkdir(rawDir, { recursive: true });
+    await fs.writeFile(path.join(wikiDir, 'agent.md'), 'agent wiki memory\n', 'utf-8');
+    await fs.writeFile(path.join(rawDir, 'source.md'), 'agent raw memory\n', 'utf-8');
+
+    await withEnv({ KNOWLEDGE_SOURCE_ROOTS: `wiki=${wikiDir};raw=${rawDir}` }, async () => {
+        const result = await new GrepNotesTool().execute({ query: 'memory', maxResults: 5 });
+
+        assert.equal(result.status, 'success');
+        assert.equal(result.metadata?.count, 2);
+        const data = result.data as { matches: Array<{ source: string }> };
+        assert.deepEqual(data.matches.map(match => match.source).sort(), ['raw/source.md', 'wiki/agent.md']);
+    });
 });
 
 test('SearchNotesTool returns formatted search matches', async () => {
@@ -127,6 +173,29 @@ test('SearchNotesTool returns formatted search matches', async () => {
         assert.equal(typeof data.matches[0].score, 'number');
         assert.equal(data.matches[0].citation, 'agent.md > Agent > Memory');
         assert.deepEqual(data.matches[0].span, { start: 0, end: 'agent memory planning retrieval'.length });
+    });
+});
+
+test('SearchNotesTool prioritizes maintained wiki matches over raw source matches', async () => {
+    const chunks = [
+        createChunk({
+            id: 'raw/agent.md#1',
+            source: 'raw/agent.md',
+            text: 'agent retrieval planning raw source'
+        }),
+        createChunk({
+            id: 'wiki/agent.md#1',
+            source: 'wiki/agent.md',
+            text: 'agent retrieval planning maintained wiki'
+        })
+    ];
+
+    await withKnowledgeIndex(chunks, async () => {
+        const result = await new SearchNotesTool().execute({ query: 'agent retrieval planning', topK: 1 });
+
+        assert.equal(result.status, 'success');
+        const data = result.data as { matches: Array<Record<string, unknown>> };
+        assert.equal(data.matches[0].source, 'wiki/agent.md');
     });
 });
 

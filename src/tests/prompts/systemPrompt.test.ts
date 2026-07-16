@@ -14,7 +14,8 @@ test('wiki-agent system prompt discourages unnecessary tool calls and hidden rea
 
 test('wiki-agent system prompt requires evidence-aware answers', () => {
     assert.match(WIKI_AGENT_SYSTEM_PROMPT, /不要编造不存在的笔记内容/);
-    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /笔记中明确写到的内容/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /wiki 中已沉淀的结论/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /raw source 明确写到的内容/);
 });
 
 test('wiki-agent system prompt guides vector versus grep note search', () => {

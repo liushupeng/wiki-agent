@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { getSupportedSourceExtensions } from './chunker.js';
 import { SourceDocument } from './types.js';
+import { KnowledgeSourceRoot, sourceWithPrefix } from './sourceRoots.js';
 
 export const DEFAULT_SOURCE_EXTENSIONS = new Set(getSupportedSourceExtensions());
 export const DEFAULT_IGNORE_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.cache']);
@@ -9,6 +10,7 @@ export const DEFAULT_IGNORE_DIRS = new Set(['.git', 'node_modules', 'dist', 'bui
 export type DocumentLoaderOptions = {
     extensions?: Iterable<string>;
     ignoreDirs?: Iterable<string>;
+    sourcePrefix?: string;
 };
 
 /**
@@ -33,16 +35,27 @@ export async function walkSourceFiles(root: string, options: DocumentLoaderOptio
  */
 export async function loadSourceDocuments(root: string, options: DocumentLoaderOptions = {}): Promise<SourceDocument[]> {
     const files = await walkSourceFiles(root, options);
+    const sourcePrefix = options.sourcePrefix?.trim();
 
     return Promise.all(files.map(async file => {
         const extension = path.extname(file).toLowerCase();
+        const relativeSource = path.relative(root, file).replace(/\\/g, '/');
         return {
-            source: path.relative(root, file).replace(/\\/g, '/'),
+            source: sourcePrefix ? sourceWithPrefix(sourcePrefix, relativeSource) : relativeSource,
             absolutePath: file,
             extension,
             content: await fs.readFile(file, 'utf-8')
         };
     }));
+}
+
+export async function loadSourceDocumentsFromRoots(sourceRoots: KnowledgeSourceRoot[], options: DocumentLoaderOptions = {}): Promise<SourceDocument[]> {
+    const groups = await Promise.all(sourceRoots.map(sourceRoot => loadSourceDocuments(path.resolve(sourceRoot.root), {
+        ...options,
+        sourcePrefix: sourceRoot.prefix
+    })));
+
+    return groups.flat();
 }
 
 async function walk(root: string, extensions: Set<string>, ignoreDirs: Set<string>, files: string[]): Promise<void> {

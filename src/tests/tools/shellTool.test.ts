@@ -8,14 +8,17 @@ import { ShellExecuteTool } from '../../tools/shellTool.js';
 async function withSandbox<T>(run: (root: string) => Promise<T>): Promise<T> {
     const previousRoot = process.env.AGENT_SANDBOX_ROOT;
     const previousOutputMax = process.env.TOOL_OUTPUT_MAX_CHARS;
+    const previousTimeout = process.env.SHELL_TIMEOUT_MS;
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-shell-tool-'));
     process.env.AGENT_SANDBOX_ROOT = root;
+    process.env.SHELL_TIMEOUT_MS = '15000';
 
     try {
         return await run(root);
     } finally {
         restoreEnv('AGENT_SANDBOX_ROOT', previousRoot);
         restoreEnv('TOOL_OUTPUT_MAX_CHARS', previousOutputMax);
+        restoreEnv('SHELL_TIMEOUT_MS', previousTimeout);
     }
 }
 

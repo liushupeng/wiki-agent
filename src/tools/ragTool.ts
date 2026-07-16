@@ -2,6 +2,7 @@ import path from 'path';
 import { BaseAgentTool } from './base.js';
 import { grepNotes } from '../rag/grep.js';
 import { SearchResult } from '../rag/types.js';
+import { getKnowledgeSourceRoots, isWikiSource, sourceWithPrefix } from '../rag/sourceRoots.js';
 import { createVectorStoreFromEnv } from '../rag/vectorStore.js';
 import { TraceLogger } from '../trace.js';
 import { ToolResult } from '../types.js';
@@ -14,8 +15,8 @@ function getVectorStore() {
     return createVectorStoreFromEnv({ filePath: getIndexPath() });
 }
 
-function getNotesRoot(): string {
-    return path.resolve(process.env.NOTES_ROOT ?? 'notes');
+function getSearchScopeDescription(): string {
+    return getKnowledgeSourceRoots().map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ');
 }
 
 function formatChunk(match: SearchResult) {
@@ -32,6 +33,15 @@ function formatChunk(match: SearchResult) {
     };
 }
 
+function prioritizeWikiMatches(matches: SearchResult[], topK: number): SearchResult[] {
+    return [...matches]
+        .sort((left, right) => {
+            const priorityDelta = Number(isWikiSource(right.source)) - Number(isWikiSource(left.source));
+            return priorityDelta === 0 ? right.score - left.score : priorityDelta;
+        })
+        .slice(0, topK);
+}
+
 export class SearchNotesTool extends BaseAgentTool {
     readonly name = 'search_notes';
     readonly permission = 'rag' as const;
@@ -40,7 +50,7 @@ export class SearchNotesTool extends BaseAgentTool {
         type: 'function' as const,
         function: {
             name: 'search_notes',
-            description: '检索本地 Markdown 笔记索引，返回相关片段、标题路径、tags、wiki links 和引用',
+            description: '检索本地知识索引，优先返回 agent-maintained wiki 命中；适合概念、经验、项目知识和历史决策类问题',
             parameters: {
                 type: 'object',
                 properties: {
@@ -69,7 +79,8 @@ export class SearchNotesTool extends BaseAgentTool {
         try {
             const indexPath = getIndexPath();
             const topK = Math.min(args.topK ?? 5, 12);
-            const matches = await getVectorStore().search(args.query, topK);
+            const candidateLimit = Math.min(topK * 4, 48);
+            const matches = prioritizeWikiMatches(await getVectorStore().search(args.query, candidateLimit), topK);
             await this.traceLogger?.write({
                 type: 'rag_search',
                 level: 'debug',
@@ -88,10 +99,10 @@ export class SearchNotesTool extends BaseAgentTool {
             return this.ok({
                 query: args.query,
                 matches: matches.map(formatChunk)
-            }, { count: matches.length, indexPath });
+            }, { count: matches.length, indexPath, scope: getSearchScopeDescription() });
         } catch (error: any) {
             return this.error(error.message, {
-                hint: '请先运行 npm run index:notes -- <Markdown 笔记目录> 生成 var/knowledge/index.json。'
+                hint: '请先运行 npm run index:notes 生成 var/knowledge/index.json。'
             });
         }
     }
@@ -105,7 +116,7 @@ export class GrepNotesTool extends BaseAgentTool {
         type: 'function' as const,
         function: {
             name: 'grep_notes',
-            description: '在本地 Markdown/text 知识库中做关键词或正则 grep 检索，适合查找精确术语、配置名、函数名和文件名',
+            description: '在本地 Markdown/text 知识库中做关键词或正则 grep 检索；优先搜索 configured knowledge roots，适合查找精确术语、配置名、函数名和文件名',
             parameters: {
                 type: 'object',
                 properties: {
@@ -136,21 +147,28 @@ export class GrepNotesTool extends BaseAgentTool {
 
     async execute(args: { query: string; regex?: boolean; maxResults?: number; contextLines?: number }): Promise<ToolResult> {
         try {
-            const notesRoot = getNotesRoot();
             const maxResults = Math.min(args.maxResults ?? 50, 200);
             const contextLines = Math.min(args.contextLines ?? 1, 5);
-            const matches = await grepNotes(notesRoot, args.query, {
-                regex: args.regex,
-                maxResults,
-                contextLines
-            });
+            const sourceRoots = getKnowledgeSourceRoots();
+            const matches = (await Promise.all(sourceRoots.map(async sourceRoot => {
+                const matchesForRoot = await grepNotes(path.resolve(sourceRoot.root), args.query, {
+                    regex: args.regex,
+                    maxResults,
+                    contextLines
+                });
+
+                return matchesForRoot.map(match => ({
+                    ...match,
+                    source: sourceWithPrefix(sourceRoot.prefix, match.source)
+                }));
+            }))).flat().slice(0, maxResults);
 
             await this.traceLogger?.write({
                 type: 'rag_search',
                 level: 'debug',
                 toolName: this.name,
                 query: args.query,
-                indexPath: notesRoot,
+                indexPath: getSearchScopeDescription(),
                 topK: maxResults,
                 matchCount: matches.length,
                 topMatches: matches.slice(0, 5).map(match => ({
@@ -164,10 +182,10 @@ export class GrepNotesTool extends BaseAgentTool {
                 query: args.query,
                 regex: args.regex ?? false,
                 matches
-            }, { count: matches.length, notesRoot, maxResults, contextLines });
+            }, { count: matches.length, scope: getSearchScopeDescription(), maxResults, contextLines });
         } catch (error: any) {
             return this.error(error.message, {
-                hint: '请确认 NOTES_ROOT 指向本地 Markdown/text 知识库目录。'
+                hint: '请确认 KNOWLEDGE_SOURCE_ROOTS 或 NOTES_ROOT 指向本地 Markdown/text 知识库目录。'
             });
         }
     }

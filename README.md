@@ -1,6 +1,8 @@
 # wiki-agent
 
-`wiki-agent` 是一个本地优先的 Agentic RAG 助手。它把 Markdown 笔记索引成可检索的知识库，把检索、文件读取、代码观察、测试运行等能力暴露为工具，由 LLM 按任务自主选择工具、读取证据并生成回答。
+`wiki-agent` 是一个本地优先的 LLM Wiki / Agentic RAG 项目，用来展示一个 Agent 系统如何从“会检索 Markdown 笔记”演进为“会维护长期知识资产”的工程实现。
+
+它不是只把文件切 chunk 后交给向量检索，而是把 Agent loop、memory、tool、permission policy、observability、MCP、skill 和 eval 组合起来，让 LLM 能按任务规划、选择工具、读取证据、维护 wiki，并把失败样例沉淀为可改进的数据。
 
 这个项目采用一个简单的 Agent 视角：
 
@@ -9,14 +11,82 @@
 工程上：agent = loop + memory + tool + policy + observability
 ```
 
-其中 `loop` 负责持续规划和执行，`memory` 负责保存上下文和任务状态，`tool` 是广义工具，代表模型可调用的外部能力：RAG 检索、skill 加载、文件系统、Shell、API、测试命令都属于这个范畴。`policy` 提供权限、审批、预算和终止约束，`observability` 通过 trace、日志和评测让 Agent 行为可解释、可调试。
+- `loop` 是由 LLM 驱动的规划-执行循环：模型基于当前 memory 决定下一步是回答还是调用工具，工具结果再写回 memory，触发下一轮再规划
+- `memory` 不只是聊天历史，而是分成短期、中期、长期三层：短期保留最近上下文，中期承接压缩摘要，长期通过 wiki、skills、eval 和 bad cases 沉淀可复用知识
+- `tool` 是广义工具，代表模型可调用的外部能力：RAG 检索、skill 加载、文件系统、Shell、API、测试命令都属于这个范畴
+- `policy` 提供权限、审批、预算和终止约束
+- `observability` 通过 trace、日志和评测让 Agent 行为可解释、可调试
+
+## 架构图
+
+```mermaid
+flowchart TD
+    userInput["User Input"] --> agentLoop["WikiAgent Loop"]
+    agentLoop --> memory["Memory: Short Mid Long"]
+    agentLoop --> registry["Tool Registry"]
+    registry --> toolSchemas["Active Tool Schemas"]
+    toolSchemas --> model["OpenAI-compatible LLM"]
+    memory --> model
+    model --> toolCalls["LLM Tool Calls"]
+    toolCalls --> agentLoop
+    agentLoop --> executor["Tool Executor"]
+    executor --> policy["Permission Policy"]
+    executor --> registry
+    executor --> tools["Local Tools and MCP Tools"]
+    tools --> toolResults["Tool Results"]
+    toolResults --> memory
+    memory --> agentLoop
+
+    tools --> ragLayer["RAG: Vector Search and Grep"]
+    ragLayer --> wikiLayer["Maintained Wiki"]
+    ragLayer --> rawSources["Raw Sources"]
+
+    agentLoop --> trace["Trace Events"]
+    trace --> evalLoop["Eval and Bad Cases"]
+    evalLoop --> skills["Skills and Wiki Schema"]
+    skills --> agentLoop
+```
 
 项目适合学习和实验：
 
 - Agent loop 如何处理 `tool_calls`。
 - RAG 索引、embedding、向量检索如何组合。
+- LLM Wiki 如何把 raw sources、maintained wiki、schema、eval 和 bad case 串成闭环。
 - 工具权限、人工审批、沙箱和 trace 如何形成安全边界。
 - 多种 chunker、embedding、vector store 如何逐步替换实验。
+
+## 核心设计取舍
+
+- **Agent loop 保持清晰**：`src/agent.ts` 只负责 LLM 驱动的规划-执行循环、模型调用、工具调度和 trace；工具执行、权限判断、协议适配都拆到独立模块。
+- **Memory 明确分层**：短期 memory 负责最近对话，中期 memory 负责压缩后的摘要，长期 memory 通过 wiki、skills、eval、bad cases 沉淀跨会话知识资产。
+- **工具是广义能力入口**：RAG、grep、skill、MCP、本地文件、Git、Shell、测试命令都通过统一 `IAgentTool` 接口进入 Agent。
+- **检索采用 vector + grep 双通道**：语义问题优先 `search_notes`，明确术语、配置名、错误文本优先 `grep_notes`。
+- **工具 schema 按需暴露**：所有工具注册到 `ToolRegistry`，但每轮只暴露 core tools 和已加载 tool group，降低上下文占用。
+- **MCP 优先，本地工具兜底**：Filesystem/Git/SQLite 等成熟能力通过 MCP 接入；MCP 覆盖的本地等价工具会跳过，避免重复暴露。
+- **先沉淀数据，再谈训练**：当前重点是 trace、eval、bad case、wiki schema 和 skill，为未来 reranker、tool routing 或后训练准备数据资产。
+
+## 和普通 RAG 的区别
+
+普通 RAG 通常是：
+
+```text
+raw documents
+-> chunk / embed
+-> query-time retrieval
+-> answer
+```
+
+`wiki-agent` 的目标形态是：
+
+```text
+raw sources
+-> agent-maintained wiki
+-> wiki-first retrieval
+-> cited answer
+-> bad case / eval / skill / schema improvement
+```
+
+这意味着知识不会只在每次提问时被临时拼接，而是逐步沉淀到 `wiki/` 中，形成可审阅、可版本管理、可持续维护的 Markdown 知识层。
 
 ## 前置要求
 
@@ -97,8 +167,10 @@ wiki-agent/
 ├── src/                 # TypeScript 源码
 ├── scripts/             # 项目级辅助脚本，例如 RAG 索引和评测
 ├── skills/              # 可按需加载的 skill Markdown
+├── wiki/                # Agent 维护的结构化 Markdown wiki
 ├── notes/               # 默认 Markdown 知识源示例
 ├── examples/            # 示例数据，例如 RAG 评测问题
+├── badcases/            # Agent 失败样例模板和后续沉淀
 ├── config/              # 示例配置，例如 MCP server 列表
 ├── var/                 # 运行产物：索引、trace 等，不进入 Git
 ├── docs/                # 代码导读
@@ -113,7 +185,7 @@ src/
 ├── main.ts              # CLI 入口，初始化 memory、registry、agent
 ├── agent.ts             # Agent loop：模型调用、工具调度、trace 写入
 ├── memory.ts            # 对话记忆和自动压缩
-├── trace.ts             # JSONL trace 和 trace level 过滤
+├── trace.ts             # Trace sink、JSONL 默认实现和 trace level 过滤
 ├── permissions.ts       # 工具权限决策
 ├── sandbox.ts           # 本地沙箱路径保护
 ├── limits.ts            # 工具输出和文件读取限制
@@ -149,9 +221,36 @@ src/
 - 写文件、Shell、测试等有副作用工具串行执行。
 - 工具结果按原始 tool call 顺序写回 memory，保持 OpenAI tool 协议合法。
 
+### LLM Wiki Layer
+
+知识层采用三层结构：
+
+```text
+raw sources
+-> agent-maintained wiki
+-> query / eval / bad case loop
+```
+
+- `notes/` 保存原始资料，尽量作为 source of truth。
+- `wiki/` 保存 LLM 维护的结构化知识页，包括 `index.md`、`log.md`、`contradictions.md` 和各类页面目录。
+- `wiki/AGENTS.md` 定义 wiki schema，规定页面类型、frontmatter、引用规则、ingest/query/lint 流程。
+- `badcases/` 保存失败样例，后续转成 eval、skill、schema 或 prompt 的改进输入。
+
 ### RAG 索引
 
 默认索引命令：
+
+```bash
+npm run index:notes
+```
+
+默认通过 `KNOWLEDGE_SOURCE_ROOTS` 索引多个知识源：
+
+```env
+KNOWLEDGE_SOURCE_ROOTS=wiki=wiki;raw=notes
+```
+
+`prefix=path` 中的 prefix 会写入检索结果的 `source`，例如 `wiki/index.md`、`raw/agent-rag.md`。CLI 显式传入目录时仍可临时索引单根目录：
 
 ```bash
 npm run index:notes -- notes
@@ -166,7 +265,7 @@ var/knowledge/index.json
 索引数据流：
 
 ```text
-loadSourceDocuments
+loadSourceDocuments / loadSourceDocumentsFromRoots
 -> chunkDocument
 -> Embedder.embed
 -> VectorStore.upsertChunks
@@ -178,6 +277,8 @@ loadSourceDocuments
 - `RAG_EMBEDDER=tf`：本地词频向量，不依赖外部 embedding 服务。
 - `RAG_STORE=json`：写入 JSON 文件，查询时全量加载并计算余弦相似度。
 
+`search_notes` 会优先返回 `wiki/` source 命中；证据不足时再使用 raw source 命中补充。`grep_notes` 同样会在 configured knowledge roots 中搜索，并在结果里保留 source prefix。
+
 核心接口在：
 
 - `src/rag/embeddings.ts`：`Embedder`
@@ -186,7 +287,7 @@ loadSourceDocuments
 
 后续实验 LanceDB、pgvector、Qdrant、OpenAI embedding、本地 embedding 模型时，优先新增 adapter，不需要重写索引入口。
 
-## 工具能力
+## MCP / Tool Loading
 
 工具统一继承 `BaseAgentTool`，并声明：
 
@@ -220,7 +321,7 @@ loadSourceDocuments
 - Git MCP 覆盖 `git_status`、`git_diff`。
 - `grep_search`、RAG、skill、`apply_patch`、`run_tests`、`execute_command` 仍由本地工具提供。
 
-## MCP 接入
+### MCP 接入
 
 项目通过 `src/mcp/` 提供通用 MCP 接入层：
 
@@ -248,7 +349,13 @@ MCP tool 的风险等级按以下顺序确定：
 
 因此，新增 MCP server 时通常只需要补一段配置；如果某个 server 的工具风险无法通过 annotation 表达，再调整该 server 的默认风险等级。
 
-## 安全边界
+## 安全与权限设计
+
+Agent 能调用文件、Git、Shell、MCP 等外部能力，因此安全边界是核心设计之一。本项目把安全拆成三层：
+
+- **工具风险声明**：每个工具声明 `permission`、`riskLevel`、`isReadOnly`、`requiresApproval`。
+- **统一权限策略**：`PermissionPolicy` 根据风险、审批模式和 shell 安全规则返回 `allow`、`ask`、`deny`。
+- **运行时沙箱**：文件、搜索、Shell 和 Coding 工具都限制在指定根目录内。
 
 ### 审批模式
 
@@ -278,14 +385,26 @@ AGENT_WORKSPACE_ROOT=.
 
 `ApplyPatchTool`、`GitStatusTool`、`GitDiffTool`、`RunTestsTool` 都在该工作区内运行。
 
-## Trace
+## 可观测性与评测
 
-每次 `WikiAgent.run()` 都会写一个 JSONL trace：
+Agent 系统很难只靠最终答案调试，所以项目把 trace、成本估算、RAG eval、bad case 模板作为一等能力。
+
+每次 `WikiAgent.run()` 都会写 trace。当前默认 sink 是 `JsonlTraceSink`，写入本地 JSONL 文件：
 
 ```env
 TRACE_DIR=var/traces
 TRACE_LEVEL=info
 ```
+
+Trace 架构已经做成可插拔：
+
+```text
+TraceLogger
+-> TraceSink
+-> JsonlTraceSink
+```
+
+`TraceLogger` 负责补默认 level、按 `TRACE_LEVEL` 过滤事件；`TraceSink` 负责事件输出。后续如果要接 OpenTelemetry，可以新增 `OpenTelemetryTraceSink`，把 `agent.run`、`agent.step`、`llm.call`、`tool.execute`、`rag.search` 映射成 span 或 span event，而不需要改 Agent loop。
 
 基础事件：
 
@@ -328,6 +447,81 @@ load_skill({ "name": "..." })
 
 工具返回 skill 全文后，下一轮模型才能按 skill 的具体方法执行。这样避免把所有 skill 全文一次性塞进上下文。
 
+内置维护型 wiki skills：
+
+- `ingest_source`：把 raw source 整理进 maintained wiki，并更新 index/log/contradictions。
+- `answer_from_wiki`：优先基于 wiki 回答，证据不足再回查 raw sources。
+- `lint_wiki`：检查孤立页面、缺引用、重复概念、过期结论和冲突。
+- `capture_badcase`：把失败回答、检索遗漏或工具选择错误沉淀为 bad case 和 eval 候选。
+
+## Bad Case And Eval Loop
+
+推荐把每次明显失败都沉淀为可复现数据：
+
+```text
+bad answer / weak retrieval / wrong tool choice
+-> badcases/*.md
+-> examples/*-eval/questions.json
+-> update skill / schema / prompt / tool description
+-> rerun eval
+```
+
+已有样例：
+
+- `badcases/TEMPLATE.md`：失败样例模板。
+- `examples/rag-eval/questions.json`：普通 RAG 检索评测。
+- `examples/wiki-eval/questions.json`：wiki-first 检索评测样例。
+- `examples/tool-routing-eval/questions.json`：工具路由评测样例数据。
+
+Wiki eval 可以直接复用 RAG eval 脚本：
+
+```bash
+npm run index:notes
+npm run eval:rag -- examples/wiki-eval/questions.json
+```
+
+## 端到端作品集演示
+
+推荐用 `examples/wiki-demo/` 展示完整闭环：
+
+```text
+examples/wiki-demo/raw/*.md
+-> ingest_source
+-> wiki/sources + wiki/concepts + wiki/index.md + wiki/log.md
+-> search_notes / grep_notes
+-> answer_from_wiki
+-> capture_badcase
+-> examples/*-eval/questions.json
+```
+
+这个 demo 重点展示的不是“能调用一次 LLM”，而是 Agent 工程中更重要的部分：
+
+- 如何把原始资料变成长期可维护的 wiki。
+- 如何让模型在 vector search、grep search、read note、skill、tool group 之间做选择。
+- 如何用 trace 解释一次 Agent 行为。
+- 如何把失败样例沉淀为 eval、skill、schema 或 prompt 的改进。
+
+## 未来演进
+
+短期方向是继续完善 LLM Wiki 层：
+
+- 让 `ingest_source` 更稳定地生成 source/concept/decision 页面。
+- 让 `lint_wiki` 能检查孤立页、缺引用、重复概念和冲突。
+- 让 `answer_from_wiki` 形成稳定的 wiki-first 回答格式。
+- 把真实 bad case 持续补进 `badcases/` 和 `examples/*-eval/`。
+
+中期方向是增强评测和工具路由：
+
+- 增加 tool-routing eval 脚本，评估模型是否正确调用 `load_tool_group`。
+- 对比 vector、grep、wiki-first retrieval 在不同问题类型下的表现。
+- 用 trace 中的 `assistant_message.toolCalls` 和 `rag_search` 做行为分析。
+
+长期方向是在积累足够数据后探索训练或后训练：
+
+- 用 bad case 和人工修正记录准备偏好数据。
+- 训练轻量 reranker 或 tool routing classifier。
+- 用真实任务样本评估是否需要 SFT/RL，而不是过早引入训练复杂度。
+
 ## 配置
 
 `.env.example` 中的主要配置：
@@ -355,6 +549,7 @@ MEMORY_KEEP_RECENT_MESSAGES=18
 MEMORY_MAX_CHARS=60000
 
 NOTES_ROOT=notes
+KNOWLEDGE_SOURCE_ROOTS=wiki=wiki;raw=notes
 KNOWLEDGE_INDEX_PATH=var/knowledge/index.json
 RAG_STORE=json
 RAG_EMBEDDER=tf

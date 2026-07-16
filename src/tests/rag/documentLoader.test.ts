@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { chunkDocument, getSupportedSourceExtensions } from '../../rag/chunker.js';
-import { DEFAULT_SOURCE_EXTENSIONS, loadSourceDocuments } from '../../rag/documentLoader.js';
+import { DEFAULT_SOURCE_EXTENSIONS, loadSourceDocuments, loadSourceDocumentsFromRoots } from '../../rag/documentLoader.js';
 
 test('document loader uses the chunker-supported default extensions', () => {
     assert.deepEqual(
@@ -24,4 +24,22 @@ test('loadSourceDocuments loads default supported text files', async () => {
 
     assert.deepEqual(sources, ['note.md', 'plain.txt']);
     assert.equal(documents.every(document => chunkDocument(document).length > 0), true);
+});
+
+test('loadSourceDocumentsFromRoots prefixes sources from multiple roots', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-doc-loader-roots-'));
+    const wikiDir = path.join(dir, 'wiki');
+    const rawDir = path.join(dir, 'raw');
+    await fs.mkdir(wikiDir, { recursive: true });
+    await fs.mkdir(rawDir, { recursive: true });
+    await fs.writeFile(path.join(wikiDir, 'index.md'), '# Wiki\ncompiled knowledge', 'utf-8');
+    await fs.writeFile(path.join(rawDir, 'source.md'), '# Source\nraw knowledge', 'utf-8');
+
+    const documents = await loadSourceDocumentsFromRoots([
+        { prefix: 'wiki', root: wikiDir },
+        { prefix: 'raw', root: rawDir }
+    ]);
+    const sources = documents.map(document => document.source).sort();
+
+    assert.deepEqual(sources, ['raw/source.md', 'wiki/index.md']);
 });

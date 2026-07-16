@@ -16,7 +16,8 @@
 8. `src/rag/`
 9. `src/tools/`
 10. `scripts/rag/`
-11. `src/tests/`
+11. `wiki/`、`skills/`、`badcases/`
+12. `src/tests/`
 
 ## 运行时总览
 
@@ -42,6 +43,17 @@ main.ts
 -> 如果有 tool_calls，执行工具并继续下一轮
 -> 如果没有 tool_calls，返回最终答案
 -> TraceLogger.write(run_end)
+```
+
+知识层运行逻辑：
+
+```text
+raw sources
+-> ingest_source skill
+-> wiki/ maintained pages
+-> search_notes / grep_notes
+-> answer_from_wiki skill
+-> badcases + eval updates
 ```
 
 ## `src/main.ts`
@@ -314,11 +326,19 @@ while (splitIndex > 0 && nonSystem[splitIndex]?.role === 'tool') {
 
 ## `src/trace.ts`
 
-Trace 是 JSONL 文件，每行一个结构化事件。默认输出目录：
+Trace 通过可插拔 sink 输出。默认 sink 是 `JsonlTraceSink`，每行写一个结构化 JSON 事件。默认输出目录：
 
 ```text
 var/traces
 ```
+
+核心对象：
+
+- `TraceLogger`：补齐默认 level、按 `TRACE_LEVEL` 过滤事件，并把事件交给 sink。
+- `TraceSink`：事件输出后端接口。
+- `JsonlTraceSink`：当前默认实现，写入本地 JSONL 文件。
+
+这个结构让后续接 OpenTelemetry 时只需要新增 sink，把 `run`、`step`、`model_call`、`tool_result`、`rag_search` 等事件映射到 span 或 span event，不需要改 Agent loop。
 
 支持级别：
 
@@ -402,6 +422,16 @@ RAG 模块分成几层。
 - 读取 `.md`、`.markdown`、`.txt` 文件。
 - 生成 `SourceDocument`。
 
+`sourceRoots.ts` 负责多知识源配置：
+
+```text
+KNOWLEDGE_SOURCE_ROOTS=wiki=wiki;raw=notes
+```
+
+每个 entry 是 `prefix=path`。prefix 会写入 `SourceDocument.source`，例如 `wiki/index.md`、`raw/agent-rag.md`。这让检索层可以区分 maintained wiki 和 raw sources。
+
+`loadSourceDocumentsFromRoots()` 会把多个 root 合并成一组 `SourceDocument`，供索引脚本和 pipeline 使用。
+
 ### 切分
 
 `chunker.ts` 提供：
@@ -453,13 +483,16 @@ load documents
 
 ## `src/tools/ragTool.ts`
 
-RAG 能力被包装成三个工具：
+RAG 能力被包装成四个工具：
 
-- `search_notes`：按 query 检索相关片段。
+- `search_notes`：按 query 检索相关片段，优先返回 `wiki/` source。
+- `grep_notes`：在 configured knowledge roots 中做关键词/正则搜索，并保留 source prefix。
 - `read_note`：按 source 读取某篇笔记的 chunks。
 - `related_notes`：根据某篇笔记找相关 chunks。
 
 工具层通过 `createVectorStoreFromEnv()` 获取后端，不直接依赖 JSON 文件实现。
+
+当前检索策略是 wiki-first：`search_notes` 会扩大候选集，再把 `wiki/` source 排在 raw source 前面；`grep_notes` 会按 `KNOWLEDGE_SOURCE_ROOTS` 搜索多个目录。这样保留现有 RAG 管线，同时让 LLM Wiki 层成为默认优先证据来源。
 
 `search_notes` 在 `TRACE_LEVEL=debug` 时写 `rag_search`，包含：
 
@@ -487,6 +520,41 @@ RAG 能力被包装成三个工具：
 - `grep_search`：按字符串或正则搜索文本内容。
 
 返回路径通过 `toSandboxRelativePath()` 转成沙箱相对路径，避免暴露绝对路径。
+
+## `wiki/`
+
+`wiki/` 是 agent-maintained knowledge layer，不是运行产物。它保存 LLM 长期维护的 Markdown 知识结构：
+
+- `AGENTS.md`：wiki schema，规定页面类型、frontmatter、引用、ingest/query/lint 规则。
+- `index.md`：内容索引。
+- `log.md`：ingest、query、lint 的时间线。
+- `contradictions.md`：冲突、过期结论和证据缺口。
+- `sources/`、`concepts/`、`projects/`、`decisions/`、`people/`：不同页面类型的目录。
+
+设计目标是让知识从 query-time RAG 的临时综合，逐步变成可审阅、可版本管理、可复利的 Markdown 资产。
+
+## Wiki Maintenance Skills
+
+`skills/` 中的维护型 wiki skills 把业务方法论沉淀为可按需加载的流程：
+
+- `ingest_source`：把 raw source 编译进 wiki。
+- `answer_from_wiki`：先查 wiki，证据不足再查 raw sources。
+- `lint_wiki`：检查 wiki 健康度。
+- `capture_badcase`：把失败样例转成 bad case 和 eval 候选。
+
+这些 skill 先保持 Markdown 形式。只有当某个流程稳定、高频且需要严格参数时，再固化成 TypeScript 工具。
+
+## Bad Case And Eval
+
+`badcases/TEMPLATE.md` 定义失败样例格式。推荐把检索遗漏、工具路由错误、证据不足、幻觉、schema 缺口等问题都记录下来。
+
+评测样例分三类：
+
+- `examples/rag-eval/questions.json`：普通 RAG 检索。
+- `examples/wiki-eval/questions.json`：wiki-first 检索。
+- `examples/tool-routing-eval/questions.json`：工具选择和 tool group 加载。
+
+RAG 和 wiki eval 复用 `scripts/rag/evaluateRag.ts`。tool-routing eval 当前先作为数据格式，后续可以新增专门脚本读取 trace 中的 `assistant_message.toolCalls` 进行评估。
 
 ## `src/tools/shellTool.ts`
 
