@@ -67,7 +67,6 @@ export function parseKnowledgeSourceConfigs(value: unknown): KnowledgeSourceConf
 }
 
 function readKnowledgeSourceEntries(value: unknown): unknown[] | undefined {
-    if (Array.isArray(value)) return value;
     if (typeof value !== 'object' || value === null) return undefined;
     const sources = (value as Record<string, unknown>).sources;
     return Array.isArray(sources) ? sources : undefined;

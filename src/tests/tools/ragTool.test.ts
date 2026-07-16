@@ -13,7 +13,7 @@ async function withKnowledgeIndex<T>(chunks: IndexedChunk[], run: (indexPath: st
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-rag-tool-'));
     const indexPath = path.join(dir, 'index.json');
     process.env.KNOWLEDGE_INDEX_PATH = indexPath;
-    await new JsonVectorStore(indexPath).upsertChunks(chunks, { chunkSize: 100, overlap: 10 });
+    await new JsonVectorStore(indexPath).replaceChunks(toAsyncChunks(chunks), { chunkSize: 100, overlap: 10 });
 
     try {
         return await run(indexPath);
@@ -24,6 +24,10 @@ async function withKnowledgeIndex<T>(chunks: IndexedChunk[], run: (indexPath: st
             process.env.KNOWLEDGE_INDEX_PATH = previousIndexPath;
         }
     }
+}
+
+async function* toAsyncChunks(chunks: IndexedChunk[]): AsyncGenerator<IndexedChunk> {
+    yield* chunks;
 }
 
 async function withEnv<T>(values: Record<string, string>, run: () => Promise<T>): Promise<T> {
@@ -48,8 +52,8 @@ async function withEnv<T>(values: Record<string, string>, run: () => Promise<T>)
 
 async function writeKnowledgeSourcesConfig(entries: unknown[]): Promise<string> {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-knowledge-sources-'));
-    const configPath = path.join(dir, 'knowledge.sources.json');
-    await fs.writeFile(configPath, JSON.stringify(entries), 'utf-8');
+    const configPath = path.join(dir, 'knowledge.sources.jsonc');
+    await fs.writeFile(configPath, JSON.stringify({ sources: entries }), 'utf-8');
     return configPath;
 }
 

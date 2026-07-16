@@ -32,35 +32,42 @@ export async function walkSourceFiles(root: string, options: DocumentLoaderOptio
 }
 
 /**
- * 把磁盘文件读取成 SourceDocument。
+ * 惰性读取磁盘文件。
  *
- * SourceDocument 是后续 chunker 的输入，包含相对 source、绝对路径、扩展名和正文内容。
+ * 扫描阶段只保留文件路径；迭代到某个文件时才读取正文，因此内存中最多
+ * 保留当前文档内容。SourceDocument 是后续 chunker 的输入。
  */
-export async function loadSourceDocuments(root: string, options: DocumentLoaderOptions = {}): Promise<SourceDocument[]> {
+export async function* iterateSourceDocuments(
+    root: string,
+    options: DocumentLoaderOptions = {}
+): AsyncGenerator<SourceDocument> {
     const resolvedRoot = path.resolve(root);
     const files = await walkSourceFiles(resolvedRoot, options);
     const sourcePrefix = options.sourcePrefix?.trim();
 
-    return Promise.all(files.map(async file => {
+    for (const file of files) {
         const extension = path.extname(file).toLowerCase();
         const relativeSource = path.relative(resolvedRoot, file).replace(/\\/g, '/');
-        return {
+        yield {
             source: sourcePrefix ? sourceWithPrefix(sourcePrefix, relativeSource) : relativeSource,
             absolutePath: file,
             extension,
             content: await fs.readFile(file, 'utf-8')
         };
-    }));
+    }
 }
 
-export async function loadSourceDocumentsFromRoots(sourceRoots: KnowledgeSourceRoot[], options: DocumentLoaderOptions = {}): Promise<SourceDocument[]> {
-    const groups = await Promise.all(sourceRoots.map(sourceRoot => loadSourceDocuments(path.resolve(sourceRoot.root), {
-        ...options,
-        sourcePrefix: sourceRoot.prefix,
-        ignorePatterns: [...(options.ignorePatterns ?? []), ...sourceRoot.ignore]
-    })));
-
-    return groups.flat();
+export async function* iterateSourceDocumentsFromRoots(
+    sourceRoots: KnowledgeSourceRoot[],
+    options: DocumentLoaderOptions = {}
+): AsyncGenerator<SourceDocument> {
+    for (const sourceRoot of sourceRoots) {
+        yield* iterateSourceDocuments(path.resolve(sourceRoot.root), {
+            ...options,
+            sourcePrefix: sourceRoot.prefix,
+            ignorePatterns: [...(options.ignorePatterns ?? []), ...sourceRoot.ignore]
+        });
+    }
 }
 
 async function walk(root: string, currentDir: string, extensions: Set<string>, ignoreDirs: Set<string>, ignorePatterns: string[], files: string[]): Promise<void> {

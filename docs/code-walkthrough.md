@@ -430,7 +430,8 @@ KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 
 配置中每个 source 的 `name` 会写入 `SourceDocument.source`，例如 `wiki/index.md`、`raw/agent-rag.md`。这让检索层可以区分 maintained wiki 和 raw sources。配置还能声明 `kind`、`priority`、`ignore` 等 source policy。`enabled=false` 或 `index=false` 的 source 不会进入索引。
 
-`loadSourceDocumentsFromRoots()` 会把多个 root 合并成一组 `SourceDocument`，供索引脚本和 pipeline 使用。
+`iterateSourceDocumentsFromRoots()` 会依次遍历多个 root，并且只在 pipeline
+请求下一项时读取对应文件。这样不会把所有文档正文同时保存在内存中。
 
 ### 切分
 
@@ -455,7 +456,7 @@ KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 
 `vectorStore.ts` 定义 `VectorStore`：
 
-- `upsertChunks()`
+- `replaceChunks()`
 - `search()`
 - `findBySource()`
 - `findRelated()`
@@ -466,17 +467,21 @@ KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 var/knowledge/index.json
 ```
 
-它适合本地实验。后续接入 LanceDB、pgvector、Qdrant 时新增 adapter 即可。
+构建索引时，`JsonVectorStore` 把 chunk 逐条写入临时 JSON 文件，全部成功后
+再替换正式索引。这样既限制内存占用，也避免失败时破坏已有索引。它适合
+当前约 26 MiB 的 Markdown/Text 数据；后续接入固定维度 embedding 和更大
+数据集时，可新增 LanceDB、pgvector、Qdrant adapter。
 
 ### 索引 Pipeline
 
 `indexPipeline.ts` 固定数据流：
 
 ```text
-load documents
--> chunk documents
--> embed chunks
--> upsert vector store
+scan file paths
+-> lazily read one document
+-> chunk current document
+-> embed each chunk
+-> stream chunks into vector store
 ```
 
 可替换的是 loader、chunker、embedder、vector store。

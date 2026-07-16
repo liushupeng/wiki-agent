@@ -284,27 +284,30 @@ KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 
 配置文件中每个 source 的 `name` 会写入检索结果的 `source` 前缀，例如 `wiki/index.md`、`raw/agent-rag.md`。CLI 显式传入目录时仍可临时索引单根目录：
 
-```json
-[
-  {
-    "name": "wiki",
-    "root": "wiki",
-    "kind": "wiki",
-    "enabled": true,
-    "index": true,
-    "priority": 100,
-    "ignore": []
-  },
-  {
-    "name": "raw",
-    "root": "notes",
-    "kind": "raw",
-    "enabled": true,
-    "index": true,
-    "priority": 50,
-    "ignore": ["**/__pycache__/**", "**/finalData/**"]
-  }
-]
+```jsonc
+{
+  "$schema": "./knowledge.sources.schema.json",
+  "sources": [
+    {
+      "name": "wiki",
+      "root": "wiki",
+      "kind": "wiki",
+      "enabled": true,
+      "index": true,
+      "priority": 100,
+      "ignore": []
+    },
+    {
+      "name": "raw",
+      "root": "notes",
+      "kind": "raw",
+      "enabled": true,
+      "index": true,
+      "priority": 50,
+      "ignore": ["**/__pycache__/**", "**/finalData/**"]
+    }
+  ]
+}
 ```
 
 ```bash
@@ -317,20 +320,31 @@ npm run index:notes -- notes
 var/knowledge/index.json
 ```
 
-索引数据流：
+索引数据流采用惰性读取和流式写入。每次只读取一个文件，逐个生成 chunk
+和向量并写入临时索引，完成后再替换正式索引：
 
 ```text
-loadSourceDocuments / loadSourceDocumentsFromRoots
+iterateSourceDocuments / iterateSourceDocumentsFromRoots
 -> chunkDocument
 -> Embedder.embed
--> VectorStore.upsertChunks
+-> VectorStore.replaceChunks
 ```
 
 默认实现：
 
 - `RAG_CHUNKER=auto`：Markdown 使用 Markdown-aware chunker，文本使用固定长度 chunker。
 - `RAG_EMBEDDER=tf`：本地词频向量，不依赖外部 embedding 服务。
-- `RAG_STORE=json`：写入 JSON 文件，查询时全量加载并计算余弦相似度。
+- `RAG_STORE=json`：流式构建单个 JSON 索引，查询时全量加载并计算余弦相似度。
+
+当前可索引的 Markdown/Text 数据约 26 MiB，单 JSON 索引足以满足本地使用。
+若未来接入大量 HTML、表格或固定维度 embedding，再考虑迁移到专用向量数据库。
+
+索引期间，命令行会持续显示已处理文档数、chunk 数、耗时和当前文件；
+交互式终端会原地刷新，重定向日志时则每 5 秒输出一行。完成后还会汇总
+来源、切分参数、索引大小、处理吞吐量和进程峰值内存。
+
+2026-07-16 使用默认配置实测：共索引 1,253 个文件、生成 47,119 个 chunk，
+索引文件约 93.18 MiB，构建过程峰值工作集约 214.6 MiB。
 
 `search_notes` 会优先返回 `wiki/` source 命中；证据不足时再使用 raw source 命中补充。`grep_notes` 同样会在 configured knowledge roots 中搜索，并在结果里保留 source prefix。
 

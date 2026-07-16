@@ -1,6 +1,6 @@
 import path from 'path';
 import { chunkDocument } from './chunker.js';
-import { loadSourceDocuments } from './documentLoader.js';
+import { iterateSourceDocuments } from './documentLoader.js';
 import { Embedder, TfEmbedder } from './embeddings.js';
 import { IndexedChunk, SourceDocument } from './types.js';
 import { VectorStore } from './vectorStore.js';
@@ -11,7 +11,14 @@ export type IndexPipelineConfig = {
     overlap: number;
     vectorStore: VectorStore;
     embedder?: Embedder;
-    documents?: SourceDocument[];
+    documents?: AsyncIterable<SourceDocument>;
+    onProgress?: (progress: IndexPipelineProgress) => void;
+};
+
+export type IndexPipelineProgress = {
+    documentCount: number;
+    chunkCount: number;
+    currentSource: string;
 };
 
 export type IndexPipelineStats = {
@@ -34,28 +41,38 @@ export type IndexPipelineStats = {
 export async function runIndexPipeline(config: IndexPipelineConfig): Promise<IndexPipelineStats> {
     const sourceDir = path.resolve(config.sourceDir);
     const embedder = config.embedder ?? new TfEmbedder();
-    const documents = config.documents ?? await loadSourceDocuments(sourceDir);
-    const indexedChunks: IndexedChunk[] = [];
+    const documents = config.documents ?? iterateSourceDocuments(sourceDir);
+    let documentCount = 0;
+    let chunkCount = 0;
 
-    for (const document of documents) {
-        const chunks = chunkDocument(document, config.chunkSize, config.overlap);
-        for (const chunk of chunks) {
-            indexedChunks.push({
-                ...chunk,
-                vector: await embedder.embed(chunk.text)
+    async function* generateIndexedChunks(): AsyncGenerator<IndexedChunk> {
+        for await (const document of documents) {
+            documentCount += 1;
+            const chunks = chunkDocument(document, config.chunkSize, config.overlap);
+            for (const chunk of chunks) {
+                chunkCount += 1;
+                yield {
+                    ...chunk,
+                    vector: await embedder.embed(chunk.text)
+                };
+            }
+            config.onProgress?.({
+                documentCount,
+                chunkCount,
+                currentSource: document.source
             });
         }
     }
 
-    await config.vectorStore.upsertChunks(indexedChunks, {
+    await config.vectorStore.replaceChunks(generateIndexedChunks(), {
         chunkSize: config.chunkSize,
         overlap: config.overlap
     });
 
     return {
         sourceDir,
-        documentCount: documents.length,
-        chunkCount: indexedChunks.length,
+        documentCount,
+        chunkCount,
         chunkSize: config.chunkSize,
         overlap: config.overlap,
         embedder: embedder.name,

@@ -6,10 +6,10 @@ import test from 'node:test';
 import { getKnowledgeSourceRoots, isWikiSource, loadKnowledgeSourceRoots, parseKnowledgeSourceConfigs, sourceWithPrefix } from '../../rag/sourceRoots.js';
 
 test('parseKnowledgeSourceConfigs parses knowledge source config objects', () => {
-    assert.deepEqual(parseKnowledgeSourceConfigs([
+    assert.deepEqual(parseKnowledgeSourceConfigs({ sources: [
         { name: 'wiki', root: 'wiki', kind: 'wiki', enabled: true, index: true, priority: 100 },
         { name: 'raw', root: 'notes', kind: 'raw', ignore: ['**/__pycache__/**'] }
-    ]), [
+    ] }), [
         { name: 'wiki', root: 'wiki', kind: 'wiki', enabled: true, index: true, priority: 100, ignore: [] },
         { name: 'raw', root: 'notes', kind: 'raw', ignore: ['**/__pycache__/**'] }
     ]);
@@ -17,11 +17,14 @@ test('parseKnowledgeSourceConfigs parses knowledge source config objects', () =>
 
 test('parseKnowledgeSourceConfigs rejects invalid shapes and duplicate names', () => {
     assert.throws(() => parseKnowledgeSourceConfigs({}), /must contain a "sources" array/);
-    assert.throws(() => parseKnowledgeSourceConfigs([{ name: 'raw', root: 'notes', kind: 'unknown' }]), /kind must be one of/);
-    assert.throws(() => parseKnowledgeSourceConfigs([
+    assert.throws(() => parseKnowledgeSourceConfigs([]), /must contain a "sources" array/);
+    assert.throws(() => parseKnowledgeSourceConfigs({ sources: [
+        { name: 'raw', root: 'notes', kind: 'unknown' }
+    ] }), /kind must be one of/);
+    assert.throws(() => parseKnowledgeSourceConfigs({ sources: [
         { name: 'raw', root: 'notes', kind: 'raw' },
         { name: 'raw', root: 'other', kind: 'raw' }
-    ]), /duplicate knowledge source name/);
+    ] }), /duplicate knowledge source name/);
 });
 
 test('loadKnowledgeSourceRoots returns enabled indexable roots sorted by priority', async () => {

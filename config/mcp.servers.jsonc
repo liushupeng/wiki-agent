@@ -2,26 +2,12 @@
   "$schema": "./mcp.servers.schema.json",
   "servers": [
     {
-      // MCP server 的唯一名称，用于日志和工具元数据。
       "name": "filesystem",
-
-      // 启动 stdio MCP server 的可执行命令；命令必须可从 PATH 中找到。
       "command": "mcp-server-filesystem",
-
-      // 传给 command 的参数。Filesystem server 的参数是允许访问的根目录。
       "args": ["C:\\AgentSandbox"],
-
-      // MCP 工具注册到 Agent 后的名称前缀，用于避免不同 server 的工具重名。
       "toolNamePrefix": "mcp_fs",
-
-      // 工具未单独声明权限时使用的能力类别：read、write、shell、rag 或 mcp。
       "defaultPermission": "mcp",
-
-      // 工具缺少 MCP annotations 时的兜底风险等级：
-      // safe、write、network、shell 或 dangerous。
       "defaultRiskLevel": "write",
-
-      // 是否启动并注册该 server；设为 false 可临时禁用。
       "enabled": true
     },
     {

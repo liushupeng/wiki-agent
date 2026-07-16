@@ -1,9 +1,10 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { Embedder, TfEmbedder } from './embeddings.js';
 import { IndexedChunk, KnowledgeIndex, SearchResult, Vector } from './types.js';
 
-export type UpsertMetadata = {
+export type IndexMetadata = {
     createdAt?: string;
     chunkSize: number;
     overlap: number;
@@ -17,7 +18,10 @@ export type UpsertMetadata = {
  */
 export interface VectorStore {
     readonly name: string;
-    upsertChunks(chunks: IndexedChunk[], metadata: UpsertMetadata): Promise<void>;
+    replaceChunks(
+        chunks: AsyncIterable<IndexedChunk>,
+        metadata: IndexMetadata
+    ): Promise<void>;
     search(query: string, topK?: number): Promise<SearchResult[]>;
     findBySource(source: string): Promise<IndexedChunk[]>;
     findRelated(source: string, topK?: number): Promise<SearchResult[]>;
@@ -38,14 +42,40 @@ export class JsonVectorStore implements VectorStore {
         private readonly embedder: Embedder = new TfEmbedder()
     ) {}
 
-    async upsertChunks(chunks: IndexedChunk[], metadata: UpsertMetadata): Promise<void> {
-        await saveKnowledgeIndex(this.filePath, {
-            version: 1,
-            createdAt: metadata.createdAt ?? new Date().toISOString(),
-            chunkSize: metadata.chunkSize,
-            overlap: metadata.overlap,
-            chunks
-        });
+    async replaceChunks(
+        chunks: AsyncIterable<IndexedChunk>,
+        metadata: IndexMetadata
+    ): Promise<void> {
+        await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+        const temporaryPath = `${this.filePath}.${process.pid}-${randomUUID()}.tmp`;
+        let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+
+        try {
+            handle = await fs.open(temporaryPath, 'wx');
+            await handle.writeFile([
+                '{',
+                '  "version": 1,',
+                `  "createdAt": ${JSON.stringify(metadata.createdAt ?? new Date().toISOString())},`,
+                `  "chunkSize": ${metadata.chunkSize},`,
+                `  "overlap": ${metadata.overlap},`,
+                '  "chunks": ['
+            ].join('\n'));
+
+            let first = true;
+            for await (const chunk of chunks) {
+                await handle.writeFile(`${first ? '\n' : ',\n'}    ${JSON.stringify(chunk)}`);
+                first = false;
+            }
+
+            await handle.writeFile('\n  ]\n}\n');
+            await handle.close();
+            handle = undefined;
+            await fs.rename(temporaryPath, this.filePath);
+        } catch (error) {
+            await handle?.close().catch(() => undefined);
+            await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+            throw error;
+        }
     }
 
     async search(query: string, topK = 5): Promise<SearchResult[]> {
@@ -108,11 +138,6 @@ export function cosineSimilarity(left: Vector, right: Vector): number {
     }
 
     return score;
-}
-
-export async function saveKnowledgeIndex(filePath: string, index: KnowledgeIndex): Promise<void> {
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, JSON.stringify(index, null, 2), 'utf-8');
 }
 
 export async function loadKnowledgeIndex(filePath: string): Promise<KnowledgeIndex> {

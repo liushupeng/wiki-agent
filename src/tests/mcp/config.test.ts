@@ -61,6 +61,9 @@ test('loadMcpServerConfigs rejects invalid JSON and invalid shapes', async () =>
     await withMcpConfig({}, async configPath => {
         await assert.rejects(() => loadMcpServerConfigs({ MCP_CONFIG_PATH: configPath }), /expected a "servers" array/);
     });
+    await withRawMcpConfig(JSON.stringify([{ name: 'git', command: 'git-mcp' }]), async configPath => {
+        await assert.rejects(() => loadMcpServerConfigs({ MCP_CONFIG_PATH: configPath }), /expected a "servers" array/);
+    });
     await withMcpConfig([{ name: 'fs' }], async configPath => {
         await assert.rejects(() => loadMcpServerConfigs({ MCP_CONFIG_PATH: configPath }), /command must be/);
     });

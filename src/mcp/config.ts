@@ -55,7 +55,6 @@ export async function loadMcpServerConfigs(env: Env = process.env): Promise<McpS
 }
 
 function readMcpConfigEntries(value: unknown): unknown[] | undefined {
-    if (Array.isArray(value)) return value;
     if (typeof value !== 'object' || value === null) return undefined;
     const servers = (value as Record<string, unknown>).servers;
     return Array.isArray(servers) ? servers : undefined;

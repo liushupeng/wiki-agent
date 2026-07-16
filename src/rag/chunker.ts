@@ -45,27 +45,49 @@ const HEADING_PATTERN = /^(#{1,6})\s+(.+)$/;
 const WIKI_LINK_PATTERN = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g;
 const TAG_PATTERN = /(^|\s)#([\p{L}\p{N}_/-]+)/gu;
 
+/**
+ * 按 Markdown 语义切分文档，并为每个 chunk 补充标题路径、标签、
+ * Wiki 链接和 frontmatter。
+ *
+ * 整体分两层切分：
+ * 1. 先按 Markdown 标题切成 section，保留每段所在的标题层级。
+ * 2. 再用 chunkText 按字符数切分过长的 section，并添加 overlap。
+ */
 export function chunkMarkdown(source: string, text: string, chunkSize = 1200, overlap = 160): TextChunk[] {
+    // 统一换行符，使后续计算出的字符位置在不同操作系统上保持一致。
     const normalized = text.replace(/\r\n/g, '\n');
+
+    // frontmatter 不参与正文切分，但会作为元数据附加到每个 chunk。
+    // bodyOffset 表示正文在完整文档中的起始位置，用于恢复绝对字符位置。
     const { frontmatter, body, bodyOffset } = parseFrontmatter(normalized);
+
+    // 标签属于文档级元数据：同时收集 frontmatter tags 和正文中的 #tag。
     const tags = extractTags(normalized, frontmatter);
+
+    // section 记录标题层级以及它在完整文档中的绝对起止位置。
     const sections = splitMarkdownSections(body, bodyOffset);
     const chunks: TextChunk[] = [];
 
     for (const section of sections) {
+        // chunkText 返回的 start/end 是相对于当前 section.text 的位置。
         const sectionChunks = chunkText(source, section.text, chunkSize, overlap);
         for (const chunk of sectionChunks) {
+            // 转换成相对于完整 Markdown 文档的绝对位置，方便后续定位原文。
             const absoluteStart = section.start + chunk.start;
             const absoluteEnd = section.start + chunk.end;
+
+            // 从标准化后的完整原文重新截取，保证保存的文本与绝对位置一致。
             const chunkTextValue = normalized.slice(absoluteStart, absoluteEnd);
             chunks.push({
                 ...chunk,
+                // chunkText 会从 1 重新编号，因此这里按整个 Markdown 文档统一编号。
                 id: `${source}#${chunks.length + 1}`,
                 start: absoluteStart,
                 end: absoluteEnd,
                 text: chunkTextValue.trim(),
                 titlePath: section.titlePath,
                 tags,
+                // 链接是 chunk 级元数据，只记录当前文本片段实际包含的 Wiki 链接。
                 links: extractWikiLinks(chunkTextValue),
                 frontmatter
             });
