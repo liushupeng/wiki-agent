@@ -26,13 +26,43 @@ export type TraceEvent =
     | (TraceEventBase & { type: 'memory_compaction'; beforeCount: number; afterCount: number; summarizedCount: number; retainedCount: number; shortTermCount?: number; midTermEntryCount?: number; longTermItemCount?: number; before?: SizeEstimateFields; after?: SizeEstimateFields; reason: string })
     | (TraceEventBase & { type: 'run_end'; finalOutputPreview: string; terminationReason: TerminationReason });
 
+export type NormalizedTraceEvent = TraceEvent & { level: TraceLevel };
+
+/**
+ * Trace 写入后端。
+ *
+ * Agent 运行时只依赖这个抽象，不关心事件最终写到 JSONL、控制台，
+ * 还是未来的 OpenTelemetry exporter。
+ */
+export interface TraceSink {
+    readonly filePath?: string;
+    write(event: NormalizedTraceEvent): Promise<void>;
+}
+
+export class JsonlTraceSink implements TraceSink {
+    readonly filePath: string;
+
+    constructor(traceDir = 'var/traces') {
+        const safeTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        this.filePath = path.resolve(traceDir, `trace-${safeTimestamp}.jsonl`);
+    }
+
+    async write(event: NormalizedTraceEvent): Promise<void> {
+        await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+        await fs.appendFile(this.filePath, `${JSON.stringify(event)}\n`, 'utf-8');
+    }
+}
+
 export class TraceLogger {
     readonly filePath: string;
     private readonly minimumLevel: TraceLevel;
+    private readonly sink: TraceSink;
 
-    constructor(traceDir = 'var/traces', minimumLevel = getTraceLevelFromEnv()) {
-        const safeTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        this.filePath = path.resolve(traceDir, `trace-${safeTimestamp}.jsonl`);
+    constructor(traceDirOrSink: string | TraceSink = 'var/traces', minimumLevel = getTraceLevelFromEnv()) {
+        this.sink = typeof traceDirOrSink === 'string'
+            ? new JsonlTraceSink(traceDirOrSink)
+            : traceDirOrSink;
+        this.filePath = this.sink.filePath ?? '';
         this.minimumLevel = minimumLevel;
     }
 
@@ -40,8 +70,7 @@ export class TraceLogger {
         const normalized = { ...event, level: event.level ?? defaultLevelForEvent(event) };
         if (!shouldWriteTraceLevel(normalized.level, this.minimumLevel)) return;
 
-        await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-        await fs.appendFile(this.filePath, `${JSON.stringify(normalized)}\n`, 'utf-8');
+        await this.sink.write(normalized);
     }
 }
 

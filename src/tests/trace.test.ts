@@ -3,7 +3,15 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { getTraceLevelFromEnv, preview, shouldWriteTraceLevel, TraceLogger } from '../trace.js';
+import { getTraceLevelFromEnv, NormalizedTraceEvent, preview, shouldWriteTraceLevel, TraceLogger, TraceSink } from '../trace.js';
+
+class InMemoryTraceSink implements TraceSink {
+    readonly events: NormalizedTraceEvent[] = [];
+
+    async write(event: NormalizedTraceEvent): Promise<void> {
+        this.events.push(event);
+    }
+}
 
 test('TraceLogger creates a JSONL file path inside the trace directory', async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-trace-'));
@@ -67,6 +75,22 @@ test('TraceLogger filters events below the configured level', async () => {
 
     assert.equal(lines.length, 1);
     assert.equal(JSON.parse(lines[0]).type, 'step_start');
+});
+
+test('TraceLogger writes normalized events to a custom sink', async () => {
+    const sink = new InMemoryTraceSink();
+    const logger = new TraceLogger(sink, 'debug');
+
+    await logger.write({ type: 'run_start', instruction: 'hello', at: '2026-01-01T00:00:00.000Z' });
+
+    assert.equal(sink.events.length, 1);
+    assert.deepEqual(sink.events[0], {
+        level: 'info',
+        type: 'run_start',
+        instruction: 'hello',
+        at: '2026-01-01T00:00:00.000Z'
+    });
+    assert.equal(logger.filePath, '');
 });
 
 test('Trace level helpers parse and compare levels', () => {
