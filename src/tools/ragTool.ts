@@ -186,7 +186,7 @@ export class GrepNotesTool extends BaseAgentTool {
             }, { count: matches.length, scope: await getSearchScopeDescription(), maxResults, contextLines });
         } catch (error: any) {
             return this.error(error.message, {
-                hint: '请确认 KNOWLEDGE_SOURCES_CONFIG_PATH 指向有效的 knowledge sources JSON 配置。'
+                hint: '请确认 KNOWLEDGE_SOURCES_CONFIG_PATH 指向有效的 knowledge sources JSONC 配置。'
             });
         }
     }

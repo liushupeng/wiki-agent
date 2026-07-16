@@ -16,7 +16,7 @@ directory tree
 -> domain taxonomy
 -> source types
 -> ignore rules
--> recommended config/knowledge.sources.json changes
+-> recommended config/knowledge.sources.jsonc changes
 -> first small validation scope
 ```
 
@@ -36,7 +36,7 @@ The user may provide:
 4. Recommend which directories should be indexed first.
 5. Recommend which directories should be wiki-maintainable and which should only be searchable.
 6. Identify file types that current loaders do not support well.
-7. Propose a minimal `config/knowledge.sources.json` update.
+7. Propose a minimal `config/knowledge.sources.jsonc` update.
 8. Propose 3-5 real validation questions to run after indexing.
 
 ## Output Shape

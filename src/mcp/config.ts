@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ToolPermission, ToolRiskLevel } from '../types.js';
+import { parseJsonc } from '../utils/jsonc.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -37,18 +38,27 @@ export async function loadMcpServerConfigs(env: Env = process.env): Promise<McpS
     let parsed: unknown;
     try {
         const rawValue = await fs.readFile(absolutePath, 'utf-8');
-        parsed = JSON.parse(rawValue);
+        parsed = parseJsonc(rawValue, `MCP config file "${absolutePath}"`);
     } catch (error: any) {
+        if (String(error.message).startsWith('invalid MCP config file')) throw error;
         throw new Error(`invalid MCP config file "${absolutePath}": ${error.message}`);
     }
 
-    if (!Array.isArray(parsed)) {
-        throw new Error(`invalid MCP config file "${absolutePath}": expected an array of server configs`);
+    const configs = readMcpConfigEntries(parsed);
+    if (!configs) {
+        throw new Error(`invalid MCP config file "${absolutePath}": expected a "servers" array`);
     }
 
-    return parsed
+    return configs
         .map((value, index) => normalizeMcpServerConfig(value as RawMcpServerConfig, index))
         .filter(config => config.enabled);
+}
+
+function readMcpConfigEntries(value: unknown): unknown[] | undefined {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'object' || value === null) return undefined;
+    const servers = (value as Record<string, unknown>).servers;
+    return Array.isArray(servers) ? servers : undefined;
 }
 
 function normalizeMcpServerConfig(value: RawMcpServerConfig, index: number): McpServerConfig {

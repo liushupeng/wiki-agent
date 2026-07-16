@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wiki-agent.local/schemas/mcp.servers.schema.json",
+  "title": "Wiki Agent MCP servers",
+  "description": "定义通过 stdio 启动并注册为 Agent 工具的 MCP server。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["servers"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema 文件路径，供 Cursor/VS Code 提供校验、悬浮说明和自动补全。"
+    },
+    "servers": {
+      "type": "array",
+      "description": "MCP server 配置列表。",
+      "items": {
+        "$ref": "#/$defs/server"
+      }
+    }
+  },
+  "$defs": {
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "command"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "MCP server 的唯一名称，用于日志、报错和工具元数据。"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "启动 stdio MCP server 的可执行命令；命令必须可从 PATH 中找到。"
+        },
+        "args": {
+          "type": "array",
+          "default": [],
+          "description": "按顺序传给 command 的命令行参数。",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "server 进程的工作目录；省略时继承 wiki-agent 进程的工作目录。"
+        },
+        "env": {
+          "type": "object",
+          "description": "额外传给 server 进程的环境变量；所有值都必须是字符串。",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "toolNamePrefix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "MCP 工具注册到 Agent 后的名称前缀，用于避免不同 server 的工具重名；默认 mcp_<name>。"
+        },
+        "defaultPermission": {
+          "type": "string",
+          "enum": ["read", "write", "shell", "rag", "mcp"],
+          "default": "mcp",
+          "description": "工具未单独声明权限时使用的 Agent 能力类别。"
+        },
+        "defaultRiskLevel": {
+          "type": "string",
+          "enum": ["safe", "write", "network", "shell", "dangerous"],
+          "default": "write",
+          "description": "工具缺少 MCP annotations 时使用的兜底风险等级。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启动并注册该 server；false 可临时禁用。"
+        }
+      }
+    }
+  }
+}

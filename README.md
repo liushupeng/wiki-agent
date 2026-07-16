@@ -88,6 +88,38 @@ raw sources
 
 这意味着知识不会只在每次提问时被临时拼接，而是逐步沉淀到 `wiki/` 中，形成可审阅、可版本管理、可持续维护的 Markdown 知识层。
 
+## 当前验证数据规模
+
+`notes/` 是本地真实知识源目录，已加入 `.gitignore`，不随代码提交。下面的统计用于记录当前项目验证规模，后续迭代可以同步补充在这个规模下的检索、问答、wiki 维护和 bad case 表现。
+
+统计快照：2026-07-16。
+
+- 总文件数：2151
+- 总目录数：357
+- 总体积：约 596.6 MiB
+- 一级目录数：6
+- 一级目录文件量分布：1417、521、190、17、3、3
+- 当前 RAG 直接支持的文本类型：`.md`、`.markdown`、`.txt`
+- 当前可直接进入索引的文件数：约 1244 个，其中 `.md` 1212 个，`.txt` 32 个
+
+主要文件类型分布：
+
+- `.md`：1212
+- `.html`：429
+- `.csv`：120
+- `.png`：87
+- `.py`：81
+- `.pyc`：47
+- `.xlsx`：38
+- `.txt`：32
+- `.tsv`：23
+- `.pl`：19
+- `.jpg`：13
+- `.pdf`：10
+- 其他少量类型：`.pptx`、`.docx`、`.cpp`、`.mp4`、`.awk`、`.h`、`.zip`、`.json`、`.gif`、`.sh`、`.tex`、`.toml`、`.cmd`、`.xmind`、`.yml`、无扩展名文件等
+
+这个规模已经不是玩具数据集：它同时包含 Markdown 知识笔记、HTML 页面、表格数据、图片、脚本和代码文件。当前系统先把 `.md` / `.txt` 作为第一批验证对象；其他类型需要通过 source policy、ignore 规则和后续 loader 扩展逐步接入。
+
 ## 前置要求
 
 需要先准备这些本机依赖：
@@ -130,7 +162,7 @@ where.exe mcp-server-sqlite
 npm run mcp:check
 ```
 
-安装完成后，`config/mcp.servers.json` 会直接调用 `mcp-server-filesystem`、`mcp-server-git` 和 `mcp-server-sqlite`，启动时不再依赖临时拉取。
+安装完成后，`config/mcp.servers.jsonc` 会直接调用 `mcp-server-filesystem`、`mcp-server-git` 和 `mcp-server-sqlite`，启动时不再依赖临时拉取。
 
 还需要准备 DeepSeek 或其他 OpenAI-compatible LLM API key，并写入本地 `.env`。
 
@@ -244,10 +276,10 @@ raw sources
 npm run index:notes
 ```
 
-默认通过 `config/knowledge.sources.json` 索引多个知识源。这个文件是机器可读的 source policy，用来声明数据源、类型、优先级和 ignore 规则。可以用环境变量指定其他配置文件：
+默认通过 `config/knowledge.sources.jsonc` 索引多个知识源。该文件支持注释，并通过同目录的 JSON Schema 提供字段说明、校验和自动补全。可以用环境变量指定其他配置文件：
 
 ```env
-KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.json
+KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 ```
 
 配置文件中每个 source 的 `name` 会写入检索结果的 `source` 前缀，例如 `wiki/index.md`、`raw/agent-rag.md`。CLI 显式传入目录时仍可临时索引单根目录：
@@ -360,7 +392,7 @@ MCP server config
 Agent loop 不感知具体 MCP server。Filesystem、Git、SQLite 或后续其他 MCP 都以相同方式接入：在 `.env` 中用 `MCP_CONFIG_PATH` 指向 MCP 配置文件，配置文件声明 stdio server 的 `command`、`args`、工具名前缀和默认风险等级。
 
 ```env
-MCP_CONFIG_PATH=config/mcp.servers.json
+MCP_CONFIG_PATH=config/mcp.servers.jsonc
 ```
 
 MCP tool 的风险等级按以下顺序确定：
@@ -572,7 +604,7 @@ MEMORY_MAX_MESSAGES=40
 MEMORY_KEEP_RECENT_MESSAGES=18
 MEMORY_MAX_CHARS=60000
 
-KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.json
+KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 KNOWLEDGE_INDEX_PATH=var/knowledge/index.json
 RAG_STORE=json
 RAG_EMBEDDER=tf

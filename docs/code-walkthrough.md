@@ -238,7 +238,7 @@ activeGroups 初始为 core
 
 主要文件：
 
-- `config.ts`：读取 `MCP_CONFIG_PATH` 指向的 JSON 文件，得到一组 stdio MCP server 配置。
+- `config.ts`：读取 `MCP_CONFIG_PATH` 指向的 JSONC 文件，得到一组 stdio MCP server 配置。
 - `client.ts`：用 MCP SDK 创建 `StdioMcpClient`，负责 `connect()`、`listTools()` 和 `callTool()`。
 - `toolAdapter.ts`：把单个 MCP `Tool` 包装成 `McpAgentTool`。
 - `register.ts`：连接配置中的 server，读取 tools，并注册到 `ToolRegistry`。
@@ -247,7 +247,7 @@ activeGroups 初始为 core
 
 ```text
 MCP_CONFIG_PATH
--> config/mcp.servers.json
+-> config/mcp.servers.jsonc
 -> loadMcpServerConfigs()
 -> StdioMcpClient.connect()
 -> client.listTools()
@@ -422,10 +422,10 @@ RAG 模块分成几层。
 - 读取 `.md`、`.markdown`、`.txt` 文件。
 - 生成 `SourceDocument`。
 
-`sourceRoots.ts` 负责多知识源配置。默认读取 `config/knowledge.sources.json`，也可以通过环境变量指定其他配置：
+`sourceRoots.ts` 负责多知识源配置。默认读取 `config/knowledge.sources.jsonc`，也可以通过环境变量指定其他配置：
 
 ```text
-KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.json
+KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 ```
 
 配置中每个 source 的 `name` 会写入 `SourceDocument.source`，例如 `wiki/index.md`、`raw/agent-rag.md`。这让检索层可以区分 maintained wiki 和 raw sources。配置还能声明 `kind`、`priority`、`ignore` 等 source policy。`enabled=false` 或 `index=false` 的 source 不会进入索引。

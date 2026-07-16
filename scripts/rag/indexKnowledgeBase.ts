@@ -13,7 +13,7 @@ import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
  * - npm run index:notes -- <notesDir>
  * - npm run index:notes -- <notesDir> <indexPath>
  *
- * 默认读取 config/knowledge.sources.json。
+ * 默认读取 config/knowledge.sources.jsonc。
  * 可用 KNOWLEDGE_SOURCES_CONFIG_PATH 指向其他数据源配置文件。
  * CLI 显式传入 <notesDir> 时按单根目录索引，方便临时实验。
  * 默认写入 var/knowledge/index.json。

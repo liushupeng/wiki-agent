@@ -1,7 +1,8 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { parseJsonc } from '../utils/jsonc.js';
 
-export const DEFAULT_KNOWLEDGE_SOURCES_CONFIG_PATH = 'config/knowledge.sources.json';
+export const DEFAULT_KNOWLEDGE_SOURCES_CONFIG_PATH = 'config/knowledge.sources.jsonc';
 export const KNOWLEDGE_SOURCE_KINDS = ['wiki', 'raw', 'code', 'data'] as const;
 export type KnowledgeSourceKind = typeof KNOWLEDGE_SOURCE_KINDS[number];
 
@@ -26,8 +27,8 @@ export type KnowledgeSourceRoot = {
 /**
  * 多知识源配置入口。
  *
- * 默认读取 config/knowledge.sources.json。可以用 KNOWLEDGE_SOURCES_CONFIG_PATH
- * 指向其他 JSON 文件，方便本地真实知识库使用不同配置。
+ * 默认读取 config/knowledge.sources.jsonc。可以用 KNOWLEDGE_SOURCES_CONFIG_PATH
+ * 指向其他 JSONC 文件，方便本地真实知识库使用不同配置。
  */
 export async function getKnowledgeSourceRoots(env: Record<string, string | undefined> = process.env): Promise<KnowledgeSourceRoot[]> {
     return loadKnowledgeSourceRoots(env.KNOWLEDGE_SOURCES_CONFIG_PATH ?? DEFAULT_KNOWLEDGE_SOURCES_CONFIG_PATH);
@@ -43,13 +44,17 @@ export async function loadKnowledgeSourceRoots(configPath: string): Promise<Know
 
 export async function loadKnowledgeSourceConfigs(configPath: string): Promise<KnowledgeSourceConfig[]> {
     const resolvedPath = path.resolve(configPath);
-    const parsed = JSON.parse(await fs.readFile(resolvedPath, 'utf-8')) as unknown;
+    const parsed = parseJsonc(
+        await fs.readFile(resolvedPath, 'utf-8'),
+        `knowledge sources config file "${resolvedPath}"`
+    );
     return parseKnowledgeSourceConfigs(parsed);
 }
 
 export function parseKnowledgeSourceConfigs(value: unknown): KnowledgeSourceConfig[] {
-    if (!Array.isArray(value)) throw new Error('knowledge sources config must be a JSON array');
-    const configs = value.map((entry, index) => parseKnowledgeSourceConfig(entry, index));
+    const entries = readKnowledgeSourceEntries(value);
+    if (!entries) throw new Error('knowledge sources config must contain a "sources" array');
+    const configs = entries.map((entry, index) => parseKnowledgeSourceConfig(entry, index));
     const names = new Set<string>();
 
     for (const config of configs) {
@@ -59,6 +64,13 @@ export function parseKnowledgeSourceConfigs(value: unknown): KnowledgeSourceConf
     }
 
     return configs;
+}
+
+function readKnowledgeSourceEntries(value: unknown): unknown[] | undefined {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'object' || value === null) return undefined;
+    const sources = (value as Record<string, unknown>).sources;
+    return Array.isArray(sources) ? sources : undefined;
 }
 
 export function sourceWithPrefix(prefix: string, relativeSource: string): string {

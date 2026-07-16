@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wiki-agent.local/schemas/knowledge.sources.schema.json",
+  "title": "Wiki Agent knowledge sources",
+  "description": "定义参与检索和索引的本地知识源。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sources"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema 文件路径，供 Cursor/VS Code 提供校验、悬浮说明和自动补全。"
+    },
+    "sources": {
+      "type": "array",
+      "description": "知识源列表；name 在忽略大小写和路径分隔符后必须唯一。",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "root", "kind"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "知识源的唯一名称，也会作为检索结果中 source 路径的前缀。"
+        },
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "description": "知识源根目录；相对路径以启动 wiki-agent 时的工作目录为基准。"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["wiki", "raw", "code", "data"],
+          "description": "内容类型：wiki=维护后的知识，raw=原始资料，code=源码，data=结构化数据。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用该知识源；false 时不会加载或索引。"
+        },
+        "index": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否为该知识源建立索引；false 时从索引任务中排除。"
+        },
+        "priority": {
+          "type": "number",
+          "description": "检索优先级，数值越大排序越靠前；wiki 默认 100，raw 默认 50，其他默认 10。"
+        },
+        "ignore": {
+          "type": "array",
+          "default": [],
+          "description": "相对于 root 的 glob 忽略规则。",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}
