@@ -22,6 +22,13 @@ type ChatChunk = {
             }>;
         };
     }>;
+    usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        prompt_cache_hit_tokens?: number;
+        prompt_cache_miss_tokens?: number;
+    };
 };
 
 class TestMemory implements IMemory {
@@ -70,7 +77,7 @@ function createAgent(options: {
     registry?: TestRegistry;
     maxLoopSteps?: number;
 }): WikiAgent {
-    process.env.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? 'test-api-key';
+    process.env.API_KEY = process.env.API_KEY ?? 'test-api-key';
 
     const config: AgentConfig = {
         modelName: 'test-model',
@@ -133,6 +140,46 @@ test('WikiAgent.run returns final streamed content without tool calls', async ()
     const events = await readTraceEvents(traceDir);
     assert.equal(events.at(-1)?.type, 'run_end');
     assert.equal(events.at(-1)?.terminationReason, 'completed');
+});
+
+test('WikiAgent records streamed cache usage in the debug trace', async () => {
+    const previousTraceLevel = process.env.TRACE_LEVEL;
+    process.env.TRACE_LEVEL = 'debug';
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-usage-'));
+    const agent = createAgent({ traceDir });
+    attachFakeClient(agent, [[
+        { choices: [{ delta: { content: 'done' } }] },
+        {
+            choices: [],
+            usage: {
+                prompt_tokens: 100,
+                completion_tokens: 20,
+                total_tokens: 120,
+                prompt_cache_hit_tokens: 75,
+                prompt_cache_miss_tokens: 25
+            }
+        }
+    ]]);
+
+    try {
+        await agent.run('trace usage', () => {});
+        const events = await readTraceEvents(traceDir);
+        const budgetEvent = events.find(event => event.type === 'model_call_budget');
+        assert.deepEqual(budgetEvent?.usage, {
+            promptTokens: 100,
+            completionTokens: 20,
+            totalTokens: 120,
+            cacheHitTokens: 75,
+            cacheMissTokens: 25,
+            cacheHitRate: 0.75
+        });
+    } finally {
+        if (previousTraceLevel === undefined) {
+            delete process.env.TRACE_LEVEL;
+        } else {
+            process.env.TRACE_LEVEL = previousTraceLevel;
+        }
+    }
 });
 
 test('WikiAgent.run executes tool calls and continues replanning', async () => {

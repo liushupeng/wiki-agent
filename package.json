@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx src/main.ts",
     "ask": "tsx src/main.ts",
+    "check:llm": "tsx scripts/checkLlm.ts",
     "index:notes": "tsx scripts/rag/indexKnowledgeBase.ts",
     "eval:rag": "tsx scripts/rag/evaluateRag.ts",
     "eval:wiki": "tsx scripts/rag/evaluateWiki.ts",

@@ -24,7 +24,6 @@ directory tree
 
 The user may provide:
 
-- A directory tree file, such as `dir_list.txt`.
 - A path under `notes/`.
 - A short description of the knowledge base.
 

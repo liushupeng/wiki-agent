@@ -166,6 +166,23 @@ npm run mcp:check
 
 还需要准备 DeepSeek 或其他 OpenAI-compatible LLM API key，并写入本地 `.env`。
 
+可先检查 API 的 DNS、HTTPS 和认证是否可用；该命令请求轻量的 `/models`
+端点，不调用模型生成：
+
+```powershell
+# 使用 .env 中的 BASE_URL 与 API_KEY
+npm run check:llm
+
+# 临时检查其他 OpenAI-compatible Provider，例如后续的 HY3 配置
+$env:BASE_URL="https://your-provider-api-base-url"
+$env:API_KEY="your_api_key"
+npm run check:llm
+```
+
+返回 `HTTP 200` 表示网络与认证均正常；`401` 或 `403` 表示服务已可达，
+但 Key 或权限有问题；DNS、HTTPS 连接失败或超时则说明应检查公司网络、
+代理或服务端可用性。
+
 ## 快速开始
 
 ```bash
@@ -176,9 +193,9 @@ cp .env.example .env
 编辑 `.env`，至少填入：
 
 ```env
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_API_KEY=your_deepseek_api_key
-DEEPSEEK_MODEL_NAME=deepseek-v4-pro
+BASE_URL=https://api.deepseek.com
+API_KEY=your_api_key
+MODEL_NAME=deepseek-v4-pro
 ```
 
 常用命令：
@@ -495,6 +512,8 @@ TraceLogger
 - `model_call_budget.input`：本轮发给模型的 messages 体量。
 - `model_call_budget.toolSchemas`：本轮工具 schema 体量。
 - `model_call_budget.output`：本轮模型输出文本体量。
+- `model_call_budget.usage`：Provider 返回的实际 token 用量；DeepSeek 还会记录
+  `cacheHitTokens`、`cacheMissTokens` 与由二者计算的 `cacheHitRate`。
 - `tool_result.observation`：单个工具 observation 写回模型前的体量。
 - `memory_compaction.before/after`：memory 压缩前后的上下文体量。
 
@@ -597,9 +616,9 @@ examples/wiki-demo/raw/*.md
 `.env.example` 中的主要配置：
 
 ```env
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_API_KEY=your_deepseek_api_key
-DEEPSEEK_MODEL_NAME=deepseek-v4-pro
+BASE_URL=https://api.deepseek.com
+API_KEY=your_api_key
+MODEL_NAME=deepseek-v4-pro
 
 AGENT_SANDBOX_ROOT=C:\AgentSandbox
 AGENT_WORKSPACE_ROOT=.

@@ -34,8 +34,8 @@ export class WikiAgent implements IAgent {
             config.requestApproval
         );
         this.client = new OpenAI({
-            baseURL: process.env.DEEPSEEK_BASE_URL,
-            apiKey: process.env.DEEPSEEK_API_KEY
+            baseURL: process.env.BASE_URL,
+            apiKey: process.env.API_KEY
         });
     }
 
@@ -153,13 +153,18 @@ export class WikiAgent implements IAgent {
             reasoning_effort: "high",
             tools: toolSchemas.length > 0 ? toolSchemas : undefined,
             stream: true,
+            ...(shouldRequestDeepSeekUsage(process.env.BASE_URL)
+                ? { stream_options: { include_usage: true } }
+                : {})
         });
 
         let currentContent = "";
         const toolCallsBuffer: Parameters<typeof buildToolCalls>[0] = [];
+        let usage: unknown;
 
         // 流式接收大模型的本次决策思考
         for await (const chunk of stream) {
+            if (chunk.usage) usage = chunk.usage;
             const delta = chunk.choices[0]?.delta;
             const content = delta?.content || "";
 
@@ -185,6 +190,7 @@ export class WikiAgent implements IAgent {
                 tool_calls: buildToolCalls(toolCallsBuffer)
             })
         };
+        const normalizedUsage = normalizeUsage(usage);
 
         await traceLogger.write({
             type: 'model_call_budget',
@@ -196,6 +202,7 @@ export class WikiAgent implements IAgent {
             toolSchemas: estimateToolSchemasSize(toolSchemas),
             output: estimateTextSize(currentContent),
             toolCallCount: aiMessage.tool_calls?.length ?? 0,
+            ...(normalizedUsage ? { usage: normalizedUsage } : {}),
             at: new Date().toISOString()
         });
 
@@ -336,5 +343,59 @@ export class WikiAgent implements IAgent {
             truncated: input.observation.metadata?.truncated === true,
             at: new Date().toISOString()
         });
+    }
+}
+
+function normalizeUsage(value: unknown): {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    cacheHitTokens?: number;
+    cacheMissTokens?: number;
+    cacheHitRate?: number;
+} | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+
+    const usage = value as Record<string, unknown>;
+    const promptTokens = readUsageNumber(usage.prompt_tokens);
+    const completionTokens = readUsageNumber(usage.completion_tokens);
+    const totalTokens = readUsageNumber(usage.total_tokens);
+    const promptDetails = usage.prompt_tokens_details;
+    const cachedTokens = promptDetails && typeof promptDetails === 'object'
+        ? readUsageNumber((promptDetails as Record<string, unknown>).cached_tokens)
+        : undefined;
+    const cacheHitTokens = readUsageNumber(usage.prompt_cache_hit_tokens) ?? cachedTokens;
+    const cacheMissTokens = readUsageNumber(usage.prompt_cache_miss_tokens)
+        ?? (promptTokens !== undefined && cacheHitTokens !== undefined
+            ? Math.max(0, promptTokens - cacheHitTokens)
+            : undefined);
+    const cacheTokenTotal = cacheHitTokens !== undefined && cacheMissTokens !== undefined
+        ? cacheHitTokens + cacheMissTokens
+        : undefined;
+
+    const result = {
+        ...(promptTokens !== undefined ? { promptTokens } : {}),
+        ...(completionTokens !== undefined ? { completionTokens } : {}),
+        ...(totalTokens !== undefined ? { totalTokens } : {}),
+        ...(cacheHitTokens !== undefined ? { cacheHitTokens } : {}),
+        ...(cacheMissTokens !== undefined ? { cacheMissTokens } : {}),
+        ...(cacheTokenTotal && cacheHitTokens !== undefined
+            ? { cacheHitRate: Number((cacheHitTokens / cacheTokenTotal).toFixed(4)) }
+            : {})
+    };
+
+    return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function readUsageNumber(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function shouldRequestDeepSeekUsage(baseUrl: string | undefined): boolean {
+    try {
+        const hostname = new URL(baseUrl ?? '').hostname.toLowerCase();
+        return hostname === 'api.deepseek.com' || hostname.endsWith('.deepseek.com');
+    } catch {
+        return false;
     }
 }
