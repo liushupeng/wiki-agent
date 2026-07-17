@@ -53,6 +53,16 @@ export async function grepNotes(rootDir: string, query: string, options: GrepNot
     return matches;
 }
 
+/**
+ * 将逐行 grep 命中转换为统一的 SearchResult，供评测器和其他检索调用方使用。
+ *
+ * 转换规则：
+ * - id：由 source、行号和本次结果序号组成，保证同一文件中多条命中可区分。
+ * - text：合并命中行前后的上下文，供 expectedTerms 与调用方阅读证据。
+ * - start/end：grep 的定位粒度是行，因此都使用 1-based 的命中行号。
+ * - vector：grep 不生成向量，使用空对象以满足 SearchResult 的统一类型。
+ * - score：记录本次字面匹配强度，供后续排序；不是语义相似度分数。
+ */
 export function grepMatchesToSearchResults(matches: GrepNotesMatch[], query: string): SearchResult[] {
     return matches.map((match, index) => ({
         id: `${match.source}:${match.line}:${index}`,

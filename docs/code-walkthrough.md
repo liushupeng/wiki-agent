@@ -560,7 +560,10 @@ RAG 能力被包装成四个工具：
 - `examples/wiki-eval/questions.json`：wiki-first 检索。
 - `examples/tool-routing-eval/questions.json`：工具选择和 tool group 加载。
 
-RAG 和 wiki eval 复用 `scripts/rag/evaluateRag.ts`。tool-routing eval 当前先作为数据格式，后续可以新增专门脚本读取 trace 中的 `assistant_message.toolCalls` 进行评估。
+RAG 和 Wiki eval 分别由 `scripts/rag/evaluateRag.ts`、`scripts/rag/evaluateWiki.ts`
+作为独立 CLI 入口；两者共享 `src/rag/evaluation.ts` 中的 retriever 构造与判分逻辑。
+tool-routing eval 当前先作为数据格式，后续可以新增专门脚本读取 trace 中的
+`assistant_message.toolCalls` 进行评估。
 
 ## `src/tools/shellTool.ts`
 
@@ -617,7 +620,7 @@ npm run index:notes -- D:\my-notes var/knowledge/index.json
 - `RAG_CHUNK_SIZE`
 - `RAG_CHUNK_OVERLAP`
 
-## `scripts/rag/evaluateRag.ts`
+## `scripts/rag/evaluateRag.ts` 与 `scripts/rag/evaluateWiki.ts`
 
 RAG 检索层评测脚本。它位于顶层 `scripts/rag/`，不调用 LLM，只验证检索是否召回预期内容。
 
@@ -638,6 +641,8 @@ var/knowledge/index.json
 ```json
 {
   "question": "Markdown 笔记索引应该保留哪些结构化信息？",
+  "grepTerms": ["Markdown", "frontmatter", "tags", "wiki links"],
+  "grepQuery": "wiki links",
   "expectedSource": "markdown-notes.md",
   "expectedTerms": ["标题层级", "frontmatter", "tags", "wiki links"]
 }
@@ -645,10 +650,19 @@ var/knowledge/index.json
 
 评测逻辑：
 
-1. 调用 `VectorStore.search()`。
-2. 检查 `expectedSource` 是否命中。
-3. 检查 `expectedTerms` 命中率。
-4. source 命中且 terms 命中率至少 60% 算通过。
+1. 根据 `RAG_EVAL_MODE` 构造 `vector` 或 `grep` 的 `EvalRetriever`。
+2. 两种 retriever 都调用 `evaluateRetriever()` 执行评测和汇总。
+3. 检查 `expectedSource` 是否命中。
+4. 检查 `expectedTerms` 命中率。
+5. source 命中且 terms 命中率至少 60% 算通过。
+
+`grepTerms` 会作为多个独立词项进行 OR 召回，并按单行命中的不同词项数量排序；
+`grepQuery` 用于额外匹配完整短语。它们只影响 grep 评测，不影响向量检索。
+
+`npm run eval:rag` 是独立的普通 RAG 评测入口，使用基础检索策略，默认评测
+`examples/rag-eval/questions.json`。`npm run eval:wiki` 是独立的 Wiki 评测入口，
+默认评测 `examples/wiki-eval/questions.json`，先检索更多候选，再将 `wiki/` 结果
+排到 raw 资料之前。
 
 ## `src/config.ts` 和 `src/cli/`
 

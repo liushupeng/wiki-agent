@@ -543,11 +543,11 @@ bad answer / weak retrieval / wrong tool choice
 - `examples/wiki-eval/questions.json`：wiki-first 检索评测样例。
 - `examples/tool-routing-eval/questions.json`：工具路由评测样例数据。
 
-Wiki eval 可以直接复用 RAG eval 脚本：
+Wiki eval 使用独立入口，并复用与 `search_notes` 相同的 wiki-first 排序：
 
 ```bash
 npm run index:notes
-npm run eval:rag -- examples/wiki-eval/questions.json
+npm run eval:wiki
 ```
 
 ## 端到端作品集演示
@@ -651,7 +651,9 @@ dist/src/tests/**/*.test.js
 - memory 压缩
 - skill manifest 懒加载
 
-`npm run eval:rag` 默认读取 `examples/rag-eval/questions.json`，可以通过第一个命令行参数指定评测问题文件。
+`npm run eval:rag` 默认读取 `examples/rag-eval/questions.json`，直接评估基础检索；
+`npm run eval:wiki` 默认读取 `examples/wiki-eval/questions.json`，从更多候选中优先返回
+`wiki/` 结果。两个命令都可以通过第一个命令行参数指定评测问题文件。
 
 RAG eval 支持对比向量检索和 grep 检索：
 
@@ -666,7 +668,15 @@ $env:RAG_EVAL_MODE="grep"; npm run eval:rag
 $env:RAG_EVAL_MODE="both"; npm run eval:rag
 ```
 
-评测问题可以额外提供 `grepQuery`。`question` 用于向量检索，`grepQuery` 用于 grep 检索，适合把自然语言问题改写成明确关键词、配置名或函数名。
+Wiki-first 评测同样支持 vector、grep 与 both 模式：
+
+```bash
+npm run eval:wiki
+$env:RAG_EVAL_MODE="both"; npm run eval:wiki
+```
+
+评测问题可以提供 `grepTerms`，让 grep 分别检索多个词项、按同一行命中的词项数排序；
+也可提供 `grepQuery`，用于补充一个需要完整短语匹配的查询。`question` 始终用于向量检索。
 
 实际运行 Agent 时，可以用 trace 看 grep 是否有帮助：
 

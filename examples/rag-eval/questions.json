@@ -1,14 +1,26 @@
 [
   {
-    "question": "wiki-agent 为什么把检索做成工具，而不是固定在回答前执行一次？",
-    "grepQuery": "检索 工具",
-    "expectedSource": "agent-rag.md",
-    "expectedTerms": ["工具", "Agent", "检索"]
+    "question": "Raft 为了提高可理解性，把共识问题拆分成了哪三个相对独立的部分？",
+    "grepTerms": ["Raft", "leader 选举", "log 复制", "安全"],
+    "expectedSource": "Paper04-Raft.md",
+    "expectedTerms": ["leader 选举", "log 复制", "安全"]
   },
   {
-    "question": "Markdown 笔记索引应该保留哪些结构化信息？",
-    "grepQuery": "frontmatter tags wiki links",
-    "expectedSource": "markdown-notes.md",
-    "expectedTerms": ["文件路径", "标题层级", "frontmatter", "tags", "wiki links"]
+    "question": "Frangipani 的两层架构分别由什么组成，又依靠什么机制保证一致性？",
+    "grepTerms": ["Frangipani", "Petal", "分布式锁", "一致性"],
+    "expectedSource": "Paper08-Frangipani.md",
+    "expectedTerms": ["Petal", "分布式锁", "一致性"]
+  },
+  {
+    "question": "RAG 的离线索引和在线检索分别包含哪些核心步骤？",
+    "grepTerms": ["RAG", "离线索引", "Chunk", "Embedding", "向量数据库", "Top-K"],
+    "expectedSource": "01-RAG.md",
+    "expectedTerms": ["Chunk", "Embedding", "向量数据库", "Top-K"]
+  },
+  {
+    "question": "wiki-agent 当前 JSON 检索方案与主流生产 RAG 流程有什么区别？",
+    "grepTerms": ["wiki-agent", "JSON", "词频向量", "cosineSimilarity", "dense vector", "ANN"],
+    "expectedSource": "wiki-agent.md",
+    "expectedTerms": ["词频向量", "cosineSimilarity", "dense vector", "ANN"]
   }
 ]

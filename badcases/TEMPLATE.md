@@ -48,6 +48,7 @@ Smallest durable fix:
 ```json
 {
   "question": "",
+  "grepTerms": [],
   "grepQuery": "",
   "expectedSource": "",
   "expectedTerms": []

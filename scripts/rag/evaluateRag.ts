@@ -1,8 +1,13 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { EvalComparisonSummary, EvalQuestion, evaluateRag, evaluateRetriever } from '../../src/rag/evaluation.js';
-import { grepMatchesToSearchResults, grepNotes } from '../../src/rag/grep.js';
-import { getKnowledgeSourceRoots, sourceWithPrefix } from '../../src/rag/sourceRoots.js';
+import {
+    EvalComparisonSummary,
+    EvalQuestion,
+    createGrepEvalRetriever,
+    createVectorEvalRetriever,
+    evaluateRetriever
+} from '../../src/rag/evaluation.js';
+import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
 import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
 
 /**
@@ -24,32 +29,17 @@ async function main() {
     const mode = (process.env.RAG_EVAL_MODE ?? 'vector').toLowerCase();
     const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
     const vectorStore = createVectorStoreFromEnv({ filePath: indexFile });
+    const options = { wikiFirst: false };
+    const vectorRetriever = createVectorEvalRetriever(vectorStore, options);
+    const grepRetriever = createGrepEvalRetriever(sourceRoots, options);
 
     if (mode === 'vector') {
-        console.log(JSON.stringify(await evaluateRag(questions, vectorStore), null, 2));
+        console.log(JSON.stringify(await evaluateRetriever(questions, vectorRetriever), null, 2));
         return;
     }
 
-    const grepSummary = () => evaluateRetriever(questions, {
-        name: 'grep',
-        async search(item, topK) {
-            const query = item.grepQuery ?? item.question;
-            const matches = (await Promise.all(sourceRoots.map(async sourceRoot => {
-                const matchesForRoot = await grepNotes(path.resolve(sourceRoot.root), query, {
-                    maxResults: topK,
-                    ignorePatterns: sourceRoot.ignore
-                });
-                return matchesForRoot.map(match => ({
-                    ...match,
-                    source: sourceWithPrefix(sourceRoot.prefix, match.source)
-                }));
-            }))).flat().slice(0, topK);
-            return grepMatchesToSearchResults(matches, query);
-        }
-    });
-
     if (mode === 'grep') {
-        console.log(JSON.stringify(await grepSummary(), null, 2));
+        console.log(JSON.stringify(await evaluateRetriever(questions, grepRetriever), null, 2));
         return;
     }
 
@@ -57,8 +47,8 @@ async function main() {
         const comparison: EvalComparisonSummary = {
             status: 'success',
             mode: 'both',
-            vector: await evaluateRag(questions, vectorStore),
-            grep: await grepSummary()
+            vector: await evaluateRetriever(questions, vectorRetriever),
+            grep: await evaluateRetriever(questions, grepRetriever)
         };
         console.log(JSON.stringify(comparison, null, 2));
         return;

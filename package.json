@@ -8,6 +8,7 @@
     "ask": "tsx src/main.ts",
     "index:notes": "tsx scripts/rag/indexKnowledgeBase.ts",
     "eval:rag": "tsx scripts/rag/evaluateRag.ts",
+    "eval:wiki": "tsx scripts/rag/evaluateWiki.ts",
     "mcp:check": "tsx scripts/mcp/checkMcpServers.ts",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc",

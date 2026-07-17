@@ -1,9 +1,16 @@
+import path from 'node:path';
+import { GrepNotesMatch, grepMatchesToSearchResults, grepNotes } from './grep.js';
+import { prioritizeWikiMatches } from './ranking.js';
+import { KnowledgeSourceRoot, sourceWithPrefix } from './sourceRoots.js';
 import { SearchResult } from './types.js';
 import { VectorStore } from './vectorStore.js';
 
 export type EvalQuestion = {
     question: string;
+    // grepQuery 是单个完整短语；grepTerms 是多个独立词项的 OR 召回。
+    // 两者同时存在时，完整短语也会作为额外检索项参与召回和排序。
     grepQuery?: string;
+    grepTerms?: string[];
     expectedSource?: string;
     expectedTerms?: string[];
 };
@@ -37,15 +44,61 @@ export type EvalRetriever = {
     search(question: EvalQuestion, topK: number): Promise<SearchResult[]>;
 };
 
-export async function evaluateRag(
-    questions: EvalQuestion[],
+export type EvalRetrieverOptions = {
+    wikiFirst: boolean;
+};
+
+/**
+ * 创建向量检索评测器。wikiFirst 为 true 时，先扩大候选范围，
+ * 再将维护型 wiki 结果排在 raw 资料之前。
+ */
+export function createVectorEvalRetriever(
     vectorStore: Pick<VectorStore, 'search'>,
-    topK = 5
-): Promise<EvalSummary> {
-    return evaluateRetriever(questions, {
+    options: EvalRetrieverOptions
+): EvalRetriever {
+    return {
         name: 'vector',
-        search: item => vectorStore.search(item.question, topK)
-    }, topK);
+        async search(item, topK) {
+            const candidateLimit = getCandidateLimit(topK, options);
+            const matches = await vectorStore.search(item.question, candidateLimit);
+            return options.wikiFirst ? prioritizeWikiMatches(matches, topK) : matches;
+        }
+    };
+}
+
+/**
+ * 创建全文检索评测器。每个知识源独立检索后补齐 source 前缀，
+ * 使其输出与向量检索器使用同一套 SearchResult 和评分逻辑。
+ */
+export function createGrepEvalRetriever(
+    sourceRoots: KnowledgeSourceRoot[],
+    options: EvalRetrieverOptions
+): EvalRetriever {
+    return {
+        name: 'grep',
+        async search(item, topK) {
+            const terms = getGrepTerms(item);
+            const candidateLimit = getCandidateLimit(topK, options);
+            const termMatches = (await Promise.all(sourceRoots.flatMap(sourceRoot =>
+                terms.map(async term => ({
+                    term,
+                    matches: await grepNotes(path.resolve(sourceRoot.root), term, {
+                        maxResults: candidateLimit,
+                        ignorePatterns: sourceRoot.ignore
+                    }),
+                    sourcePrefix: sourceRoot.prefix
+                }))
+            ))).flatMap(({ term, matches, sourcePrefix }) => matches.map(match => ({
+                term,
+                match: {
+                    ...match,
+                    source: sourceWithPrefix(sourcePrefix, match.source)
+                }
+            })));
+            const results = rankGrepTermMatches(termMatches, terms);
+            return options.wikiFirst ? prioritizeWikiMatches(results, topK) : results.slice(0, topK);
+        }
+    };
 }
 
 export async function evaluateRetriever(
@@ -69,6 +122,41 @@ export async function evaluateRetriever(
         accuracy: results.length ? Number((passedCount / results.length).toFixed(2)) : 0,
         results
     };
+}
+
+function getCandidateLimit(topK: number, options: EvalRetrieverOptions): number {
+    return options.wikiFirst ? Math.min(topK * 4, 48) : topK;
+}
+
+function getGrepTerms(item: EvalQuestion): string[] {
+    const candidates = [
+        ...(item.grepTerms ?? []),
+        item.grepQuery ?? ''
+    ].map(term => term.trim()).filter(Boolean);
+    if (candidates.length > 0) return Array.from(new Set(candidates));
+    return [item.question];
+}
+
+function rankGrepTermMatches(
+    termMatches: Array<{ term: string; match: GrepNotesMatch }>,
+    terms: string[]
+): SearchResult[] {
+    const grouped = new Map<string, { match: GrepNotesMatch; matchedTerms: Set<string> }>();
+
+    for (const { term, match } of termMatches) {
+        const key = `${match.source}:${match.line}`;
+        const group = grouped.get(key) ?? { match, matchedTerms: new Set<string>() };
+        group.matchedTerms.add(term);
+        grouped.set(key, group);
+    }
+
+    const groups = Array.from(grouped.values());
+    return grepMatchesToSearchResults(groups.map(group => group.match), terms.join(' '))
+        .map((result, index) => ({
+            ...result,
+            score: groups[index].matchedTerms.size / terms.length
+        }))
+        .sort((left, right) => right.score - left.score || left.source.localeCompare(right.source) || left.start - right.start);
 }
 
 export function scoreQuestion(item: EvalQuestion, matches: SearchResult[]): EvalQuestionResult {

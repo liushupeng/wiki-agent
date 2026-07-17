@@ -1,14 +1,20 @@
 [
   {
-    "question": "wiki-agent 回答知识库问题时，为什么应该优先查询 maintained wiki？",
-    "grepQuery": "maintained wiki raw sources",
+    "question": "维护 Wiki 页面时，frontmatter 的 type 和 status 分别允许哪些值？",
+    "grepTerms": ["frontmatter", "type", "source", "concept", "project", "decision", "person", "contradiction", "status", "draft", "active", "needs-review", "stale"],
     "expectedSource": "wiki/AGENTS.md",
-    "expectedTerms": ["wiki", "raw sources", "source of truth"]
+    "expectedTerms": ["source", "concept", "decision", "needs-review", "stale"]
   },
   {
-    "question": "发现新资料和旧结论冲突时，wiki-agent 应该如何处理？",
-    "grepQuery": "contradictions silently overwriting",
+    "question": "摄取一个 raw source 时，需要同步更新哪些 Wiki 文件？",
+    "grepTerms": ["ingesting", "raw source", "wiki", "index", "log", "unresolved conflicts"],
     "expectedSource": "wiki/AGENTS.md",
-    "expectedTerms": ["contradictions.md", "conflict", "source"]
+    "expectedTerms": ["wiki/sources", "wiki/index.md", "wiki/log.md", "wiki/contradictions.md"]
+  },
+  {
+    "question": "定期检查 maintained Wiki 时，需要发现哪些内容质量问题？",
+    "grepTerms": ["orphan pages", "stale sources", "duplicate concepts", "conflict"],
+    "expectedSource": "wiki/AGENTS.md",
+    "expectedTerms": ["orphan pages", "stale sources", "duplicate concepts", "conflict"]
   }
 ]

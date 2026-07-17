@@ -1,8 +1,9 @@
 import path from 'path';
 import { BaseAgentTool } from './base.js';
 import { grepNotes } from '../rag/grep.js';
+import { prioritizeWikiMatches } from '../rag/ranking.js';
 import { SearchResult } from '../rag/types.js';
-import { getKnowledgeSourceRoots, isWikiSource, sourceWithPrefix } from '../rag/sourceRoots.js';
+import { getKnowledgeSourceRoots, sourceWithPrefix } from '../rag/sourceRoots.js';
 import { createVectorStoreFromEnv } from '../rag/vectorStore.js';
 import { TraceLogger } from '../trace.js';
 import { ToolResult } from '../types.js';
@@ -31,15 +32,6 @@ function formatChunk(match: SearchResult) {
         span: { start: match.start, end: match.end },
         text: match.text
     };
-}
-
-function prioritizeWikiMatches(matches: SearchResult[], topK: number): SearchResult[] {
-    return [...matches]
-        .sort((left, right) => {
-            const priorityDelta = Number(isWikiSource(right.source)) - Number(isWikiSource(left.source));
-            return priorityDelta === 0 ? right.score - left.score : priorityDelta;
-        })
-        .slice(0, topK);
 }
 
 export class SearchNotesTool extends BaseAgentTool {

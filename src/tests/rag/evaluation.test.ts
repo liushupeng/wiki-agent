@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
-import { evaluateRag, evaluateRetriever, scoreQuestion } from '../../rag/evaluation.js';
+import {
+    createGrepEvalRetriever,
+    createVectorEvalRetriever,
+    evaluateRetriever,
+    scoreQuestion
+} from '../../rag/evaluation.js';
 import { SearchResult } from '../../rag/types.js';
 
 const matches: SearchResult[] = [
@@ -40,19 +48,21 @@ test('scoreQuestion fails when term coverage is below the threshold', () => {
     assert.equal(result.termScore, 0.5);
 });
 
-test('evaluateRag searches each question and summarizes accuracy', async () => {
+test('evaluateRetriever searches vector queries and summarizes accuracy', async () => {
     const searchedQueries: string[] = [];
-    const vectorStore = {
-        async search(query: string): Promise<SearchResult[]> {
+    const vectorRetriever = {
+        name: 'vector',
+        async search(item: { question: string }): Promise<SearchResult[]> {
+            const query = item.question;
             searchedQueries.push(query);
             return query.includes('hit') ? matches : [];
         }
     };
 
-    const summary = await evaluateRag([
+    const summary = await evaluateRetriever([
         { question: 'hit question', expectedSource: 'agent.md', expectedTerms: ['Agent'] },
         { question: 'miss question', expectedSource: 'agent.md', expectedTerms: ['Agent'] }
-    ], vectorStore);
+    ], vectorRetriever);
 
     assert.deepEqual(searchedQueries, ['hit question', 'miss question']);
     assert.equal(summary.status, 'success');
@@ -79,4 +89,65 @@ test('evaluateRetriever supports custom grep-style query fields', async () => {
     assert.equal(summary.retriever, 'grep');
     assert.equal(summary.passed, 1);
     assert.equal(summary.accuracy, 1);
+});
+
+test('createVectorEvalRetriever applies wiki-first ranking only when requested', async () => {
+    const requestedLimits: number[] = [];
+    const vectorStore = {
+        async search(_query: string, topK: number): Promise<SearchResult[]> {
+            requestedLimits.push(topK);
+            return [
+                { ...matches[0], source: 'raw/agent.md', score: 0.9 },
+                { ...matches[0], source: 'wiki/agent.md', score: 0.1 }
+            ];
+        }
+    };
+
+    const plainMatches = await createVectorEvalRetriever(vectorStore, { wikiFirst: false })
+        .search({ question: 'agent' }, 1);
+    const wikiMatches = await createVectorEvalRetriever(vectorStore, { wikiFirst: true })
+        .search({ question: 'agent' }, 1);
+
+    assert.deepEqual(requestedLimits, [1, 4]);
+    assert.equal(plainMatches[0]?.source, 'raw/agent.md');
+    assert.equal(wikiMatches[0]?.source, 'wiki/agent.md');
+});
+
+test('createGrepEvalRetriever ranks lines by matched grep terms', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-eval-'));
+    await fs.writeFile(path.join(dir, 'partial.md'), 'Raft\n', 'utf-8');
+    await fs.writeFile(path.join(dir, 'complete.md'), 'Raft leader safety\n', 'utf-8');
+    const retriever = createGrepEvalRetriever([
+        { prefix: 'raw', root: dir, kind: 'raw', priority: 50, ignore: [] }
+    ], { wikiFirst: false });
+
+    const results = await retriever.search({
+        question: 'How does Raft stay safe?',
+        grepTerms: ['Raft', 'leader', 'safety']
+    }, 2);
+
+    assert.equal(results[0]?.source, 'raw/complete.md');
+    assert.equal(results[0]?.score, 1);
+    assert.equal(results[1]?.source, 'raw/partial.md');
+    assert.equal(results[1]?.score, 1 / 3);
+});
+
+test('createGrepEvalRetriever includes an exact grep query with grep terms', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-eval-query-'));
+    await fs.writeFile(path.join(dir, 'partial.md'), 'Raft leader\n', 'utf-8');
+    await fs.writeFile(path.join(dir, 'exact.md'), 'Raft leader safety\n', 'utf-8');
+    const retriever = createGrepEvalRetriever([
+        { prefix: 'raw', root: dir, kind: 'raw', priority: 50, ignore: [] }
+    ], { wikiFirst: false });
+
+    const results = await retriever.search({
+        question: 'How does Raft stay safe?',
+        grepTerms: ['Raft', 'leader'],
+        grepQuery: 'Raft leader safety'
+    }, 2);
+
+    assert.equal(results[0]?.source, 'raw/exact.md');
+    assert.equal(results[0]?.score, 1);
+    assert.equal(results[1]?.source, 'raw/partial.md');
+    assert.equal(results[1]?.score, 2 / 3);
 });
