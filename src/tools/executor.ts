@@ -96,8 +96,11 @@ export class ToolExecutor {
     }
 
     private async executeApprovedTool(toolName: string, toolArgsStr: string): Promise<ToolResult> {
+        const startedAt = Date.now();
         const observation = await this.registry.execute(toolName, toolArgsStr);
-        console.log(Color.green(`💾 [工具反馈成功]`));
+        const durationMs = Date.now() - startedAt;
+        const message = `💾 [工具完成] [${toolName}] · 状态=${observation.status} · 耗时=${durationMs}ms${summarizeToolResult(observation)}`;
+        console.log(observation.status === 'success' ? Color.green(message) : Color.yellow(message));
         return observation;
     }
 
@@ -109,4 +112,23 @@ export class ToolExecutor {
             metadata: { hint: "请检查您的参数格式、路径正确性或命令合法性，修正后重试。" }
         };
     }
+}
+
+function summarizeToolResult(result: ToolResult): string {
+    const metadataCount = result.metadata?.count;
+    if (typeof metadataCount === 'number') {
+        return ` · 结果=${metadataCount} 条${result.metadata?.truncated === true ? '（已截断）' : ''}`;
+    }
+
+    if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return '';
+    const data = result.data as Record<string, unknown>;
+
+    for (const key of ['matches', 'chunks', 'files', 'items', 'tools', 'entries']) {
+        if (Array.isArray(data[key])) return ` · ${key}=${data[key].length} 条`;
+    }
+    for (const key of ['content', 'stdout', 'output']) {
+        if (typeof data[key] === 'string') return ` · ${key}=${data[key].length} 字符`;
+    }
+
+    return '';
 }

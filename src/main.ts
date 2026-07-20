@@ -39,8 +39,8 @@ async function main() {
     // 初始化工具注册中心：MCP 优先注册，等价本地工具作为兜底能力按需跳过。
     const registry = new ToolRegistry();
     const toolExposureController = new ToolExposureController();
-    const registeredMcpTools = await registerConfiguredMcpTools(registry);
-    const localToolNamesCoveredByMcp = getLocalToolNamesCoveredByMcp(registeredMcpTools);
+    const mcpRegistration = await registerConfiguredMcpTools(registry);
+    const localToolNamesCoveredByMcp = getLocalToolNamesCoveredByMcp(mcpRegistration.tools);
     for (const tool of createDefaultTools({ skipToolNames: localToolNamesCoveredByMcp, exposureController: toolExposureController })) {
         registry.register(tool);
     }
@@ -48,32 +48,34 @@ async function main() {
 
     const agent = new WikiAgent(config, memory, registry);
 
-    // 单次运行模式: npm run ask -- "检索我的 Agent 笔记"
-    const oneShotInstruction = process.argv.slice(2).join(' ').trim();
-    if (oneShotInstruction) {
-        toolExposureController.resetToCore();
-        await agent.run(oneShotInstruction, chunk => process.stdout.write(chunk));
-        rl.close();
-        return;
-    }
-
-    console.log('进入多轮 REPL。输入 exit / quit 退出，输入 clear 清空对话记忆。');
-
-    while (true) {
-        const instruction = (await rl.question('\n你 > ')).trim();
-        if (!instruction) { continue; }
-        if (['exit', 'quit'].includes(instruction.toLowerCase())) { break; }
-        if (instruction.toLowerCase() === 'clear') {
-            memory.clear();
-            continue;
+    try {
+        // 单次运行模式: npm run ask -- "检索我的 Agent 笔记"
+        const oneShotInstruction = process.argv.slice(2).join(' ').trim();
+        if (oneShotInstruction) {
+            toolExposureController.resetToCore();
+            await agent.run(oneShotInstruction, chunk => process.stdout.write(chunk));
+            return;
         }
 
-        toolExposureController.resetToCore();
-        await agent.run(instruction, chunk => process.stdout.write(chunk));
-        process.stdout.write('\n');
-    }
+        console.log('进入多轮 REPL。输入 exit / quit 退出，输入 clear 清空对话记忆。');
 
-    rl.close();
+        while (true) {
+            const instruction = (await rl.question('\n你 > ')).trim();
+            if (!instruction) continue;
+            if (['exit', 'quit'].includes(instruction.toLowerCase())) break;
+            if (instruction.toLowerCase() === 'clear') {
+                memory.clear();
+                continue;
+            }
+
+            toolExposureController.resetToCore();
+            await agent.run(instruction, chunk => process.stdout.write(chunk));
+            process.stdout.write('\n');
+        }
+    } finally {
+        rl.close();
+        await mcpRegistration.close();
+    }
 }
 
 main();

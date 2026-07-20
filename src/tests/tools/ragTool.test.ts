@@ -177,6 +177,30 @@ test('GrepNotesTool applies ignore patterns from knowledge source config', async
     });
 });
 
+test('GrepNotesTool caps large result and context requests', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-budget-'));
+    await fs.writeFile(
+        path.join(dir, 'many.md'),
+        Array.from({ length: 40 }, (_, index) => `memory line ${index + 1}`).join('\n'),
+        'utf-8'
+    );
+    const configPath = await writeKnowledgeSourcesConfig([
+        { name: 'raw', root: dir, kind: 'raw', enabled: true, index: true }
+    ]);
+
+    await withEnv({ KNOWLEDGE_SOURCES_CONFIG_PATH: configPath }, async () => {
+        const result = await new GrepNotesTool().execute({ query: 'memory', maxResults: 100, contextLines: 10 });
+
+        assert.equal(result.status, 'success');
+        assert.equal(result.metadata?.count, 30);
+        assert.equal(result.metadata?.maxResults, 30);
+        assert.equal(result.metadata?.contextLines, 2);
+        const data = result.data as { matches: Array<{ before: string[]; after: string[] }> };
+        assert.ok(data.matches.every(match => match.before.length <= 2));
+        assert.ok(data.matches.every(match => match.after.length <= 2));
+    });
+});
+
 test('SearchNotesTool returns formatted search matches', async () => {
     await withKnowledgeIndex(TEST_CHUNKS, async indexPath => {
         const result = await new SearchNotesTool().execute({ query: 'agent retrieval', topK: 1 });

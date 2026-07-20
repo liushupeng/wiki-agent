@@ -5,6 +5,8 @@ import { SearchResult } from './types.js';
 
 const DEFAULT_IGNORES = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.cache', 'var']);
 const SUPPORTED_EXTENSIONS = new Set(getSupportedSourceExtensions());
+const DEFAULT_MAX_RESULTS = 10;
+const MAX_RESULTS_LIMIT = 50;
 
 export type GrepNotesMatch = {
     source: string;
@@ -25,7 +27,7 @@ export type GrepNotesOptions = {
 export async function grepNotes(rootDir: string, query: string, options: GrepNotesOptions = {}): Promise<GrepNotesMatch[]> {
     const root = path.resolve(rootDir);
     const matcher = createMatcher(query, options.regex ?? false);
-    const maxResults = Math.min(options.maxResults ?? 50, 200);
+    const maxResults = Math.min(options.maxResults ?? DEFAULT_MAX_RESULTS, MAX_RESULTS_LIMIT);
     const contextLines = Math.min(options.contextLines ?? 1, 5);
     const files = await walkSupportedFiles(root, root, options.maxFiles ?? 5000, options.ignorePatterns ?? []);
     const matches: GrepNotesMatch[] = [];

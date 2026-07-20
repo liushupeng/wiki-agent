@@ -10,9 +10,15 @@ export type RegisteredMcpTool = {
     agentToolName: string;
 };
 
-export async function registerConfiguredMcpTools(registry: ToolRegistry): Promise<RegisteredMcpTool[]> {
+export type McpRegistration = {
+    tools: RegisteredMcpTool[];
+    close(): Promise<void>;
+};
+
+export async function registerConfiguredMcpTools(registry: ToolRegistry): Promise<McpRegistration> {
     const configs = await loadMcpServerConfigs();
     const registeredTools: RegisteredMcpTool[] = [];
+    const clients: StdioMcpClient[] = [];
     for (const config of configs) {
         const client = new StdioMcpClient(config);
         try {
@@ -27,11 +33,18 @@ export async function registerConfiguredMcpTools(registry: ToolRegistry): Promis
                     agentToolName: agentTool.name
                 });
             }
+            clients.push(client);
             console.log(Color.green(`🔌 MCP server connected: [${config.name}] (${tools.length} tools)`));
         } catch (error: any) {
+            await client.close().catch(() => undefined);
             console.warn(Color.yellow(`⚠️ MCP server skipped: [${config.name}] ${error.message}`));
         }
     }
 
-    return registeredTools;
+    return {
+        tools: registeredTools,
+        async close() {
+            await Promise.allSettled(clients.map(client => client.close()));
+        }
+    };
 }

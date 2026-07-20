@@ -8,6 +8,11 @@ import { createVectorStoreFromEnv } from '../rag/vectorStore.js';
 import { TraceLogger } from '../trace.js';
 import { ToolResult } from '../types.js';
 
+const DEFAULT_GREP_MAX_RESULTS = 10;
+const GREP_MAX_RESULTS_LIMIT = 30;
+const DEFAULT_GREP_CONTEXT_LINES = 1;
+const GREP_CONTEXT_LINES_LIMIT = 2;
+
 function getIndexPath(): string {
     return path.resolve(process.env.KNOWLEDGE_INDEX_PATH ?? 'var/knowledge/index.json');
 }
@@ -114,8 +119,8 @@ export class GrepNotesTool extends BaseAgentTool {
                 properties: {
                     query: { type: 'string', description: '要搜索的关键词或正则表达式' },
                     regex: { type: 'boolean', description: '是否把 query 当作正则表达式，默认 false' },
-                    maxResults: { type: 'number', description: '最多返回多少条匹配，默认 50' },
-                    contextLines: { type: 'number', description: '每条匹配前后返回多少行上下文，默认 1，最多 5' }
+                    maxResults: { type: 'number', description: '最多返回多少条匹配，默认 10，常规问题先不要超过 10；需要展开证据时再提高，最多 30' },
+                    contextLines: { type: 'number', description: '每条匹配前后返回多少行上下文，默认 1，最多 2；只需要确认命中时可设为 0' }
                 },
                 required: ['query']
             }
@@ -139,8 +144,8 @@ export class GrepNotesTool extends BaseAgentTool {
 
     async execute(args: { query: string; regex?: boolean; maxResults?: number; contextLines?: number }): Promise<ToolResult> {
         try {
-            const maxResults = Math.min(args.maxResults ?? 50, 200);
-            const contextLines = Math.min(args.contextLines ?? 1, 5);
+            const maxResults = Math.min(args.maxResults ?? DEFAULT_GREP_MAX_RESULTS, GREP_MAX_RESULTS_LIMIT);
+            const contextLines = Math.min(args.contextLines ?? DEFAULT_GREP_CONTEXT_LINES, GREP_CONTEXT_LINES_LIMIT);
             const sourceRoots = await getKnowledgeSourceRoots();
             const matches = (await Promise.all(sourceRoots.map(async sourceRoot => {
                 const matchesForRoot = await grepNotes(path.resolve(sourceRoot.root), args.query, {

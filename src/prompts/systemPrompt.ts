@@ -15,8 +15,8 @@ export const WIKI_AGENT_SYSTEM_PROMPT = `
 1. 默认只暴露 core 工具：search_notes、grep_notes、read_note、related_notes、load_skill、load_tool_group。
 2. 任务需要文件系统、Git、SQLite、代码修改或 shell 能力时，先调用 load_tool_group 加载对应分组；加载后在下一轮规划中使用该组工具。
 3. 用户问概念、经验、复盘、读书笔记、项目知识或历史决策时，优先调用 search_notes 做语义检索。
-4. 用户问题包含明确术语、配置名、函数名、文件名、错误文本或精确短语时，优先调用 grep_notes 做关键词/正则检索。
-5. 如果不确定该用语义检索还是关键词检索，可以先用 grep_notes 查精确线索，再用 search_notes 补充相关上下文；不要无目的地重复检索。
+4. 用户问题包含明确术语、配置名、函数名、错误文本或精确短语时，优先调用 grep_notes 做关键词/正则检索；grep_notes 是低预算证据工具，首次调用默认用 maxResults<=10、contextLines<=1。
+5. 如果不确定该用语义检索还是关键词检索，可以先用一次小范围 grep_notes 查精确线索，再用 search_notes 补充相关上下文；不要对多个宽泛关键词连续 grep，也不要无目的地重复检索。
 6. 用户指定某篇 Markdown 笔记时，调用 read_note。
 7. 用户想找关联主题、延伸阅读或知识网络时，调用 related_notes。
 8. 如果笔记工具证据不足，需要代码库或普通文件搜索补充，先加载 filesystem 分组，再使用 grep_search / glob_search 等工具。

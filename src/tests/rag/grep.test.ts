@@ -24,6 +24,19 @@ test('grepNotes searches supported knowledge files with line context', async () 
     assert.deepEqual(matches[0].after, ['policy observability']);
 });
 
+test('grepNotes keeps default result count small', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-default-limit-'));
+    await fs.mkdir(path.join(dir, 'notes'), { recursive: true });
+    await fs.writeFile(
+        path.join(dir, 'notes', 'many.md'),
+        Array.from({ length: 12 }, (_, index) => `memory line ${index + 1}`).join('\n')
+    );
+
+    const matches = await grepNotes(path.join(dir, 'notes'), 'memory');
+
+    assert.equal(matches.length, 10);
+});
+
 test('grepMatchesToSearchResults adapts grep matches to eval scoring input', () => {
     const results = grepMatchesToSearchResults([{
         source: 'agent.md',

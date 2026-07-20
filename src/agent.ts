@@ -133,6 +133,9 @@ export class WikiAgent implements IAgent {
         });
 
         if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
+            if (assistantText && !assistantText.endsWith('\n')) {
+                process.stdout.write('\n');
+            }
             await this.handleToolCalls(aiMessage.tool_calls, step, traceLogger);
             console.log(Color.cyan(`📡 [Replanning] 数据链已更新，重新唤醒大脑决策...`));
             return { type: 'continue' };
