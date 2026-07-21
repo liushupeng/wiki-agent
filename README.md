@@ -475,7 +475,7 @@ AGENT_WORKSPACE_ROOT=.
 
 Agent 系统很难只靠最终答案调试，所以项目把 trace、成本估算、RAG eval、bad case 模板作为一等能力。
 
-每次 `WikiAgent.run()` 都会写 trace。当前默认 sink 是 `JsonlTraceSink`，写入本地 JSONL 文件：
+每次 `WikiAgent.run()` 都会写 trace。当前默认 sink 是 `JsonlTraceSink`，写入本地 JSONL 文件。
 
 ```env
 TRACE_DIR=var/traces
@@ -491,6 +491,15 @@ TraceLogger
 ```
 
 `TraceLogger` 负责补默认 level、按 `TRACE_LEVEL` 过滤事件；`TraceSink` 负责事件输出。后续如果要接 OpenTelemetry，可以新增 `OpenTelemetryTraceSink`，把 `agent.run`、`agent.step`、`llm.call`、`tool.execute`、`rag.search` 映射成 span 或 span event，而不需要改 Agent loop。
+
+如需将既有 JSONL trace 离线导入 OpenTelemetry 后端，可显式执行导出命令。未传 `--endpoint` 时仅进行本地 dry run，不会发生网络请求：
+
+```powershell
+npm run trace:export -- --input var/traces/trace-xxx.jsonl
+npm run trace:export -- --input var/traces/trace-xxx.jsonl --endpoint http://localhost:4318/v1/traces
+```
+
+该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；它不参与 `npm run ask` 的运行链路，也不会修改源 trace。
 
 基础事件：
 

@@ -7,6 +7,7 @@
     "dev": "tsx src/main.ts",
     "ask": "tsx src/main.ts",
     "check:llm": "tsx scripts/checkLlm.ts",
+    "trace:export": "tsx scripts/observability/exportTrace.ts",
     "index:notes": "tsx scripts/rag/indexKnowledgeBase.ts",
     "eval:rag": "tsx scripts/rag/evaluateRag.ts",
     "eval:wiki": "tsx scripts/rag/evaluateWiki.ts",
@@ -27,6 +28,10 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@modelcontextprotocol/server-filesystem": "^2026.7.10",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
+    "@opentelemetry/resources": "^2.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.9.0",
     "dotenv": "^17.4.2",
     "jsonc-parser": "^3.3.1",
     "openai": "^6.42.0"
