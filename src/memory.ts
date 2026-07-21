@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { TraceLogger } from './trace.js';
+import { getActiveSpan } from './trace.js';
 import { IMemory } from './types.js';
 import { estimateMessagesSize } from './utils/tokenBudget.js';
 
@@ -99,7 +99,6 @@ export class MemoryManager implements IMemory {
     private readonly maxHistoryMessages: number;
     private readonly keepRecentMessages: number;
     private readonly maxHistoryChars: number;
-    private traceLogger?: TraceLogger;
 
     /**
      * 构造函数：初始化时必须灌入最核心的 System Prompt
@@ -129,10 +128,6 @@ export class MemoryManager implements IMemory {
             ...[this.longTerm.toMessage()].filter((message): message is MemoryMessage => Boolean(message)),
             ...this.shortTerm.getMessages()
         ];
-    }
-
-    setTraceLogger(traceLogger: TraceLogger): void {
-        this.traceLogger = traceLogger;
     }
 
     /**
@@ -171,7 +166,6 @@ export class MemoryManager implements IMemory {
 
     private compactIfNeeded(): void {
         const beforeCount = this.getMessages().length;
-        const beforeSize = estimateMessagesSize(this.getMessages());
         const shortTermMessages = this.shortTerm.getMessages();
         const rawMessageCount = shortTermMessages.length + (this.systemMessage ? 1 : 0);
         const historyChars = this.estimateHistoryChars();
@@ -191,20 +185,11 @@ export class MemoryManager implements IMemory {
         this.midTerm.mergeMessages(old);
         this.shortTerm.replace(recent);
         const afterMessages = this.getMessages();
-        void this.traceLogger?.write({
-            type: 'memory_compaction',
-            level: 'debug',
-            beforeCount,
-            afterCount: afterMessages.length,
-            summarizedCount: old.length,
-            retainedCount: recent.length,
-            shortTermCount: recent.length,
-            midTermEntryCount: this.midTerm.getEntryCount(),
-            longTermItemCount: this.longTerm.getItemCount(),
-            before: beforeSize,
-            after: estimateMessagesSize(afterMessages),
-            reason: countExceeded ? 'max_messages' : 'max_chars',
-            at: new Date().toISOString()
+        void getActiveSpan()?.addEvent('memory.compaction', {
+            'wiki_agent.memory.before_count': beforeCount,
+            'wiki_agent.memory.after_count': afterMessages.length,
+            'wiki_agent.memory.summarized_count': old.length,
+            'wiki_agent.memory.reason': countExceeded ? 'max_messages' : 'max_chars'
         });
         console.log("🧹 [MemoryManager] 历史上下文已自动压缩，保留近期关键消息。");
     }

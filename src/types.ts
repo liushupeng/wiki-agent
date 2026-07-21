@@ -12,6 +12,9 @@ export interface AgentConfig {
     temperature: number;
     maxLoopSteps: number; // 熔断步数
     traceDir?: string;
+    telemetryBackend?: 'file' | 'otlp';
+    otlpTracesEndpoint?: string;
+    otlpProtocol?: 'http' | 'grpc';
     approvalMode?: ApprovalMode;
     requestApproval?: (request: ApprovalRequest) => Promise<boolean>;
 }

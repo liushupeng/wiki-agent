@@ -3,105 +3,36 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { getTraceLevelFromEnv, NormalizedTraceEvent, preview, shouldWriteTraceLevel, TraceLogger, TraceSink } from '../trace.js';
+import { createTelemetry, preview } from '../trace.js';
 
-class InMemoryTraceSink implements TraceSink {
-    readonly events: NormalizedTraceEvent[] = [];
+test('file telemetry writes versioned spans with explicit parent-child identifiers', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-trace-spans-'));
+    const telemetry = createTelemetry({ traceDir: tempDir });
+    const run = await telemetry.startSpan('wiki_agent.run');
+    const step = await run.startChild('wiki_agent.step');
+    const tool = await step.startChild('tool.execute');
+    await tool.addEvent('tool.permission_decision', { 'tool.permission.action': 'allow' });
+    await tool.end({ status: 'ok' });
+    await step.end();
+    await run.end({ status: 'ok' });
 
-    async write(event: NormalizedTraceEvent): Promise<void> {
-        this.events.push(event);
-    }
-}
+    const [fileName] = await fs.readdir(tempDir);
+    const events = (await fs.readFile(path.join(tempDir, fileName!), 'utf-8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as Record<string, unknown>);
+    const starts = events.filter(event => event.type === 'span_start');
+    const runStart = starts.find(event => event.name === 'wiki_agent.run');
+    const stepStart = starts.find(event => event.name === 'wiki_agent.step');
+    const toolStart = starts.find(event => event.name === 'tool.execute');
 
-test('TraceLogger creates a JSONL file path inside the trace directory', async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-trace-'));
-    const logger = new TraceLogger(tempDir);
-
-    assert.equal(path.dirname(logger.filePath), path.resolve(tempDir));
-    assert.match(path.basename(logger.filePath), /^trace-\d{4}-\d{2}-\d{2}T.*Z\.jsonl$/);
-});
-
-test('TraceLogger appends events as JSON lines', async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-trace-'));
-    const logger = new TraceLogger(tempDir);
-
-    await logger.write({ type: 'run_start', instruction: 'hello', at: '2026-01-01T00:00:00.000Z' });
-    await logger.write({ type: 'step_start', step: 1, at: '2026-01-01T00:00:01.000Z' });
-
-    const lines = (await fs.readFile(logger.filePath, 'utf-8')).trim().split('\n');
-
-    assert.equal(lines.length, 2);
-    assert.deepEqual(JSON.parse(lines[0]), {
-        level: 'info',
-        type: 'run_start',
-        instruction: 'hello',
-        at: '2026-01-01T00:00:00.000Z'
-    });
-    assert.deepEqual(JSON.parse(lines[1]), {
-        level: 'info',
-        type: 'step_start',
-        step: 1,
-        at: '2026-01-01T00:00:01.000Z'
-    });
-});
-
-test('TraceLogger filters events below the configured level', async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-trace-'));
-    const logger = new TraceLogger(tempDir, 'info');
-
-    await logger.write({
-        type: 'model_call_budget',
-        step: 1,
-        inputMessageCount: 2,
-        input: { chars: 100, approxTokens: 25 },
-        toolSchemaCount: 3,
-        toolSchemas: { chars: 80, approxTokens: 20 },
-        output: { chars: 20, approxTokens: 5 },
-        toolCallCount: 1,
-        at: '2026-01-01T00:00:00.000Z'
-    });
-    await logger.write({
-        type: 'permission_decision',
-        level: 'debug',
-        toolName: 'write_file',
-        action: 'ask',
-        reason: 'approval required',
-        riskLevel: 'write',
-        at: '2026-01-01T00:00:00.000Z'
-    });
-    await logger.write({ type: 'step_start', step: 1, at: '2026-01-01T00:00:01.000Z' });
-
-    const lines = (await fs.readFile(logger.filePath, 'utf-8')).trim().split('\n');
-
-    assert.equal(lines.length, 1);
-    assert.equal(JSON.parse(lines[0]).type, 'step_start');
-});
-
-test('TraceLogger writes normalized events to a custom sink', async () => {
-    const sink = new InMemoryTraceSink();
-    const logger = new TraceLogger(sink, 'debug');
-
-    await logger.write({ type: 'run_start', instruction: 'hello', at: '2026-01-01T00:00:00.000Z' });
-
-    assert.equal(sink.events.length, 1);
-    assert.deepEqual(sink.events[0], {
-        level: 'info',
-        type: 'run_start',
-        instruction: 'hello',
-        at: '2026-01-01T00:00:00.000Z'
-    });
-    assert.equal(logger.filePath, '');
-});
-
-test('Trace level helpers parse and compare levels', () => {
-    assert.equal(getTraceLevelFromEnv({ TRACE_LEVEL: 'debug' }), 'debug');
-    assert.equal(getTraceLevelFromEnv({ TRACE_LEVEL: 'invalid' }), 'info');
-    assert.equal(shouldWriteTraceLevel('debug', 'info'), false);
-    assert.equal(shouldWriteTraceLevel('error', 'info'), true);
+    assert.equal(runStart?.schemaVersion, 2);
+    assert.equal(stepStart?.parentSpanId, runStart?.spanId);
+    assert.equal(toolStart?.parentSpanId, stepStart?.spanId);
+    assert.equal(events.filter(event => event.type === 'span_end').length, 3);
+    assert.equal(events.find(event => event.type === 'span_event')?.name, 'tool.permission_decision');
 });
 
 test('preview normalizes whitespace and truncates long text', () => {
-    const result = preview('  a\n\tb   cdef  ', 5);
-
-    assert.equal(result, 'a b c...');
+    assert.equal(preview('  a\n\tb   cdef  ', 5), 'a b c...');
 });

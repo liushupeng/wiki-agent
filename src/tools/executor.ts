@@ -1,6 +1,6 @@
 import { Color } from '../cli/colors.js';
 import { PermissionPolicy } from '../permissions.js';
-import { TraceLogger } from '../trace.js';
+import { getActiveSpan } from '../trace.js';
 import { ApprovalRequest, IAgentTool, IToolRegistry, ToolResult } from '../types.js';
 import { parseToolArguments } from '../utils/json.js';
 
@@ -15,7 +15,7 @@ export class ToolExecutor {
         private readonly requestApproval?: (request: ApprovalRequest) => Promise<boolean>
     ) {}
 
-    async execute(toolName: string, toolArgsStr: string, traceLogger?: TraceLogger): Promise<ToolResult> {
+    async execute(toolName: string, toolArgsStr: string): Promise<ToolResult> {
         try {
             const tool = this.registry.getTool(toolName);
             if (!tool) {
@@ -29,14 +29,10 @@ export class ToolExecutor {
 
             // PermissionPolicy 只做决策；ToolExecutor 把 allow/ask/deny 转换成执行、人工审批或拒绝 observation。
             const decision = this.permissionPolicy.evaluate(tool, parsedArgs.args);
-            await traceLogger?.write({
-                type: 'permission_decision',
-                level: 'debug',
-                toolName,
-                action: decision.action,
-                reason: decision.reason,
-                riskLevel: tool.riskLevel,
-                at: new Date().toISOString()
+            await getActiveSpan()?.addEvent('tool.permission_decision', {
+                'tool.name': toolName,
+                'tool.permission.action': decision.action,
+                'tool.risk_level': tool.riskLevel
             });
 
             if (decision.action === 'deny') {

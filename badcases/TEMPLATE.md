@@ -49,7 +49,6 @@ Smallest durable fix:
 {
   "question": "",
   "grepTerms": [],
-  "grepQuery": "",
   "expectedSource": "",
   "expectedTerms": []
 }

@@ -72,15 +72,15 @@ test('evaluateRetriever searches vector queries and summarizes accuracy', async 
     assert.equal(summary.accuracy, 0.5);
 });
 
-test('evaluateRetriever supports custom grep-style query fields', async () => {
+test('evaluateRetriever passes grep terms to custom retrievers', async () => {
     const searchedQueries: string[] = [];
 
     const summary = await evaluateRetriever([
-        { question: 'what is the agent formula?', grepQuery: 'loop memory tool', expectedSource: 'agent.md', expectedTerms: ['Agent', 'retrieval'] }
+        { question: 'what is the agent formula?', grepTerms: ['loop', 'memory', 'tool'], expectedSource: 'agent.md', expectedTerms: ['Agent', 'retrieval'] }
     ], {
         name: 'grep',
         async search(item): Promise<SearchResult[]> {
-            searchedQueries.push(item.grepQuery ?? item.question);
+            searchedQueries.push(item.grepTerms?.join(' ') ?? item.question);
             return matches;
         }
     });
@@ -132,22 +132,3 @@ test('createGrepEvalRetriever ranks lines by matched grep terms', async () => {
     assert.equal(results[1]?.score, 1 / 3);
 });
 
-test('createGrepEvalRetriever includes an exact grep query with grep terms', async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-eval-query-'));
-    await fs.writeFile(path.join(dir, 'partial.md'), 'Raft leader\n', 'utf-8');
-    await fs.writeFile(path.join(dir, 'exact.md'), 'Raft leader safety\n', 'utf-8');
-    const retriever = createGrepEvalRetriever([
-        { prefix: 'raw', root: dir, kind: 'raw', priority: 50, ignore: [] }
-    ], { wikiFirst: false });
-
-    const results = await retriever.search({
-        question: 'How does Raft stay safe?',
-        grepTerms: ['Raft', 'leader'],
-        grepQuery: 'Raft leader safety'
-    }, 2);
-
-    assert.equal(results[0]?.source, 'raw/exact.md');
-    assert.equal(results[0]?.score, 1);
-    assert.equal(results[1]?.source, 'raw/partial.md');
-    assert.equal(results[1]?.score, 2 / 3);
-});

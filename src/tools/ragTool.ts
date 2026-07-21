@@ -5,7 +5,7 @@ import { prioritizeWikiMatches } from '../rag/ranking.js';
 import { SearchResult } from '../rag/types.js';
 import { getKnowledgeSourceRoots, sourceWithPrefix } from '../rag/sourceRoots.js';
 import { createVectorStoreFromEnv } from '../rag/vectorStore.js';
-import { TraceLogger } from '../trace.js';
+import { getActiveSpan } from '../trace.js';
 import { ToolResult } from '../types.js';
 
 const DEFAULT_GREP_MAX_RESULTS = 10;
@@ -42,7 +42,6 @@ function formatChunk(match: SearchResult) {
 export class SearchNotesTool extends BaseAgentTool {
     readonly name = 'search_notes';
     readonly permission = 'rag' as const;
-    private traceLogger?: TraceLogger;
     readonly schema = {
         type: 'function' as const,
         function: {
@@ -68,29 +67,22 @@ export class SearchNotesTool extends BaseAgentTool {
         return errors;
     }
 
-    setTraceLogger(traceLogger: TraceLogger): void {
-        this.traceLogger = traceLogger;
-    }
-
     async execute(args: { query: string; topK?: number }): Promise<ToolResult> {
+        const topK = Math.min(args.topK ?? 5, 12);
+        const ragSpan = await getActiveSpan()?.startChild('rag.search', {
+            attributes: {
+                'wiki_agent.rag.query': args.query,
+                'wiki_agent.rag.top_k': topK,
+                'wiki_agent.rag.mode': 'vector'
+            }
+        });
         try {
             const indexPath = getIndexPath();
-            const topK = Math.min(args.topK ?? 5, 12);
             const candidateLimit = Math.min(topK * 4, 48);
             const matches = prioritizeWikiMatches(await getVectorStore().search(args.query, candidateLimit), topK);
-            await this.traceLogger?.write({
-                type: 'rag_search',
-                level: 'debug',
-                toolName: this.name,
-                query: args.query,
-                indexPath,
-                topK,
-                matchCount: matches.length,
-                topMatches: matches.slice(0, 5).map(match => ({
-                    source: match.source,
-                    score: Number(match.score.toFixed(4))
-                })),
-                at: new Date().toISOString()
+            await ragSpan?.end({
+                status: 'ok',
+                attributes: { 'wiki_agent.rag.match_count': matches.length }
             });
 
             return this.ok({
@@ -98,6 +90,7 @@ export class SearchNotesTool extends BaseAgentTool {
                 matches: matches.map(formatChunk)
             }, { count: matches.length, indexPath, scope: await getSearchScopeDescription() });
         } catch (error: any) {
+            await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message, {
                 hint: '请先运行 npm run index:notes 生成 var/knowledge/index.json。'
             });
@@ -108,7 +101,6 @@ export class SearchNotesTool extends BaseAgentTool {
 export class GrepNotesTool extends BaseAgentTool {
     readonly name = 'grep_notes';
     readonly permission = 'rag' as const;
-    private traceLogger?: TraceLogger;
     readonly schema = {
         type: 'function' as const,
         function: {
@@ -138,13 +130,16 @@ export class GrepNotesTool extends BaseAgentTool {
         return errors;
     }
 
-    setTraceLogger(traceLogger: TraceLogger): void {
-        this.traceLogger = traceLogger;
-    }
-
     async execute(args: { query: string; regex?: boolean; maxResults?: number; contextLines?: number }): Promise<ToolResult> {
+        const maxResults = Math.min(args.maxResults ?? DEFAULT_GREP_MAX_RESULTS, GREP_MAX_RESULTS_LIMIT);
+        const ragSpan = await getActiveSpan()?.startChild('rag.search', {
+            attributes: {
+                'wiki_agent.rag.query': args.query,
+                'wiki_agent.rag.top_k': maxResults,
+                'wiki_agent.rag.mode': 'grep'
+            }
+        });
         try {
-            const maxResults = Math.min(args.maxResults ?? DEFAULT_GREP_MAX_RESULTS, GREP_MAX_RESULTS_LIMIT);
             const contextLines = Math.min(args.contextLines ?? DEFAULT_GREP_CONTEXT_LINES, GREP_CONTEXT_LINES_LIMIT);
             const sourceRoots = await getKnowledgeSourceRoots();
             const matches = (await Promise.all(sourceRoots.map(async sourceRoot => {
@@ -161,19 +156,9 @@ export class GrepNotesTool extends BaseAgentTool {
                 }));
             }))).flat().slice(0, maxResults);
 
-            await this.traceLogger?.write({
-                type: 'rag_search',
-                level: 'debug',
-                toolName: this.name,
-                query: args.query,
-                indexPath: await getSearchScopeDescription(),
-                topK: maxResults,
-                matchCount: matches.length,
-                topMatches: matches.slice(0, 5).map(match => ({
-                    source: `${match.source}:${match.line}`,
-                    score: 1
-                })),
-                at: new Date().toISOString()
+            await ragSpan?.end({
+                status: 'ok',
+                attributes: { 'wiki_agent.rag.match_count': matches.length }
             });
 
             return this.ok({
@@ -182,6 +167,7 @@ export class GrepNotesTool extends BaseAgentTool {
                 matches
             }, { count: matches.length, scope: await getSearchScopeDescription(), maxResults, contextLines });
         } catch (error: any) {
+            await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message, {
                 hint: '请确认 KNOWLEDGE_SOURCES_CONFIG_PATH 指向有效的 knowledge sources JSONC 配置。'
             });
@@ -214,8 +200,17 @@ export class ReadNoteTool extends BaseAgentTool {
     }
 
     async execute(args: { notePath: string }): Promise<ToolResult> {
+        const ragSpan = await getActiveSpan()?.startChild('rag.read_note', {
+            attributes: {
+                'wiki_agent.rag.note_path': args.notePath
+            }
+        });
         try {
             const chunks = await getVectorStore().findBySource(args.notePath);
+            await ragSpan?.end({
+                status: 'ok',
+                attributes: { 'wiki_agent.rag.match_count': chunks.length }
+            });
 
             return this.ok({
                 notePath: args.notePath,
@@ -230,6 +225,7 @@ export class ReadNoteTool extends BaseAgentTool {
                 }))
             }, { count: chunks.length });
         } catch (error: any) {
+            await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message);
         }
     }
@@ -264,14 +260,26 @@ export class RelatedNotesTool extends BaseAgentTool {
     }
 
     async execute(args: { notePath: string; topK?: number }): Promise<ToolResult> {
+        const topK = Math.min(args.topK ?? 8, 16);
+        const ragSpan = await getActiveSpan()?.startChild('rag.related_notes', {
+            attributes: {
+                'wiki_agent.rag.note_path': args.notePath,
+                'wiki_agent.rag.top_k': topK
+            }
+        });
         try {
-            const matches = await getVectorStore().findRelated(args.notePath, Math.min(args.topK ?? 8, 16));
+            const matches = await getVectorStore().findRelated(args.notePath, topK);
+            await ragSpan?.end({
+                status: 'ok',
+                attributes: { 'wiki_agent.rag.match_count': matches.length }
+            });
 
             return this.ok({
                 notePath: args.notePath,
                 matches: matches.map(formatChunk)
             }, { count: matches.length });
         } catch (error: any) {
+            await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message);
         }
     }

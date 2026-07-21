@@ -45,3 +45,13 @@ test('readSkill loads a single skill by manifest name', async () => {
     assert.equal(skill.fileName, 'example.md');
     assert.match(skill.content, /Load this body on demand/);
 });
+
+test('loadSkillManifests rejects skills without required frontmatter metadata', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-skills-'));
+    await fs.writeFile(path.join(tempDir, 'invalid.md'), '# Missing metadata', 'utf-8');
+
+    await assert.rejects(
+        () => loadSkillManifests(tempDir),
+        /frontmatter must define non-empty name and description/
+    );
+});

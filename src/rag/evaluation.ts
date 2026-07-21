@@ -7,9 +7,6 @@ import { VectorStore } from './vectorStore.js';
 
 export type EvalQuestion = {
     question: string;
-    // grepQuery 是单个完整短语；grepTerms 是多个独立词项的 OR 召回。
-    // 两者同时存在时，完整短语也会作为额外检索项参与召回和排序。
-    grepQuery?: string;
     grepTerms?: string[];
     expectedSource?: string;
     expectedTerms?: string[];
@@ -129,10 +126,7 @@ function getCandidateLimit(topK: number, options: EvalRetrieverOptions): number 
 }
 
 function getGrepTerms(item: EvalQuestion): string[] {
-    const candidates = [
-        ...(item.grepTerms ?? []),
-        item.grepQuery ?? ''
-    ].map(term => term.trim()).filter(Boolean);
+    const candidates = (item.grepTerms ?? []).map(term => term.trim()).filter(Boolean);
     if (candidates.length > 0) return Array.from(new Set(candidates));
     return [item.question];
 }

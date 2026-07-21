@@ -25,6 +25,9 @@ async function main() {
         temperature: 0.1,
         maxLoopSteps: Number(process.env.MAX_LOOP_STEPS ?? 20),
         traceDir: process.env.TRACE_DIR ?? 'var/traces',
+        telemetryBackend: process.env.TELEMETRY_BACKEND === 'otlp' ? 'otlp' : 'file',
+        otlpTracesEndpoint: process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+        otlpProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL === 'grpc' ? 'grpc' : 'http',
         approvalMode: getApprovalMode(),
         requestApproval: request => askToolApproval(rl, request)
     };

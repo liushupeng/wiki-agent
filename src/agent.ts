@@ -1,14 +1,15 @@
 // src/agent.ts
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
-import { IAgent, IMemory, IToolRegistry, AgentConfig, ToolResult } from './types.js';
+import { createHash } from 'node:crypto';
+import { IAgent, IMemory, IToolRegistry, AgentConfig } from './types.js';
 import { Color } from './cli/colors.js';
 import { PermissionPolicy } from './permissions.js';
 import { appendToolCallDeltas, buildSkippedToolResult, buildToolCalls, FunctionToolCall, isFunctionToolCall, ToolExecutionResult } from './protocol/toolCalls.js';
-import { preview, TerminationReason, TraceLogger } from './trace.js';
+import { createTelemetry, preview, runWithSpan, SpanHandle, TerminationReason } from './trace.js';
 import { ToolExecutor } from './tools/executor.js';
-import { parseJsonForTrace } from './utils/json.js';
 import { estimateMessagesSize, estimateTextSize, estimateToolSchemasSize } from './utils/tokenBudget.js';
+import { parseJsonSafely } from './utils/json.js';
 
 dotenv.config();
 
@@ -43,7 +44,7 @@ export class WikiAgent implements IAgent {
      * 执行一次完整的 Agent loop。
      *
      * 这个方法只负责“任务生命周期”的主流程：把用户输入写入 memory、
-     * 循环执行模型决策、处理熔断和系统错误，并在最后写入 run_end trace。
+     * 循环执行模型决策、处理熔断和系统错误，并在最后结束 run span。
      * 单步模型调用、工具调用调度和单个工具执行分别拆在 runStep()、
      * callModel()、handleToolCalls() 和 executeToolCall() 中。
      *
@@ -51,12 +52,12 @@ export class WikiAgent implements IAgent {
      *
      * User instruction
      *   -> append user message to memory
-     *   -> write run_start trace
+     *   -> start wiki_agent.run span
      *   -> loop step 1..maxLoopSteps
      *        -> runStep()
      *             -> callModel()
      *             -> append assistant message to memory
-     *             -> write assistant_message trace
+     *             -> record assistant_message span event
      *             -> has tool_calls?
      *                  yes -> handleToolCalls()
      *                         -> execute read-only tools in parallel
@@ -68,88 +69,113 @@ export class WikiAgent implements IAgent {
      *             yes -> terminate with max_loop_steps
      *        -> system error?
      *             yes -> terminate with system_error
-     *   -> write run_end trace with terminationReason
+     *   -> end wiki_agent.run span with terminationReason
      *   -> return final answer text
      */
     async run(userInstruction: string, onTextChunk: (text: string) => void): Promise<string> {
         // 将用户的原始长指令压入记忆芯片
         this.memory.append({ role: "user", content: userInstruction });
-        const traceLogger = new TraceLogger(this.config.traceDir);
-        if ('setTraceLogger' in this.memory && typeof this.memory.setTraceLogger === 'function') {
-            this.memory.setTraceLogger(traceLogger);
-        }
-        await traceLogger.write({ type: 'run_start', instruction: userInstruction, at: new Date().toISOString() });
+        const telemetry = createTelemetry({
+            backend: this.config.telemetryBackend,
+            traceDir: this.config.traceDir,
+            otlpEndpoint: this.config.otlpTracesEndpoint,
+            otlpProtocol: this.config.otlpProtocol
+        });
+        const runSpan = await telemetry.startSpan('wiki_agent.run', {
+            attributes: { 'wiki_agent.instruction': preview(userInstruction) }
+        });
 
         let stepCount = 0;
         let finalOutput = "";
         let terminationReason: TerminationReason = "completed";
 
-        while (true) {
-            stepCount++;
+        try {
+            await runWithSpan(runSpan, async () => {
+                while (true) {
+                    stepCount++;
 
-            // 防防御性安全熔断，防止大模型陷入死循环疯狂烧你的 Token
-            if (stepCount > this.config.maxLoopSteps) {
-                console.log(Color.red(`\n🚨 [安全熔断] 侦测到当前任务链式思考已达步数上限 (${this.config.maxLoopSteps} 步)，为保护您的账户额度，已强制熔断。`));
-                terminationReason = "max_loop_steps";
-                break;
-            }
+                    // 防防御性安全熔断，防止大模型陷入死循环疯狂烧你的 Token
+                    if (stepCount > this.config.maxLoopSteps) {
+                        console.log(Color.red(`\n🚨 [安全熔断] 侦测到当前任务链式思考已达步数上限 (${this.config.maxLoopSteps} 步)，为保护您的账户额度，已强制熔断。`));
+                        terminationReason = "max_loop_steps";
+                        break;
+                    }
 
-            try {
-                const stepResult = await this.runStep(stepCount, traceLogger, onTextChunk);
-                if (stepResult.type === 'final') {
-                    finalOutput = stepResult.content;
-                    break;
+                    try {
+                        const stepResult = await this.runStep(stepCount, runSpan, onTextChunk);
+                        if (stepResult.type === 'final') {
+                            finalOutput = stepResult.content;
+                            break;
+                        }
+                    } catch (error: any) {
+                        console.log(Color.red(`\n🚨 [系统级严重故障拦截]: ${error.message}`));
+                        terminationReason = "system_error";
+                        break;
+                    }
                 }
-            } catch (error: any) {
-                console.log(Color.red(`\n🚨 [系统级严重故障拦截]: ${error.message}`));
-                terminationReason = "system_error";
-                break;
-            }
+            });
+        } finally {
+            await runSpan.end({
+                status: terminationReason === 'completed' ? 'ok' : 'error',
+                attributes: { 'wiki_agent.termination_reason': terminationReason }
+            });
+            await telemetry.shutdown();
         }
-
-        await this.writeRunEnd(traceLogger, finalOutput, terminationReason);
         return finalOutput;
     }
 
     private async runStep(
         step: number,
-        traceLogger: TraceLogger,
+        runSpan: SpanHandle,
         onTextChunk: (text: string) => void
     ): Promise<StepResult> {
         console.log(Color.cyan(`\n🧠 [Step ${step}] Agent 正在审视环境并推演下一步规划...`));
-        await traceLogger.write({ type: 'step_start', step, at: new Date().toISOString() });
-
-        const aiMessage = await this.callModel(step, traceLogger, onTextChunk);
-        const assistantText = this.getAssistantText(aiMessage);
-
-        // 必须立刻把大模型的这次决策和思考过程记入历史，否则后续上下文契约会错乱。
-        this.memory.append(aiMessage as OpenAI.Chat.Completions.ChatCompletionMessage);
-        await traceLogger.write({
-            type: 'assistant_message',
-            step,
-            contentPreview: preview(assistantText),
-            toolCalls: (aiMessage.tool_calls ?? []).filter(isFunctionToolCall).map(call => call.function.name),
-            at: new Date().toISOString()
+        const stepSpan = await runSpan.startChild('wiki_agent.step', {
+            attributes: { 'wiki_agent.step': step }
         });
 
-        if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-            if (assistantText && !assistantText.endsWith('\n')) {
-                process.stdout.write('\n');
-            }
-            await this.handleToolCalls(aiMessage.tool_calls, step, traceLogger);
-            console.log(Color.cyan(`📡 [Replanning] 数据链已更新，重新唤醒大脑决策...`));
-            return { type: 'continue' };
-        }
+        try {
+            const aiMessage = await runWithSpan(stepSpan, () => this.callModel(step, stepSpan, onTextChunk));
+            const assistantText = this.getAssistantText(aiMessage);
 
-        // 终结条件：大模型没有输出任何 tool_calls，说明它已经通过之前的工具回执完成任务。
-        return { type: 'final', content: assistantText };
+        // 必须立刻把大模型的这次决策和思考过程记入历史，否则后续上下文契约会错乱。
+            this.memory.append(aiMessage as OpenAI.Chat.Completions.ChatCompletionMessage);
+            await stepSpan.addEvent('assistant_message', {
+                'wiki_agent.tool_call_count': aiMessage.tool_calls?.length ?? 0,
+                'wiki_agent.content.chars': assistantText.length
+            });
+
+            if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
+                if (assistantText && !assistantText.endsWith('\n')) {
+                    process.stdout.write('\n');
+                }
+                await runWithSpan(stepSpan, () => this.handleToolCalls(aiMessage.tool_calls!, step, stepSpan));
+                console.log(Color.cyan(`📡 [Replanning] 数据链已更新，重新唤醒大脑决策...`));
+                return { type: 'continue' };
+            }
+
+            // 终结条件：大模型没有输出任何 tool_calls，说明它已经通过之前的工具回执完成任务。
+            return { type: 'final', content: assistantText };
+        } finally {
+            await stepSpan.end();
+        }
     }
 
-    private async callModel(step: number, traceLogger: TraceLogger, onTextChunk: (text: string) => void): Promise<OpenAI.Chat.Completions.ChatCompletionMessage> {
+    private async callModel(step: number, stepSpan: SpanHandle, onTextChunk: (text: string) => void): Promise<OpenAI.Chat.Completions.ChatCompletionMessage> {
         // 让大模型全面审视当前的上下文记忆与前几步工具的回执结果
         const toolSchemas = this.registry.getSchemas();
         const messages = this.memory.getMessages();
-        const stream = await this.client.chat.completions.create({
+        const modelSpan = await stepSpan.startChild('gen_ai.chat', {
+            kind: 'client',
+            attributes: {
+                'gen_ai.operation.name': 'chat',
+                'gen_ai.request.model': this.config.modelName,
+                'wiki_agent.step': step,
+                'wiki_agent.input.messages': messages.length,
+                'wiki_agent.tool.schema_count': toolSchemas.length
+            }
+        });
+        const stream = await runWithSpan(modelSpan, () => this.client.chat.completions.create({
             model: this.config.modelName,
             messages: messages as any,
             temperature: this.config.temperature,
@@ -159,7 +185,7 @@ export class WikiAgent implements IAgent {
             ...(shouldRequestDeepSeekUsage(process.env.BASE_URL)
                 ? { stream_options: { include_usage: true } }
                 : {})
-        });
+        }));
 
         let currentContent = "";
         const toolCallsBuffer: Parameters<typeof buildToolCalls>[0] = [];
@@ -195,18 +221,25 @@ export class WikiAgent implements IAgent {
         };
         const normalizedUsage = normalizeUsage(usage);
 
-        await traceLogger.write({
-            type: 'model_call_budget',
-            level: 'debug',
-            step,
-            inputMessageCount: messages.length,
-            input: estimateMessagesSize(messages),
-            toolSchemaCount: toolSchemas.length,
-            toolSchemas: estimateToolSchemasSize(toolSchemas),
-            output: estimateTextSize(currentContent),
-            toolCallCount: aiMessage.tool_calls?.length ?? 0,
-            ...(normalizedUsage ? { usage: normalizedUsage } : {}),
-            at: new Date().toISOString()
+        const input = estimateMessagesSize(messages);
+        const output = estimateTextSize(currentContent);
+        const toolSchemasSize = estimateToolSchemasSize(toolSchemas);
+        await modelSpan.end({
+            status: 'ok',
+            attributes: {
+                'gen_ai.usage.input_tokens.estimated': input.approxTokens,
+                'gen_ai.usage.output_tokens.estimated': output.approxTokens,
+                'gen_ai.usage.total_tokens': normalizedUsage?.totalTokens ?? 0,
+                'gen_ai.usage.input_tokens': normalizedUsage?.promptTokens ?? 0,
+                'gen_ai.usage.output_tokens': normalizedUsage?.completionTokens ?? 0,
+                'gen_ai.usage.cache_hit_tokens': normalizedUsage?.cacheHitTokens ?? 0,
+                'gen_ai.usage.cache_miss_tokens': normalizedUsage?.cacheMissTokens ?? 0,
+                'wiki_agent.tool_call_count': aiMessage.tool_calls?.length ?? 0,
+                'wiki_agent.tool_calls.summary': summarizeToolCalls(aiMessage.tool_calls),
+                'wiki_agent.input.chars': input.chars,
+                'wiki_agent.output.chars': output.chars,
+                'wiki_agent.tool.schema_chars': toolSchemasSize.chars
+            }
         });
 
         return aiMessage;
@@ -237,7 +270,7 @@ export class WikiAgent implements IAgent {
     private async handleToolCalls(
         toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[],
         step: number,
-        traceLogger: TraceLogger
+        stepSpan: SpanHandle
     ): Promise<void> {
         const executableCalls = toolCalls
             .map((toolCall, index) => ({ toolCall, index }))
@@ -255,26 +288,17 @@ export class WikiAgent implements IAgent {
         const serialCalls = executableCalls.filter(({ toolCall }) => !this.registry.getTool(toolCall.function.name)?.isReadOnly);
 
         const readResults = await Promise.all(
-            readOnlyCalls.map(({ toolCall, index }) => this.executeToolCall(toolCall, index, step, traceLogger))
+            readOnlyCalls.map(({ toolCall, index }) => this.executeToolCall(toolCall, index, step, stepSpan))
         );
 
         const serialResults: ToolExecutionResult[] = [];
         for (const { toolCall, index } of serialCalls) {
-            serialResults.push(await this.executeToolCall(toolCall, index, step, traceLogger));
+            serialResults.push(await this.executeToolCall(toolCall, index, step, stepSpan));
         }
 
         [...skippedCalls, ...readResults, ...serialResults]
             .sort((a, b) => a.originalIndex - b.originalIndex)
             .forEach(result => this.memory.append(result.toolMessage));
-    }
-
-    private async writeRunEnd(traceLogger: TraceLogger, finalOutput: string, terminationReason: TerminationReason): Promise<void> {
-        await traceLogger.write({
-            type: 'run_end',
-            finalOutputPreview: preview(finalOutput),
-            terminationReason,
-            at: new Date().toISOString()
-        });
     }
 
     /**
@@ -290,27 +314,32 @@ export class WikiAgent implements IAgent {
         toolCall: FunctionToolCall,
         originalIndex: number,
         step: number,
-        traceLogger: TraceLogger
+        stepSpan: SpanHandle
     ): Promise<ToolExecutionResult> {
         const toolName = toolCall.function.name;
         const toolArgsStr = toolCall.function.arguments;
         const startedAt = Date.now();
         const tool = this.registry.getTool(toolName);
-        if (tool && 'setTraceLogger' in tool && typeof tool.setTraceLogger === 'function') {
-            tool.setTraceLogger(traceLogger);
-        }
+        console.log(Color.magenta(`🔌 [工具激活] [${toolName}] -> 参数: ${toolArgsStr}`));
 
-        console.log(Color.magenta(`🔌 [激活工具] [${toolName}] -> 参数: ${toolArgsStr}`));
-
-        const observation = await this.toolExecutor.execute(toolName, toolArgsStr, traceLogger);
+        const toolSpan = await stepSpan.startChild('tool.execute', {
+            attributes: {
+                'wiki_agent.step': step,
+                'tool.name': toolName,
+                'tool.call_id': toolCall.id,
+                'tool.call_index': originalIndex,
+                ...buildToolArgumentTraceAttributes(toolArgsStr)
+            }
+        });
+        const observation = await runWithSpan(toolSpan, () => this.toolExecutor.execute(toolName, toolArgsStr));
         const observationText = JSON.stringify(observation);
-        await this.writeToolResultTrace(traceLogger, {
-            step,
-            toolName,
-            toolArgsStr,
-            observation,
-            observationText,
-            durationMs: Date.now() - startedAt
+        await toolSpan.end({
+            status: observation.status === 'success' ? 'ok' : 'error',
+            attributes: {
+                'tool.status': observation.status,
+                'wiki_agent.observation.chars': observationText.length,
+                'tool.duration_ms': Date.now() - startedAt
+            }
         });
 
         return {
@@ -323,30 +352,37 @@ export class WikiAgent implements IAgent {
         };
     }
 
-    private async writeToolResultTrace(
-        traceLogger: TraceLogger,
-        input: {
-            step: number;
-            toolName: string;
-            toolArgsStr: string;
-            observation: ToolResult;
-            observationText: string;
-            durationMs: number;
-        }
-    ): Promise<void> {
-        await traceLogger.write({
-            type: 'tool_result',
-            step: input.step,
-            toolName: input.toolName,
-            args: parseJsonForTrace(input.toolArgsStr),
-            status: input.observation.status,
-            durationMs: input.durationMs,
-            observationPreview: preview(input.observationText),
-            observation: estimateTextSize(input.observationText),
-            truncated: input.observation.metadata?.truncated === true,
-            at: new Date().toISOString()
-        });
-    }
+}
+
+function summarizeToolCalls(toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] | undefined): string {
+    return (toolCalls ?? [])
+        .filter(isFunctionToolCall)
+        .map(call => `${call.function.name}(${buildToolArgumentTraceAttributes(call.function.arguments)['tool.arguments.preview']})`)
+        .join('; ');
+}
+
+function buildToolArgumentTraceAttributes(rawArguments: string): Record<string, string | boolean> {
+    const parsed = parseJsonSafely(rawArguments);
+    const safeValue = parsed.ok ? redactSensitiveValues(parsed.value) : '[invalid JSON arguments]';
+    const serialized = JSON.stringify(safeValue);
+    const maxLength = 512;
+    return {
+        'tool.arguments.preview': serialized.length > maxLength ? `${serialized.slice(0, maxLength)}...` : serialized,
+        'tool.arguments.sha256': createHash('sha256').update(rawArguments).digest('hex'),
+        'tool.arguments.truncated': serialized.length > maxLength
+    };
+}
+
+function redactSensitiveValues(value: unknown, key = ''): unknown {
+    if (isSensitiveTraceKey(key)) return '[REDACTED]';
+    if (Array.isArray(value)) return value.map(item => redactSensitiveValues(item));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+        .map(([entryKey, entryValue]) => [entryKey, redactSensitiveValues(entryValue, entryKey)]));
+}
+
+function isSensitiveTraceKey(key: string): boolean {
+    return /api[-_]?key|authorization|cookie|password|secret|token/i.test(key);
 }
 
 function normalizeUsage(value: unknown): {

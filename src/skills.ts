@@ -74,11 +74,13 @@ async function loadSkillManifest(skillsDir: string, fileName: string): Promise<S
 function parseSkillMetadata(content: string, fileName: string): SkillManifest {
     const frontmatter = content.match(FRONTMATTER_PATTERN)?.[1] ?? '';
     const metadata = parseFrontmatter(frontmatter);
-    const fallbackName = path.basename(fileName, path.extname(fileName));
+    if (!metadata.name || !metadata.description) {
+        throw new Error(`invalid skill ${fileName}: frontmatter must define non-empty name and description`);
+    }
 
     return {
-        name: metadata.name ?? fallbackName,
-        description: metadata.description ?? 'No description provided.',
+        name: metadata.name,
+        description: metadata.description,
         fileName
     };
 }

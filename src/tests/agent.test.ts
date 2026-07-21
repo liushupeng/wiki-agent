@@ -138,13 +138,11 @@ test('WikiAgent.run returns final streamed content without tool calls', async ()
     assert.equal(memory.messages[1].content, 'hello world');
 
     const events = await readTraceEvents(traceDir);
-    assert.equal(events.at(-1)?.type, 'run_end');
-    assert.equal(events.at(-1)?.terminationReason, 'completed');
+    const runEnd = events.find(event => event.type === 'span_end' && event.spanId === events.find(start => start.name === 'wiki_agent.run')?.spanId);
+    assert.equal(runEnd?.status, 'ok');
 });
 
-test('WikiAgent records streamed cache usage in the debug trace', async () => {
-    const previousTraceLevel = process.env.TRACE_LEVEL;
-    process.env.TRACE_LEVEL = 'debug';
+test('WikiAgent records streamed cache usage on the model span', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-usage-'));
     const agent = createAgent({ traceDir });
     attachFakeClient(agent, [[
@@ -161,25 +159,15 @@ test('WikiAgent records streamed cache usage in the debug trace', async () => {
         }
     ]]);
 
-    try {
-        await agent.run('trace usage', () => {});
-        const events = await readTraceEvents(traceDir);
-        const budgetEvent = events.find(event => event.type === 'model_call_budget');
-        assert.deepEqual(budgetEvent?.usage, {
-            promptTokens: 100,
-            completionTokens: 20,
-            totalTokens: 120,
-            cacheHitTokens: 75,
-            cacheMissTokens: 25,
-            cacheHitRate: 0.75
-        });
-    } finally {
-        if (previousTraceLevel === undefined) {
-            delete process.env.TRACE_LEVEL;
-        } else {
-            process.env.TRACE_LEVEL = previousTraceLevel;
-        }
-    }
+    await agent.run('trace usage', () => {});
+    const events = await readTraceEvents(traceDir);
+    const modelSpan = events.find(event => event.type === 'span_end' && event.spanId === events.find(start => start.name === 'gen_ai.chat')?.spanId);
+    const attributes = modelSpan?.attributes as Record<string, unknown>;
+    assert.equal(attributes['gen_ai.usage.total_tokens'], 120);
+    assert.equal(attributes['gen_ai.usage.input_tokens'], 100);
+    assert.equal(attributes['gen_ai.usage.output_tokens'], 20);
+    assert.equal(attributes['gen_ai.usage.cache_hit_tokens'], 75);
+    assert.equal(attributes['gen_ai.usage.cache_miss_tokens'], 25);
 });
 
 test('WikiAgent.run executes tool calls and continues replanning', async () => {
@@ -223,8 +211,18 @@ test('WikiAgent.run executes tool calls and continues replanning', async () => {
     assert.equal(memory.messages.some(message => message.role === 'tool'), true);
 
     const events = await readTraceEvents(traceDir);
-    assert.equal(events.filter(event => event.type === 'tool_result').length, 1);
-    assert.equal(events.at(-1)?.terminationReason, 'completed');
+    assert.equal(events.filter(event => event.type === 'span_start' && event.name === 'tool.execute').length, 1);
+    const spans = events.filter(event => event.type === 'span_start');
+    const runSpan = spans.find(event => event.name === 'wiki_agent.run');
+    const stepSpan = spans.find(event => event.name === 'wiki_agent.step');
+    const toolSpan = spans.find(event => event.name === 'tool.execute');
+    assert.equal(stepSpan?.parentSpanId, runSpan?.spanId);
+    assert.equal(toolSpan?.parentSpanId, stepSpan?.spanId);
+    assert.equal((toolSpan?.attributes as Record<string, unknown>)?.['tool.call_id'], 'call_1');
+    assert.equal((toolSpan?.attributes as Record<string, unknown>)?.['tool.call_index'], 0);
+    assert.equal((toolSpan?.attributes as Record<string, unknown>)?.['tool.arguments.preview'], '{"value":"ok"}');
+    assert.match((toolSpan?.attributes as Record<string, unknown>)?.['tool.arguments.sha256'] as string, /^[a-f0-9]{64}$/);
+    assert.equal(events.filter(event => event.type === 'span_end').length > 0, true);
 });
 
 test('WikiAgent.run stops before model calls when maxLoopSteps is exceeded', async () => {
@@ -249,6 +247,6 @@ test('WikiAgent.run stops before model calls when maxLoopSteps is exceeded', asy
     assert.equal(modelCalls, 0);
 
     const events = await readTraceEvents(traceDir);
-    assert.equal(events.at(-1)?.type, 'run_end');
-    assert.equal(events.at(-1)?.terminationReason, 'max_loop_steps');
+    const runEnd = events.find(event => event.type === 'span_end' && event.spanId === events.find(start => start.name === 'wiki_agent.run')?.spanId);
+    assert.equal((runEnd?.attributes as Record<string, unknown>)?.['wiki_agent.termination_reason'], 'max_loop_steps');
 });

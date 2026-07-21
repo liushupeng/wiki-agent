@@ -14,7 +14,3 @@ export function parseToolArguments(argsStr: string): ParseJsonResult {
     return parseJsonSafely(argsStr.trim() ? argsStr : '{}');
 }
 
-export function parseJsonForTrace(value: string): unknown {
-    const parsed = parseJsonSafely(value);
-    return parsed.ok ? parsed.value : `invalid JSON: ${value}`;
-}

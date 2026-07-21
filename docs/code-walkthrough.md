@@ -36,13 +36,13 @@ main.ts
 ```text
 用户输入
 -> MemoryManager.append(user)
--> TraceLogger.write(run_start)
+-> start wiki_agent.run span
 -> callModel()
 -> LLM 返回 assistant message
--> assistant message 写入 memory 和 trace
+-> assistant message 写入 memory，并在当前 step span 记录 event
 -> 如果有 tool_calls，执行工具并继续下一轮
 -> 如果没有 tool_calls，返回最终答案
--> TraceLogger.write(run_end)
+-> end wiki_agent.run span
 ```
 
 知识层运行逻辑：
@@ -113,9 +113,9 @@ const systemPrompt = skillManifestPrompt
 
 ```text
 append user message
--> create TraceLogger
+-> create Telemetry backend
 -> loop until final answer / max steps / system error
--> write run_end
+-> end run span
 ```
 
 `MAX_LOOP_STEPS` 用于防止模型无限循环调用工具。
@@ -124,10 +124,10 @@ append user message
 
 `runStep()` 执行一轮模型决策：
 
-1. 写 `step_start` trace。
+1. 创建 `wiki_agent.step` span。
 2. 调用 `callModel()`。
 3. 把 assistant message 写入 memory。
-4. 写 `assistant_message` trace。
+4. 在 step span 中记录 `assistant_message` event。
 5. 如果有 tool calls，调用 `handleToolCalls()` 并返回 `continue`。
 6. 如果没有 tool calls，返回最终文本。
 
@@ -165,9 +165,9 @@ const stream = await this.client.chat.completions.create({
 `executeToolCall()` 是 agent loop 和工具执行管线之间的边界：
 
 1. 从 function tool call 中取出工具名、参数字符串和 `tool_call_id`。
-2. 如果工具支持 `setTraceLogger()`，注入当前 trace。
+2. 创建带 `tool.call_id`、`tool.call_index` 和脱敏参数预览的 `tool.execute` span。
 3. 调用 `ToolExecutor.execute()`。
-4. 写 `tool_result` trace。
+4. 在 tool span 中记录状态、耗时和结果规模。
 5. 返回 `role="tool"` 的 message。
 
 真正的参数解析、权限决策、审批和工具执行都在 `ToolExecutor` 中。
@@ -284,7 +284,7 @@ get tool
 -> catch runtime error as ToolResult
 ```
 
-它会在 `TRACE_LEVEL=debug` 时写 `permission_decision` 事件，用来查看工具为什么被允许、询问或拒绝。
+它会在当前 `tool.execute` span 中写 `tool.permission_decision` event，用来查看工具为什么被允许、询问或拒绝。
 
 ## `src/permissions.ts`
 
@@ -322,11 +322,11 @@ while (splitIndex > 0 && nonSystem[splitIndex]?.role === 'tool') {
 
 这避免保留区从 `tool` message 开始，因为 `tool` message 必须跟在对应 assistant `tool_calls` 后面。
 
-`TRACE_LEVEL=debug` 时，压缩会写 `memory_compaction` 事件。
+压缩会在当前 run span 中写入 `memory.compaction` event。
 
 ## `src/trace.ts`
 
-Trace 通过可插拔 sink 输出。默认 sink 是 `JsonlTraceSink`，每行写一个结构化 JSON 事件。默认输出目录：
+追踪通过后端无关的 `Telemetry` / `SpanHandle` 输出。默认 file backend 每行写一个 schema version 2 JSONL span 事件。默认输出目录：
 
 ```text
 var/traces
@@ -334,56 +334,14 @@ var/traces
 
 核心对象：
 
-- `TraceLogger`：补齐默认 level、按 `TRACE_LEVEL` 过滤事件，并把事件交给 sink。
-- `TraceSink`：事件输出后端接口。
-- `JsonlTraceSink`：当前默认实现，写入本地 JSONL 文件。
+- `Telemetry`：后端无关的 span 创建接口。
+- `SpanHandle`：创建子 span、写 event、结束 span。
+- `FileTelemetry`：默认后端，写 schema version 2 JSONL。
+- `OtelTelemetry`：可选后端，通过 OTLP HTTP 或 gRPC 发送原生 OpenTelemetry span。
 
-这个结构让后续接 OpenTelemetry 时只需要新增 sink，把 `run`、`step`、`model_call`、`tool_result`、`rag_search` 等事件映射到 span 或 span event，不需要改 Agent loop。
+调用树固定为 `wiki_agent.run` → `wiki_agent.step` → `gen_ai.chat` / `tool.execute` → RAG 子 span。每条 JSONL span event 都带有 `traceId`、`spanId`、`parentSpanId` 和起止时间；工具调用还带 `tool.call_id` 与 `tool.call_index`，可稳定表达并发同名工具。
 
-支持级别：
-
-- `debug`
-- `info`
-- `warn`
-- `error`
-
-默认：
-
-```env
-TRACE_LEVEL=info
-```
-
-基础事件：
-
-- `run_start`
-- `step_start`
-- `assistant_message`
-- `tool_result`
-- `run_end`
-
-debug 事件：
-
-- `permission_decision`
-- `rag_search`
-- `memory_compaction`
-- `model_call_budget`
-
-轻量成本观测使用 `utils/tokenBudget.ts` 里的估算函数。它不依赖 tokenizer，只记录字符数和 `chars / 4` 得到的近似 token，用来定位上下文体量来源：
-
-- `model_call_budget.input`：本轮发给模型的 messages 体量。
-- `model_call_budget.toolSchemas`：工具 schema 体量，MCP 工具增多时重点看这里。
-- `model_call_budget.output`：模型输出文本体量。
-- `tool_result.observation`：工具结果写回 memory 前的体量。
-- `memory_compaction.before/after`：压缩前后上下文体量。
-
-排查问题时优先看 trace：
-
-1. `run_start.instruction`
-2. `assistant_message.toolCalls`
-3. `tool_result.args`
-4. `tool_result.status`
-5. `observationPreview`
-6. 怀疑 token 消耗过大时看 `model_call_budget`、`tool_result.observation`、`memory_compaction`
+文件 trace 只接受当前 schema version 2；离线导出脚本也会拒绝旧的扁平事件格式。排查时应从根 run span 开始，沿父子关系定位耗时或失败的模型、工具及 RAG span。
 
 ## `src/protocol/toolCalls.ts`
 
@@ -499,13 +457,7 @@ RAG 能力被包装成四个工具：
 
 当前检索策略是 wiki-first：`search_notes` 会扩大候选集，再把 `wiki/` source 排在 raw source 前面；`grep_notes` 会按 knowledge sources 配置搜索多个目录。这样保留现有 RAG 管线，同时让 LLM Wiki 层成为默认优先证据来源。
 
-`search_notes` 在 `TRACE_LEVEL=debug` 时写 `rag_search`，包含：
-
-- query
-- indexPath
-- topK
-- matchCount
-- topMatches
+四个 RAG 工具会在当前 `tool.execute` span 下创建对应子 span：`rag.search`、`rag.read_note` 或 `rag.related_notes`。其中 query、topK 与命中规模作为 attributes 写入。
 
 ## `src/tools/fileTool.ts`
 
@@ -642,7 +594,6 @@ var/knowledge/index.json
 {
   "question": "Markdown 笔记索引应该保留哪些结构化信息？",
   "grepTerms": ["Markdown", "frontmatter", "tags", "wiki links"],
-  "grepQuery": "wiki links",
   "expectedSource": "markdown-notes.md",
   "expectedTerms": ["标题层级", "frontmatter", "tags", "wiki links"]
 }
@@ -656,8 +607,7 @@ var/knowledge/index.json
 4. 检查 `expectedTerms` 命中率。
 5. source 命中且 terms 命中率至少 60% 算通过。
 
-`grepTerms` 会作为多个独立词项进行 OR 召回，并按单行命中的不同词项数量排序；
-`grepQuery` 用于额外匹配完整短语。它们只影响 grep 评测，不影响向量检索。
+`grepTerms` 会作为多个独立词项进行 OR 召回，并按单行命中的不同词项数量排序；它们只影响 grep 评测，不影响向量检索。
 
 `npm run eval:rag` 是独立的普通 RAG 评测入口，使用基础检索策略，默认评测
 `examples/rag-eval/questions.json`。`npm run eval:wiki` 是独立的 Wiki 评测入口，
@@ -678,9 +628,7 @@ JSON 工具函数：
 
 - `parseJsonSafely()`
 - `parseToolArguments()`
-- `parseJsonForTrace()`
-
-工具参数解析和 trace 参数展示都使用这里的函数，避免重复实现。
+工具参数解析统一使用这里的函数。
 
 ## `src/tests/`
 
@@ -688,7 +636,7 @@ JSON 工具函数：
 
 - `agent.test.ts`：Agent loop、工具调用、熔断。
 - `memory.test.ts`：记忆追加、清空、压缩和 tool 协议连续性。
-- `trace.test.ts`：trace 文件、level、过滤、preview。
+- `trace.test.ts`：JSONL v2 span 父子关系和 preview。
 - `permissions.test.ts`：权限策略。
 - `sandbox.test.ts`、`limits.test.ts`：本地安全基础设施。
 - `tools/*.test.ts`：各类工具行为。

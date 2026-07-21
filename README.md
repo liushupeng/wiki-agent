@@ -162,7 +162,7 @@ where.exe mcp-server-sqlite
 npm run mcp:check
 ```
 
-安装完成后，`config/mcp.servers.jsonc` 会直接调用 `mcp-server-filesystem`、`mcp-server-git` 和 `mcp-server-sqlite`，启动时不再依赖临时拉取。
+`config/mcp.servers.jsonc` 配置使用 `mcp-server-filesystem`、`mcp-server-git` 和 `mcp-server-sqlite` 命令。
 
 还需要准备 DeepSeek 或其他 OpenAI-compatible LLM API key，并写入本地 `.env`。
 
@@ -232,9 +232,9 @@ wiki-agent/
 ```text
 src/
 ├── main.ts              # CLI 入口，初始化 memory、registry、agent
-├── agent.ts             # Agent loop：模型调用、工具调度、trace 写入
+├── agent.ts             # Agent loop：模型调用、工具调度、span 生命周期
 ├── memory.ts            # 对话记忆和自动压缩
-├── trace.ts             # Trace sink、JSONL 默认实现和 trace level 过滤
+├── trace.ts             # Telemetry、JSONL v2 与 OTLP backend
 ├── permissions.ts       # 工具权限决策
 ├── sandbox.ts           # 本地沙箱路径保护
 ├── limits.ts            # 工具输出和文件读取限制
@@ -479,18 +479,18 @@ Agent 系统很难只靠最终答案调试，所以项目把 trace、成本估�
 
 ```env
 TRACE_DIR=var/traces
-TRACE_LEVEL=info
 ```
 
 Trace 架构已经做成可插拔：
 
 ```text
-TraceLogger
--> TraceSink
--> JsonlTraceSink
+Agent / Tools / RAG
+-> Telemetry / SpanHandle
+   -> FileTelemetry (JSONL)
+   -> OtelTelemetry (OTLP)
 ```
 
-`TraceLogger` 负责补默认 level、按 `TRACE_LEVEL` 过滤事件；`TraceSink` 负责事件输出。后续如果要接 OpenTelemetry，可以新增 `OpenTelemetryTraceSink`，把 `agent.run`、`agent.step`、`llm.call`、`tool.execute`、`rag.search` 映射成 span 或 span event，而不需要改 Agent loop。
+JSONL 只使用当前的 schema version 2。每条记录都是 `span_start`、`span_event` 或 `span_end`，并包含 `traceId`、`spanId`、`parentSpanId`、时间戳、状态和结构化 attributes。旧的扁平事件格式不再生成，也不能由导出工具导入。
 
 如需将既有 JSONL trace 离线导入 OpenTelemetry 后端，可显式执行导出命令。未传 `--endpoint` 时仅进行本地 dry run，不会发生网络请求：
 
@@ -501,38 +501,19 @@ npm run trace:export -- --input var/traces/trace-xxx.jsonl --endpoint http://loc
 
 该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；它不参与 `npm run ask` 的运行链路，也不会修改源 trace。
 
-基础事件：
+要在运行时直接发送 trace（不写 JSONL），配置：
 
-- `run_start`
-- `step_start`
-- `assistant_message`
-- `tool_result`
-- `run_end`
+```env
+TELEMETRY_BACKEND=otlp
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
+OTEL_EXPORTER_OTLP_PROTOCOL=http
+```
 
-`TRACE_LEVEL=debug` 时会写入更多内部事件：
+HTTP 是默认协议；如使用 gRPC，设置 `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`，并使用 Collector 的 gRPC 地址（通常为 `http://localhost:4317`）。未设置时默认 `TELEMETRY_BACKEND=file`。无论选择文件或 OTLP 后端，Agent、工具和 RAG 使用相同的追踪调用点。
 
-- `permission_decision`
-- `rag_search`
-- `memory_compaction`
-- `model_call_budget`
+主要 span 为 `wiki_agent.run` → `wiki_agent.step` → `gen_ai.chat` / `tool.execute` → RAG 子 span。模型 token、缓存命中、工具状态、耗时和检索规模均作为对应 span 的 attributes；审批、assistant message 和 memory 压缩作为 span event。
 
-轻量成本观测也写在 trace 中，用字符数和 `chars / 4` 估算 token，不做精确计费：
-
-- `model_call_budget.input`：本轮发给模型的 messages 体量。
-- `model_call_budget.toolSchemas`：本轮工具 schema 体量。
-- `model_call_budget.output`：本轮模型输出文本体量。
-- `model_call_budget.usage`：Provider 返回的实际 token 用量；DeepSeek 还会记录
-  `cacheHitTokens`、`cacheMissTokens` 与由二者计算的 `cacheHitRate`。
-- `tool_result.observation`：单个工具 observation 写回模型前的体量。
-- `memory_compaction.before/after`：memory 压缩前后的上下文体量。
-
-建议排查顺序：
-
-1. 看 `run_start.instruction`。
-2. 看 `assistant_message.toolCalls`。
-3. 看 `tool_result.args`。
-4. 看 `tool_result.status` 和 `observationPreview`。
-5. 如果怀疑 token 消耗过大，开启 `TRACE_LEVEL=debug`，看 `model_call_budget`、`tool_result.observation` 和 `memory_compaction`。
+建议排查时先在根 run span 下查看失败或耗时最长的子 span，再沿父子关系定位具体模型调用、工具调用或 RAG 检索。
 
 ## Skill 懒加载
 
@@ -612,7 +593,7 @@ examples/wiki-demo/raw/*.md
 
 - 增加 tool-routing eval 脚本，评估模型是否正确调用 `load_tool_group`。
 - 对比 vector、grep、wiki-first retrieval 在不同问题类型下的表现。
-- 用 trace 中的 `assistant_message.toolCalls` 和 `rag_search` 做行为分析。
+- 用 trace 中的 `gen_ai.chat`、`tool.execute` 与 RAG 子 span 做行为分析。
 
 长期方向是在积累足够数据后探索训练或后训练：
 
@@ -633,7 +614,6 @@ AGENT_SANDBOX_ROOT=C:\AgentSandbox
 AGENT_WORKSPACE_ROOT=.
 MAX_LOOP_STEPS=20
 TRACE_DIR=var/traces
-TRACE_LEVEL=info
 APPROVAL_MODE=prompt
 
 TOOL_OUTPUT_MAX_CHARS=12000
@@ -703,12 +683,11 @@ npm run eval:wiki
 $env:RAG_EVAL_MODE="both"; npm run eval:wiki
 ```
 
-评测问题可以提供 `grepTerms`，让 grep 分别检索多个词项、按同一行命中的词项数排序；
-也可提供 `grepQuery`，用于补充一个需要完整短语匹配的查询。`question` 始终用于向量检索。
+评测问题可以提供 `grepTerms`，让 grep 分别检索多个词项、按同一行命中的词项数排序。`question` 始终用于向量检索。
 
 实际运行 Agent 时，可以用 trace 看 grep 是否有帮助：
 
-- `assistant_message.toolCalls`：模型是否选择了 `grep_notes`。
-- `rag_search.toolName`：区分 `search_notes` 和 `grep_notes`。
-- `rag_search.matchCount/topMatches`：grep 是否命中正确文件和行。
-- `tool_result.observation`：grep 返回内容是否过大、是否需要降低 `maxResults` 或 `contextLines`。
+- `gen_ai.chat` 的 `wiki_agent.tool_call_count`：模型是否发起工具调用。
+- `tool.execute` 的 `tool.name`：是否选择了 `grep_notes`。
+- `rag.search` 的 `wiki_agent.rag.match_count`：grep 是否命中正确文件。
+- `tool.execute` 的 `wiki_agent.observation.chars`：工具回执是否过大、是否需要降低 `maxResults` 或 `contextLines`。

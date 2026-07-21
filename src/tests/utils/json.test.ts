@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseJsonForTrace, parseJsonSafely, parseToolArguments } from '../../utils/json.js';
+import { parseJsonSafely, parseToolArguments } from '../../utils/json.js';
 
 test('parseJsonSafely returns parsed value for valid JSON', () => {
     const result = parseJsonSafely('{"value":"ok"}');
@@ -29,8 +29,3 @@ test('parseToolArguments treats empty arguments as an empty object', () => {
     }
 });
 
-test('parseJsonForTrace preserves invalid input as a readable marker', () => {
-    const result = parseJsonForTrace('{invalid');
-
-    assert.equal(result, 'invalid JSON: {invalid');
-});
