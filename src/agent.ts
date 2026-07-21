@@ -10,6 +10,7 @@ import { createTelemetry, preview, runWithSpan, SpanHandle, TerminationReason } 
 import { ToolExecutor } from './tools/executor.js';
 import { estimateMessagesSize, estimateTextSize, estimateToolSchemasSize } from './utils/tokenBudget.js';
 import { parseJsonSafely } from './utils/json.js';
+import { redactSensitiveValues, writePromptArtifact } from './promptArtifacts.js';
 
 dotenv.config();
 
@@ -130,7 +131,7 @@ export class WikiAgent implements IAgent {
         onTextChunk: (text: string) => void
     ): Promise<StepResult> {
         console.log(Color.cyan(`\n🧠 [Step ${step}] Agent 正在审视环境并推演下一步规划...`));
-        const stepSpan = await runSpan.startChild('wiki_agent.step', {
+        const stepSpan = await runSpan.startChild(`wiki_agent.step.${step}`, {
             attributes: { 'wiki_agent.step': step }
         });
 
@@ -175,6 +176,7 @@ export class WikiAgent implements IAgent {
                 'wiki_agent.tool.schema_count': toolSchemas.length
             }
         });
+        const promptArtifact = await this.capturePromptArtifact(modelSpan, messages, toolSchemas);
         const stream = await runWithSpan(modelSpan, () => this.client.chat.completions.create({
             model: this.config.modelName,
             messages: messages as any,
@@ -238,11 +240,41 @@ export class WikiAgent implements IAgent {
                 'wiki_agent.tool_calls.summary': summarizeToolCalls(aiMessage.tool_calls),
                 'wiki_agent.input.chars': input.chars,
                 'wiki_agent.output.chars': output.chars,
-                'wiki_agent.tool.schema_chars': toolSchemasSize.chars
+                'wiki_agent.tool.schema_chars': toolSchemasSize.chars,
+                ...(promptArtifact ? {
+                    'wiki_agent.prompt_artifact.path': promptArtifact.path,
+                    'wiki_agent.prompt_artifact.sha256': promptArtifact.sha256,
+                    'wiki_agent.prompt_artifact.chars': promptArtifact.chars,
+                    'wiki_agent.prompt_artifact.redacted': true
+                } : {})
             }
         });
 
         return aiMessage;
+    }
+
+    private async capturePromptArtifact(
+        modelSpan: SpanHandle,
+        messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+        toolSchemas: OpenAI.Chat.Completions.ChatCompletionTool[]
+    ) {
+        if (!this.config.capturePromptArtifacts) return undefined;
+        try {
+            return await writePromptArtifact({
+                traceId: modelSpan.context.traceId,
+                spanId: modelSpan.context.spanId,
+                model: this.config.modelName,
+                temperature: this.config.temperature,
+                reasoningEffort: 'high',
+                messages,
+                tools: toolSchemas
+            }, this.config.traceArtifactDir);
+        } catch (error: any) {
+            await modelSpan.addEvent('prompt_artifact.capture_failed', {
+                'error.message': preview(error.message, 512)
+            });
+            return undefined;
+        }
     }
 
     /**
@@ -371,18 +403,6 @@ function buildToolArgumentTraceAttributes(rawArguments: string): Record<string, 
         'tool.arguments.sha256': createHash('sha256').update(rawArguments).digest('hex'),
         'tool.arguments.truncated': serialized.length > maxLength
     };
-}
-
-function redactSensitiveValues(value: unknown, key = ''): unknown {
-    if (isSensitiveTraceKey(key)) return '[REDACTED]';
-    if (Array.isArray(value)) return value.map(item => redactSensitiveValues(item));
-    if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-        .map(([entryKey, entryValue]) => [entryKey, redactSensitiveValues(entryValue, entryKey)]));
-}
-
-function isSensitiveTraceKey(key: string): boolean {
-    return /api[-_]?key|authorization|cookie|password|secret|token/i.test(key);
 }
 
 function normalizeUsage(value: unknown): {

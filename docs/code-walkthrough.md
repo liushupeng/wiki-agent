@@ -73,6 +73,8 @@ const config: AgentConfig = {
     temperature: 0.1,
     maxLoopSteps: Number(process.env.MAX_LOOP_STEPS ?? 20),
     traceDir: process.env.TRACE_DIR ?? 'var/traces',
+    capturePromptArtifacts: process.env.TRACE_CAPTURE_PROMPTS === 'true',
+    traceArtifactDir: process.env.TRACE_ARTIFACT_DIR ?? 'var/traces/artifacts',
     approvalMode: getApprovalMode(),
     requestApproval: request => askToolApproval(rl, request)
 };
@@ -340,6 +342,8 @@ var/traces
 - `OtelTelemetry`：可选后端，通过 OTLP HTTP 或 gRPC 发送原生 OpenTelemetry span。
 
 调用树固定为 `wiki_agent.run` → `wiki_agent.step` → `gen_ai.chat` / `tool.execute` → RAG 子 span。每条 JSONL span event 都带有 `traceId`、`spanId`、`parentSpanId` 和起止时间；工具调用还带 `tool.call_id` 与 `tool.call_index`，可稳定表达并发同名工具。
+
+设置 `TRACE_CAPTURE_PROMPTS=true` 后，`gen_ai.chat` 会将脱敏后的完整请求保存到 `TRACE_ARTIFACT_DIR`。span 仅以 `wiki_agent.prompt_artifact.path`、`sha256`、`chars` 和 `redacted` 属性关联 artifact，避免把大体积 prompt 写入 trace 后端。artifact 写入失败会在该 span 中记录 `prompt_artifact.capture_failed` event，但不会阻断模型调用。
 
 文件 trace 只接受当前 schema version 2；离线导出脚本也会拒绝旧的扁平事件格式。排查时应从根 run span 开始，沿父子关系定位耗时或失败的模型、工具及 RAG span。
 

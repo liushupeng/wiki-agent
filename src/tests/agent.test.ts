@@ -76,6 +76,8 @@ function createAgent(options: {
     memory?: TestMemory;
     registry?: TestRegistry;
     maxLoopSteps?: number;
+    capturePromptArtifacts?: boolean;
+    traceArtifactDir?: string;
 }): WikiAgent {
     process.env.API_KEY = process.env.API_KEY ?? 'test-api-key';
 
@@ -84,6 +86,8 @@ function createAgent(options: {
         temperature: 0,
         maxLoopSteps: options.maxLoopSteps ?? 5,
         traceDir: options.traceDir,
+        capturePromptArtifacts: options.capturePromptArtifacts,
+        traceArtifactDir: options.traceArtifactDir,
         approvalMode: 'auto'
     };
 
@@ -170,6 +174,26 @@ test('WikiAgent records streamed cache usage on the model span', async () => {
     assert.equal(attributes['gen_ai.usage.cache_miss_tokens'], 25);
 });
 
+test('WikiAgent links an optional prompt artifact from its model span', async () => {
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-artifact-trace-'));
+    const artifactDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-artifact-'));
+    const agent = createAgent({ traceDir, capturePromptArtifacts: true, traceArtifactDir: artifactDir });
+    attachFakeClient(agent, [[{ choices: [{ delta: { content: 'done' } }] }]]);
+
+    await agent.run('capture this prompt', () => {});
+
+    const [artifactName] = await fs.readdir(artifactDir);
+    const artifact = JSON.parse(await fs.readFile(path.join(artifactDir, artifactName!), 'utf-8')) as Record<string, unknown>;
+    assert.equal((artifact.request as { messages: Array<{ content: string }> }).messages[0]?.content, 'capture this prompt');
+
+    const events = await readTraceEvents(traceDir);
+    const modelEnd = events.find(event => event.type === 'span_end' && event.spanId === events.find(start => start.name === 'gen_ai.chat')?.spanId);
+    const attributes = modelEnd?.attributes as Record<string, unknown>;
+    assert.match(attributes['wiki_agent.prompt_artifact.path'] as string, /prompt-/);
+    assert.match(attributes['wiki_agent.prompt_artifact.sha256'] as string, /^[a-f0-9]{64}$/);
+    assert.equal(attributes['wiki_agent.prompt_artifact.redacted'], true);
+});
+
 test('WikiAgent.run executes tool calls and continues replanning', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-'));
     const memory = new TestMemory();
@@ -214,7 +238,7 @@ test('WikiAgent.run executes tool calls and continues replanning', async () => {
     assert.equal(events.filter(event => event.type === 'span_start' && event.name === 'tool.execute').length, 1);
     const spans = events.filter(event => event.type === 'span_start');
     const runSpan = spans.find(event => event.name === 'wiki_agent.run');
-    const stepSpan = spans.find(event => event.name === 'wiki_agent.step');
+    const stepSpan = spans.find(event => event.name === 'wiki_agent.step.1');
     const toolSpan = spans.find(event => event.name === 'tool.execute');
     assert.equal(stepSpan?.parentSpanId, runSpan?.spanId);
     assert.equal(toolSpan?.parentSpanId, stepSpan?.spanId);

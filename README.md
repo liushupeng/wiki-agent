@@ -499,7 +499,46 @@ npm run trace:export -- --input var/traces/trace-xxx.jsonl
 npm run trace:export -- --input var/traces/trace-xxx.jsonl --endpoint http://localhost:4318/v1/traces
 ```
 
-该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；它不参与 `npm run ask` 的运行链路，也不会修改源 trace。
+该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；它不参与 `npm run ask` 的运行链路，也不会修改源 trace。未传 `--endpoint` 时使用内存 exporter 做 dry run，不发送网络请求。
+
+### Windows 本地 Jaeger
+
+可使用 Jaeger 官方 Windows 原生包，不需要 Docker：
+
+1. 从 [Jaeger v2.19.0 Release](https://github.com/jaegertracing/jaeger/releases/tag/v2.19.0) 下载并解压 `jaeger-2.19.0-windows-amd64.zip`。
+2. 在解压目录启动：
+
+```powershell
+.\jaeger.exe
+```
+
+3. 打开 `http://127.0.0.1:16686` 查看 UI，并导入本地 trace：
+
+```powershell
+npm run trace:export -- `
+  --input var/traces/trace-xxx.jsonl `
+  --endpoint http://127.0.0.1:4318/v1/traces
+```
+
+Jaeger all-in-one 的 OTLP HTTP 端口为 `4318`，默认使用内存存储；关闭进程后已导入的 trace 会丢失。
+
+### Prompt artifact
+
+为逐字复盘某次模型调用，可显式启用本地 prompt artifact。它保存脱敏后的完整模型请求（messages、工具 schema 与模型参数），不将长内容写入 Jaeger：
+
+```env
+TRACE_CAPTURE_PROMPTS=true
+TRACE_ARTIFACT_DIR=var/traces/artifacts
+```
+
+每个 `gen_ai.chat` span 会带有以下关联属性：
+
+- `wiki_agent.prompt_artifact.path`
+- `wiki_agent.prompt_artifact.sha256`
+- `wiki_agent.prompt_artifact.chars`
+- `wiki_agent.prompt_artifact.redacted=true`
+
+根据 Jaeger 中的 `path` 可在本地打开对应 artifact；根据 `sha256` 可校验内容未被修改。artifact 仅做基于字段名的脱敏，启用前应确认本地目录的访问权限与数据保留策略。
 
 要在运行时直接发送 trace（不写 JSONL），配置：
 

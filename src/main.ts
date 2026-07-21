@@ -28,6 +28,8 @@ async function main() {
         telemetryBackend: process.env.TELEMETRY_BACKEND === 'otlp' ? 'otlp' : 'file',
         otlpTracesEndpoint: process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
         otlpProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL === 'grpc' ? 'grpc' : 'http',
+        capturePromptArtifacts: process.env.TRACE_CAPTURE_PROMPTS === 'true',
+        traceArtifactDir: process.env.TRACE_ARTIFACT_DIR ?? 'var/traces/artifacts',
         approvalMode: getApprovalMode(),
         requestApproval: request => askToolApproval(rl, request)
     };

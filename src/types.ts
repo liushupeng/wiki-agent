@@ -15,6 +15,8 @@ export interface AgentConfig {
     telemetryBackend?: 'file' | 'otlp';
     otlpTracesEndpoint?: string;
     otlpProtocol?: 'http' | 'grpc';
+    capturePromptArtifacts?: boolean;
+    traceArtifactDir?: string;
     approvalMode?: ApprovalMode;
     requestApproval?: (request: ApprovalRequest) => Promise<boolean>;
 }
