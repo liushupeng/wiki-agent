@@ -3,7 +3,7 @@ import { stdin as input, stdout as output } from 'process';
 import { AgentConfig } from './types.js';
 import { askToolApproval } from './cli/approvalPrompt.js';
 import { getApprovalMode } from './config.js';
-import { MemoryManager } from './memory.js';
+import { MemoryManager } from './context/memory.js';
 import { WikiAgent } from './agent.js';
 import { registerConfiguredMcpTools } from './mcp/register.js';
 import { WIKI_AGENT_SYSTEM_PROMPT } from './prompts/systemPrompt.js';

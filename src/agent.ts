@@ -12,6 +12,7 @@ import { estimateMessagesSize, estimateTextSize, estimateToolSchemasSize } from 
 import { parseJsonSafely } from './utils/json.js';
 import { redactSensitiveValues, writePromptArtifact } from './trace/artifacts.js';
 import { exportTrace } from './trace/export.js';
+import { buildToolObservation } from './context/toolObservation.js';
 
 dotenv.config();
 
@@ -79,6 +80,7 @@ export class WikiAgent implements IAgent {
      *   -> return final answer text
      */
     async run(userInstruction: string, onTextChunk: (text: string) => void): Promise<string> {
+        this.toolExecutor.resetFailureCounts();
         // 将用户的原始长指令压入记忆芯片
         this.memory.append({ role: "user", content: userInstruction });
         const telemetry = createTelemetry({
@@ -384,12 +386,14 @@ export class WikiAgent implements IAgent {
             }
         });
         const observation = await runWithSpan(toolSpan, () => this.toolExecutor.execute(toolName, toolArgsStr));
-        const observationText = JSON.stringify(observation);
+        const observationForContext = buildToolObservation(observation);
         await toolSpan.end({
             status: observation.status === 'success' ? 'ok' : 'error',
             attributes: {
                 'tool.status': observation.status,
-                'wiki_agent.observation.chars': observationText.length,
+                'wiki_agent.observation.chars': observationForContext.originalChars,
+                'wiki_agent.observation.context_chars': observationForContext.contextChars,
+                'wiki_agent.observation.truncated': observationForContext.truncated,
                 'tool.duration_ms': Date.now() - startedAt
             }
         });
@@ -399,7 +403,7 @@ export class WikiAgent implements IAgent {
             toolMessage: {
                 role: "tool",
                 tool_call_id: toolCall.id,
-                content: observationText
+                content: observationForContext.content
             }
         };
     }

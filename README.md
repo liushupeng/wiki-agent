@@ -233,7 +233,7 @@ wiki-agent/
 src/
 ├── main.ts              # CLI 入口，初始化 memory、registry、agent
 ├── agent.ts             # Agent loop：模型调用、工具调度、span 生命周期
-├── memory.ts            # 对话记忆和自动压缩
+├── context/             # 模型上下文：对话记忆、工具结果预算
 ├── trace.ts             # Telemetry、JSONL v2 与 OTLP backend
 ├── permissions.ts       # 工具权限决策
 ├── sandbox.ts           # 本地沙箱路径保护
@@ -269,6 +269,8 @@ src/
 - 只读工具并发执行。
 - 写文件、Shell、测试等有副作用工具串行执行。
 - 工具结果按原始 tool call 顺序写回 memory，保持 OpenAI tool 协议合法。
+- 单次 run 内，同一工具的等价参数连续失败两次后，第三次相同调用会返回 `retry_limit_reached`，要求模型改用其他参数、工具或向用户澄清；成功调用会清除该调用的失败计数。
+- 所有工具结果在写回 memory 前都会经过统一 Context Policy：保留结构化字段并压缩长字符串、数组和对象；超过 `CONTEXT_TOOL_RESULT_MAX_CHARS` 时返回带截断说明的有效 JSON。
 
 ### LLM Wiki Layer
 
@@ -658,6 +660,7 @@ TRACE_DIR=var/traces
 APPROVAL_MODE=prompt
 
 TOOL_OUTPUT_MAX_CHARS=12000
+CONTEXT_TOOL_RESULT_MAX_CHARS=6000
 READ_FILE_MAX_BYTES=200000
 SHELL_TIMEOUT_MS=5000
 SHELL_MAX_BUFFER_BYTES=1048576
@@ -699,6 +702,7 @@ dist/src/tests/**/*.test.js
 - RAG pipeline 和 JSON vector store
 - memory 压缩
 - skill manifest 懒加载
+- Agent policy contract：检索路由、局部读笔记、关联范围及高风险工具加载顺序；这类测试不请求 LLM，只防止 system prompt 的关键行为约束被意外删除。
 
 `npm run eval:rag` 默认读取 `examples/rag-eval/questions.json`，直接评估基础检索；
 `npm run eval:wiki` 默认读取 `examples/wiki-eval/questions.json`，从更多候选中优先返回

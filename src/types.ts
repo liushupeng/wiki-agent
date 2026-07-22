@@ -45,7 +45,7 @@ export const APPROVAL_MODES = ['auto', 'prompt', 'deny'] as const;
 export type ApprovalMode = typeof APPROVAL_MODES[number];
 
 export type ToolResult<T = unknown> = {
-    status: 'success' | 'error' | 'invalid_args' | 'security_error' | 'approval_required' | 'approval_denied' | 'execution_failed' | 'runtime_error';
+    status: 'success' | 'error' | 'invalid_args' | 'security_error' | 'approval_required' | 'approval_denied' | 'execution_failed' | 'runtime_error' | 'retry_limit_reached';
     data?: T;
     error?: string;
     metadata?: Record<string, unknown>;

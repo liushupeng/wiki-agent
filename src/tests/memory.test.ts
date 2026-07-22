@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import OpenAI from 'openai';
-import { MemoryManager } from '../memory.js';
+import { MemoryManager } from '../context/memory.js';
 
 test('MemoryManager initializes with system prompt and protects internal history', () => {
     const memory = new MemoryManager('  system prompt  ');

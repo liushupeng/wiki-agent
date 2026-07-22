@@ -10,7 +10,7 @@
 2. `src/agent.ts`
 3. `src/tools/base.ts`、`src/tools/registry.ts`、`src/tools/exposure.ts`、`src/tools/executor.ts`
 4. `src/permissions.ts`
-5. `src/memory.ts`
+5. `src/context/memory.ts`
 6. `src/trace/`
 7. `src/mcp/`
 8. `src/rag/`
@@ -169,10 +169,11 @@ const stream = await this.client.chat.completions.create({
 1. 从 function tool call 中取出工具名、参数字符串和 `tool_call_id`。
 2. 创建带 `tool.call_id`、`tool.call_index` 和脱敏参数预览的 `tool.execute` span。
 3. 调用 `ToolExecutor.execute()`。
-4. 在 tool span 中记录状态、耗时和结果规模。
-5. 返回 `role="tool"` 的 message。
+4. 通过 `context/toolObservation.ts` 对结果执行统一上下文预算；保留结构化字段，压缩超长字符串、数组和对象。
+5. 在 tool span 中分别记录原始结果规模、写回上下文规模、是否截断与耗时。
+6. 返回受预算约束的 `role="tool"` message。
 
-真正的参数解析、权限决策、审批和工具执行都在 `ToolExecutor` 中。
+真正的参数解析、权限决策、审批和工具执行都在 `ToolExecutor` 中。同一 run 中，同一工具的等价参数连续失败两次后，第三次调用会被 `retry_limit_reached` observation 拦截，避免无效重试耗尽循环与上下文预算。
 
 ## `src/tools/base.ts`
 
@@ -304,7 +305,7 @@ get tool
 
 Shell 工具还有 allowlist 和危险 token 检查。危险工具或危险命令会被拒绝。
 
-## `src/memory.ts`
+## `src/context/memory.ts`
 
 `MemoryManager` 保存 OpenAI messages：
 

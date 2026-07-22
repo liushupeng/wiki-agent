@@ -29,6 +29,24 @@ class ValidatedTool extends BaseAgentTool {
     }
 }
 
+class FailingTool extends BaseAgentTool {
+    readonly name = 'failing_tool';
+    readonly schema = {
+        type: 'function' as const,
+        function: {
+            name: 'failing_tool',
+            description: 'test tool that always fails',
+            parameters: { type: 'object', properties: {}, required: [] }
+        }
+    };
+    callCount = 0;
+
+    async execute(): Promise<ToolResult> {
+        this.callCount += 1;
+        return this.error('upstream service unavailable');
+    }
+}
+
 test('ToolExecutor executes allowed tools', async () => {
     const registry = new ToolRegistry();
     registry.register(new SafeTool());
@@ -82,4 +100,35 @@ test('ToolExecutor converts missing tools to runtime_error observations', async 
 
     assert.equal(result.status, 'runtime_error');
     assert.match(result.error ?? '', /未找到工具/);
+});
+
+test('ToolExecutor blocks a third consecutive failure with equivalent arguments', async () => {
+    const registry = new ToolRegistry();
+    const tool = new FailingTool();
+    registry.register(tool);
+    const executor = new ToolExecutor(registry, new PermissionPolicy('auto'));
+
+    assert.equal((await executor.execute('failing_tool', '{"a":1,"b":2}')).status, 'error');
+    assert.equal((await executor.execute('failing_tool', '{"b":2,"a":1}')).status, 'error');
+    const blocked = await executor.execute('failing_tool', '{"a":1,"b":2}');
+
+    assert.equal(blocked.status, 'retry_limit_reached');
+    assert.equal(tool.callCount, 2);
+    assert.equal(blocked.metadata?.consecutiveFailures, 2);
+});
+
+test('ToolExecutor clears a failure record when the run resets', async () => {
+    const registry = new ToolRegistry();
+    const tool = new FailingTool();
+    registry.register(tool);
+    const executor = new ToolExecutor(registry, new PermissionPolicy('auto'));
+
+    await executor.execute('failing_tool', '{}');
+    await executor.execute('failing_tool', '{}');
+    executor.resetFailureCounts();
+    const result = await executor.execute('failing_tool', '{}');
+
+    assert.equal(result.status, 'error');
+    assert.equal(tool.callCount, 3);
+    assert.equal(result.metadata?.consecutiveFailures, 1);
 });
