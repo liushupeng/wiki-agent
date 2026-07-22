@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createTelemetry, preview } from '../trace.js';
+import { createTelemetry, preview } from '../trace/telemetry.js';
 
 test('file telemetry writes versioned spans with explicit parent-child identifiers', async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-trace-spans-'));

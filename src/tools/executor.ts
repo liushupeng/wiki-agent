@@ -1,6 +1,6 @@
 import { Color } from '../cli/colors.js';
 import { PermissionPolicy } from '../permissions.js';
-import { getActiveSpan } from '../trace.js';
+import { getActiveSpan } from '../trace/telemetry.js';
 import { ApprovalRequest, IAgentTool, IToolRegistry, ToolResult } from '../types.js';
 import { parseToolArguments } from '../utils/json.js';
 

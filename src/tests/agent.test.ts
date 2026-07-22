@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import OpenAI from 'openai';
 import { WikiAgent } from '../agent.js';
+import type { TraceExportOptions, TraceExportReport } from '../trace/export.js';
 import { AgentConfig, IAgentTool, IMemory, IToolRegistry, ToolResult } from '../types.js';
 import { SafeTool } from './helpers.js';
 
@@ -78,6 +79,7 @@ function createAgent(options: {
     maxLoopSteps?: number;
     capturePromptArtifacts?: boolean;
     traceArtifactDir?: string;
+    traceExporter?: (options: TraceExportOptions) => Promise<TraceExportReport>;
 }): WikiAgent {
     process.env.API_KEY = process.env.API_KEY ?? 'test-api-key';
 
@@ -91,7 +93,19 @@ function createAgent(options: {
         approvalMode: 'auto'
     };
 
-    return new WikiAgent(config, options.memory ?? new TestMemory(), options.registry ?? new TestRegistry());
+    return new WikiAgent(
+        config,
+        options.memory ?? new TestMemory(),
+        options.registry ?? new TestRegistry(),
+        options.traceExporter ?? (async options => ({
+            inputPath: options.inputPath,
+            mode: 'exported',
+            runCount: 1,
+            spanCount: 0,
+            eventCount: 0,
+            skippedEventCount: 0
+        }))
+    );
 }
 
 function attachFakeClient(agent: WikiAgent, streams: ChatChunk[][]): void {
@@ -192,6 +206,32 @@ test('WikiAgent links an optional prompt artifact from its model span', async ()
     assert.match(attributes['wiki_agent.prompt_artifact.path'] as string, /prompt-/);
     assert.match(attributes['wiki_agent.prompt_artifact.sha256'] as string, /^[a-f0-9]{64}$/);
     assert.equal(attributes['wiki_agent.prompt_artifact.redacted'], true);
+});
+
+test('WikiAgent automatically exports its completed file trace to local Jaeger', async () => {
+    let receivedOptions: TraceExportOptions | undefined;
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-auto-export-'));
+    const agent = createAgent({
+        traceDir,
+        traceExporter: async options => {
+            receivedOptions = options;
+            return {
+                inputPath: options.inputPath,
+                mode: 'exported',
+                runCount: 1,
+                spanCount: 3,
+                eventCount: 0,
+                skippedEventCount: 0
+            };
+        }
+    });
+    attachFakeClient(agent, [[{ choices: [{ delta: { content: 'done' } }] }]]);
+
+    await agent.run('export this trace', () => {});
+
+    assert.equal(receivedOptions?.endpoint, 'http://127.0.0.1:4318/v1/traces');
+    assert.equal(receivedOptions?.timeoutMillis, 3_000);
+    assert.match(await fs.readFile(receivedOptions!.inputPath, 'utf-8'), /"type":"span_end"/);
 });
 
 test('WikiAgent.run executes tool calls and continues replanning', async () => {

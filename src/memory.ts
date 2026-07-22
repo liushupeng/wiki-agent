@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { getActiveSpan } from './trace.js';
+import { getActiveSpan } from './trace/telemetry.js';
 import { IMemory } from './types.js';
 import { estimateMessagesSize } from './utils/tokenBudget.js';
 

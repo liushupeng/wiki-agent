@@ -23,6 +23,14 @@ test('wiki-agent system prompt guides vector versus grep note search', () => {
     assert.match(WIKI_AGENT_SYSTEM_PROMPT, /grep_notes 做关键词\/正则检索/);
     assert.match(WIKI_AGENT_SYSTEM_PROMPT, /maxResults<=10/);
     assert.match(WIKI_AGENT_SYSTEM_PROMPT, /不要对多个宽泛关键词连续 grep/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /自动按正则处理/);
+});
+
+test('wiki-agent system prompt keeps evidence reading scoped', () => {
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /read_note 必须优先带 query、titlePath 或较小 maxChunks/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /不要把整篇大文件读入上下文/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /related_notes/);
+    assert.match(WIKI_AGENT_SYSTEM_PROMPT, /默认保持同目录范围/);
 });
 
 test('wiki-agent system prompt guides on-demand tool group loading', () => {

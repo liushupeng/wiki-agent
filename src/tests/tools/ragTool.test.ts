@@ -201,6 +201,24 @@ test('GrepNotesTool caps large result and context requests', async () => {
     });
 });
 
+test('GrepNotesTool auto-detects regex queries', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-grep-auto-regex-'));
+    await fs.writeFile(path.join(dir, 'invest.md'), '选股原则\n投资本质\n交易纪律\n', 'utf-8');
+    const configPath = await writeKnowledgeSourcesConfig([
+        { name: 'raw', root: dir, kind: 'raw', enabled: true, index: true }
+    ]);
+
+    await withEnv({ KNOWLEDGE_SOURCES_CONFIG_PATH: configPath }, async () => {
+        const result = await new GrepNotesTool().execute({ query: '选股|投资本质', maxResults: 10, contextLines: 0 });
+
+        assert.equal(result.status, 'success');
+        assert.equal(result.metadata?.autoRegex, true);
+        const data = result.data as { regex: boolean; matches: Array<{ text: string }> };
+        assert.equal(data.regex, true);
+        assert.deepEqual(data.matches.map(match => match.text), ['选股原则', '投资本质']);
+    });
+});
+
 test('SearchNotesTool returns formatted search matches', async () => {
     await withKnowledgeIndex(TEST_CHUNKS, async indexPath => {
         const result = await new SearchNotesTool().execute({ query: 'agent retrieval', topK: 1 });
@@ -260,6 +278,45 @@ test('ReadNoteTool returns chunks by note path', async () => {
     });
 });
 
+test('ReadNoteTool caps default reads and can filter by query', async () => {
+    const chunks = Array.from({ length: 12 }, (_, index) => createChunk({
+        id: `large.md#${index + 1}`,
+        source: 'large.md',
+        text: index === 9 ? 'investment system evidence' : `general note ${index + 1}`,
+        titlePath: [index === 9 ? 'Investment' : 'General']
+    }));
+
+    await withKnowledgeIndex(chunks, async () => {
+        const defaultResult = await new ReadNoteTool().execute({ notePath: 'large.md' });
+
+        assert.equal(defaultResult.status, 'success');
+        assert.equal(defaultResult.metadata?.count, 8);
+        assert.equal(defaultResult.metadata?.totalChunks, 12);
+        assert.equal(defaultResult.metadata?.truncated, true);
+
+        const filteredResult = await new ReadNoteTool().execute({ notePath: 'large.md', query: 'investment', maxChunks: 3 });
+        assert.equal(filteredResult.status, 'success');
+        assert.equal(filteredResult.metadata?.count, 1);
+        const data = filteredResult.data as { chunks: Array<{ text: string }> };
+        assert.equal(data.chunks[0].text, 'investment system evidence');
+    });
+});
+
+test('ReadNoteTool filters by title path', async () => {
+    await withKnowledgeIndex([
+        createChunk({ id: 'invest.md#1', source: 'invest.md', text: 'overview', titlePath: ['1 Overview'] }),
+        createChunk({ id: 'invest.md#2', source: 'invest.md', text: 'eight rules', titlePath: ['15 投资体系', '八项原则'] })
+    ], async () => {
+        const result = await new ReadNoteTool().execute({ notePath: 'invest.md', titlePath: '投资体系' });
+
+        assert.equal(result.status, 'success');
+        assert.equal(result.metadata?.count, 1);
+        const data = result.data as { chunks: Array<{ text: string; titlePath: string[] }> };
+        assert.equal(data.chunks[0].text, 'eight rules');
+        assert.deepEqual(data.chunks[0].titlePath, ['15 投资体系', '八项原则']);
+    });
+});
+
 test('RelatedNotesTool returns related chunks excluding the source note', async () => {
     await withKnowledgeIndex(TEST_CHUNKS, async () => {
         const result = await new RelatedNotesTool().execute({ notePath: 'agent.md', topK: 1 });
@@ -270,6 +327,35 @@ test('RelatedNotesTool returns related chunks excluding the source note', async 
         const data = result.data as { notePath: string; matches: Array<Record<string, unknown>> };
         assert.equal(data.notePath, 'agent.md');
         assert.equal(data.matches[0].source, 'memory.md');
+    });
+});
+
+test('RelatedNotesTool defaults to same-directory matches', async () => {
+    await withKnowledgeIndex([
+        createChunk({ id: 'raw/invest/main.md#1', source: 'raw/invest/main.md', text: 'cycle value compound strategy' }),
+        createChunk({ id: 'raw/invest/peer.md#1', source: 'raw/invest/peer.md', text: 'cycle value compound strategy evidence' }),
+        createChunk({ id: 'raw/programming/cpp.md#1', source: 'raw/programming/cpp.md', text: 'cycle value compound strategy unrelated code' })
+    ], async () => {
+        const result = await new RelatedNotesTool().execute({ notePath: 'raw/invest/main.md', topK: 5 });
+
+        assert.equal(result.status, 'success');
+        assert.equal(result.metadata?.scope, 'sameDirectory');
+        const data = result.data as { matches: Array<{ source: string }> };
+        assert.deepEqual(data.matches.map(match => match.source), ['raw/invest/peer.md']);
+    });
+});
+
+test('RelatedNotesTool can expand to source-root scope', async () => {
+    await withKnowledgeIndex([
+        createChunk({ id: 'raw/invest/main.md#1', source: 'raw/invest/main.md', text: 'cycle value compound strategy' }),
+        createChunk({ id: 'raw/other/peer.md#1', source: 'raw/other/peer.md', text: 'cycle value compound strategy evidence' }),
+        createChunk({ id: 'wiki/invest.md#1', source: 'wiki/invest.md', text: 'cycle value compound strategy wiki' })
+    ], async () => {
+        const result = await new RelatedNotesTool().execute({ notePath: 'raw/invest/main.md', topK: 5, scope: 'sourceRoot' });
+
+        assert.equal(result.status, 'success');
+        const data = result.data as { matches: Array<{ source: string }> };
+        assert.deepEqual(data.matches.map(match => match.source), ['raw/other/peer.md']);
     });
 });
 

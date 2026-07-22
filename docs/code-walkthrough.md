@@ -11,7 +11,7 @@
 3. `src/tools/base.ts`、`src/tools/registry.ts`、`src/tools/exposure.ts`、`src/tools/executor.ts`
 4. `src/permissions.ts`
 5. `src/memory.ts`
-6. `src/trace.ts`
+6. `src/trace/`
 7. `src/mcp/`
 8. `src/rag/`
 9. `src/tools/`
@@ -326,7 +326,7 @@ while (splitIndex > 0 && nonSystem[splitIndex]?.role === 'tool') {
 
 压缩会在当前 run span 中写入 `memory.compaction` event。
 
-## `src/trace.ts`
+## `src/trace/`
 
 追踪通过后端无关的 `Telemetry` / `SpanHandle` 输出。默认 file backend 每行写一个 schema version 2 JSONL span 事件。默认输出目录：
 
@@ -344,6 +344,8 @@ var/traces
 调用树固定为 `wiki_agent.run` → `wiki_agent.step` → `gen_ai.chat` / `tool.execute` → RAG 子 span。每条 JSONL span event 都带有 `traceId`、`spanId`、`parentSpanId` 和起止时间；工具调用还带 `tool.call_id` 与 `tool.call_index`，可稳定表达并发同名工具。
 
 设置 `TRACE_CAPTURE_PROMPTS=true` 后，`gen_ai.chat` 会将脱敏后的完整请求保存到 `TRACE_ARTIFACT_DIR`。span 仅以 `wiki_agent.prompt_artifact.path`、`sha256`、`chars` 和 `redacted` 属性关联 artifact，避免把大体积 prompt 写入 trace 后端。artifact 写入失败会在该 span 中记录 `prompt_artifact.capture_failed` event，但不会阻断模型调用。
+
+默认 file backend 会在当前 run 的根 span 结束、JSONL 写入完整后，自动通过 OTLP HTTP 导出至本机 Jaeger 的 `http://127.0.0.1:4318/v1/traces`，最长等待 3 秒。导出失败不会影响 Agent 的回答，也不会删除本地 trace。
 
 文件 trace 只接受当前 schema version 2；离线导出脚本也会拒绝旧的扁平事件格式。排查时应从根 run span 开始，沿父子关系定位耗时或失败的模型、工具及 RAG span。
 

@@ -83,6 +83,7 @@ export interface SpanHandle {
 }
 
 export interface Telemetry {
+    readonly filePath?: string;
     startSpan(name: string, options?: StartSpanOptions): Promise<SpanHandle>;
     shutdown(): Promise<void>;
 }
@@ -118,10 +119,14 @@ export function createTelemetry(options: {
 }
 
 class FileTelemetry implements Telemetry {
+    readonly filePath: string;
+
     constructor(
         private readonly logger: TraceLogger,
         private readonly serviceName: string
-    ) {}
+    ) {
+        this.filePath = logger.filePath;
+    }
 
     async startSpan(name: string, options: StartSpanOptions = {}): Promise<SpanHandle> {
         const startedAt = options.startedAt ?? new Date();
@@ -293,12 +298,6 @@ function createSpanId(): string {
     return randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
-/**
- * 生成写入 trace 的短文本摘要。
- *
- * Trace 只需要帮助复盘关键内容，不应该把完整回答、工具结果或大段 diff 全量写入。
- * 这里会先把连续空白压成单个空格，再按 maxLength 截断并追加省略号。
- */
 export function preview(value: string, maxLength = 600): string {
     const normalized = value.replace(/\s+/g, ' ').trim();
     return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;

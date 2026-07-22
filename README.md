@@ -499,7 +499,9 @@ npm run trace:export -- --input var/traces/trace-xxx.jsonl
 npm run trace:export -- --input var/traces/trace-xxx.jsonl --endpoint http://localhost:4318/v1/traces
 ```
 
-该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；它不参与 `npm run ask` 的运行链路，也不会修改源 trace。未传 `--endpoint` 时使用内存 exporter 做 dry run，不发送网络请求。
+该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；不会修改源 trace。未传 `--endpoint` 时使用内存 exporter 做 dry run，不发送网络请求。
+
+默认 `TELEMETRY_BACKEND=file` 会在根 run span 已结束、JSONL 写入完成后，自动通过 OTLP HTTP 导出该次运行的确切 trace 文件到本机 Jaeger：`http://127.0.0.1:4318/v1/traces`。自动导出最多等待 3 秒；Jaeger 未启动或导出失败只会打印警告，本地 JSONL 不会删除，仍可稍后手动重放。
 
 ### Windows 本地 Jaeger
 
@@ -509,10 +511,10 @@ npm run trace:export -- --input var/traces/trace-xxx.jsonl --endpoint http://loc
 2. 在解压目录启动：
 
 ```powershell
-.\jaeger.exe
+.\jaeger.exe --set=extensions.jaeger_storage.backends.some_storage.memory.max_traces=500
 ```
 
-3. 打开 `http://127.0.0.1:16686` 查看 UI，并导入本地 trace：
+3. 执行 `npm run ask` 会自动导入。也可手动导入既有 trace：
 
 ```powershell
 npm run trace:export -- `
@@ -520,7 +522,7 @@ npm run trace:export -- `
   --endpoint http://127.0.0.1:4318/v1/traces
 ```
 
-Jaeger all-in-one 的 OTLP HTTP 端口为 `4318`，默认使用内存存储；关闭进程后已导入的 trace 会丢失。
+Jaeger all-in-one 的 OTLP HTTP 端口为 `4318`，使用内存存储；以上命令最多保留 500 条 trace，达到上限后覆盖最早写入的 trace。关闭进程后已导入的 trace 会丢失。
 
 ### Prompt artifact
 

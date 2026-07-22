@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { writePromptArtifact } from '../promptArtifacts.js';
+import { writePromptArtifact } from '../trace/artifacts.js';
 
 test('writePromptArtifact redacts sensitive object fields and returns a verifiable reference', async () => {
     const artifactDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-prompt-artifact-'));

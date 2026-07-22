@@ -6,17 +6,21 @@ import { IAgent, IMemory, IToolRegistry, AgentConfig } from './types.js';
 import { Color } from './cli/colors.js';
 import { PermissionPolicy } from './permissions.js';
 import { appendToolCallDeltas, buildSkippedToolResult, buildToolCalls, FunctionToolCall, isFunctionToolCall, ToolExecutionResult } from './protocol/toolCalls.js';
-import { createTelemetry, preview, runWithSpan, SpanHandle, TerminationReason } from './trace.js';
+import { createTelemetry, preview, runWithSpan, SpanHandle, TerminationReason } from './trace/telemetry.js';
 import { ToolExecutor } from './tools/executor.js';
 import { estimateMessagesSize, estimateTextSize, estimateToolSchemasSize } from './utils/tokenBudget.js';
 import { parseJsonSafely } from './utils/json.js';
-import { redactSensitiveValues, writePromptArtifact } from './promptArtifacts.js';
+import { redactSensitiveValues, writePromptArtifact } from './trace/artifacts.js';
+import { exportTrace } from './trace/export.js';
 
 dotenv.config();
 
 type StepResult =
     | { type: 'continue' }
     | { type: 'final'; content: string };
+
+const LOCAL_JAEGER_OTLP_HTTP_ENDPOINT = 'http://127.0.0.1:4318/v1/traces';
+const AUTO_TRACE_EXPORT_TIMEOUT_MILLIS = 3_000;
 
 /**
  * 核心全自主 Planning 大脑实现
@@ -28,7 +32,8 @@ export class WikiAgent implements IAgent {
     constructor(
         public config: AgentConfig,
         public memory: IMemory,
-        public registry: IToolRegistry
+        public registry: IToolRegistry,
+        private readonly traceExporter: typeof exportTrace = exportTrace
     ) {
         this.toolExecutor = new ToolExecutor(
             registry,
@@ -121,8 +126,23 @@ export class WikiAgent implements IAgent {
                 attributes: { 'wiki_agent.termination_reason': terminationReason }
             });
             await telemetry.shutdown();
+            await this.exportFileTrace(telemetry.filePath);
         }
         return finalOutput;
+    }
+
+    private async exportFileTrace(tracePath?: string): Promise<void> {
+        if (!tracePath) return;
+        try {
+            const report = await this.traceExporter({
+                inputPath: tracePath,
+                endpoint: LOCAL_JAEGER_OTLP_HTTP_ENDPOINT,
+                timeoutMillis: AUTO_TRACE_EXPORT_TIMEOUT_MILLIS
+            });
+            console.log(Color.green(`\n📤 [Trace 导出] ${report.spanCount} 个 span 已导入 OTLP：${report.inputPath}`));
+        } catch (error: any) {
+            console.warn(Color.yellow(`\n⚠️ [Trace 导出失败] 本地 trace 已保留：${preview(error.message, 512)}`));
+        }
     }
 
     private async runStep(

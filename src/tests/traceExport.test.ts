@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { exportTrace } from '../../scripts/observability/exportTrace.js';
+import { exportTrace } from '../trace/export.js';
 
 test('exportTrace exports version 2 spans without network output by default', async () => {
     await withTrace(version2Trace(), async inputPath => {
