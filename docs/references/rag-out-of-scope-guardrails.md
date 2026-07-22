@@ -30,7 +30,7 @@
 | 检索充分性判定 | 未显式实现 | 当前 Top K 不等于可回答 |
 | 知识库边界说明 | 未形成统一的 Agent 可读策略 | 目录结构本身不足以表达覆盖范围 |
 | 分级拒答协议 | 未形成端到端行为契约 | 需要定义 `SUFFICIENT`、`PARTIAL`、`IRRELEVANT` 的回答边界 |
-| 高频越界问题治理 | 有 bad case 与评测基础，但尚未固化流程 | `badcases/`、`scripts/rag/` |
+| 高频越界问题治理 | 有 bad case 与评测基础，但尚未固化流程 | `evaluation/badcases/`、`scripts/rag/` |
 
 ## 采纳路径
 

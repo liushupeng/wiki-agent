@@ -18,7 +18,7 @@ import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
  * - npm run eval:wiki -- <questionsFile>
  */
 async function main() {
-    const questionsFile = path.resolve(process.argv[2] ?? 'examples/wiki-eval/questions.json');
+    const questionsFile = path.resolve(process.argv[2] ?? 'evaluation/wiki/questions.json');
     if (process.argv[3]) throw new Error('eval:wiki reads the active index profile; pass no index file');
     const sourceRoots = await getKnowledgeSourceRoots();
     const mode = (process.env.RAG_EVAL_MODE ?? 'vector').toLowerCase();

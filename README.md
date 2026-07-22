@@ -218,8 +218,7 @@ wiki-agent/
 ├── skills/              # 可按需加载的 skill Markdown
 ├── wiki/                # Agent 维护的结构化 Markdown wiki
 ├── notes/               # 默认 Markdown 知识源示例
-├── examples/            # 示例数据，例如 RAG 评测问题
-├── badcases/            # Agent 失败样例模板和后续沉淀
+├── evaluation/          # RAG/Wiki/工具路由评测题与失败案例
 ├── config/              # 示例配置，例如 MCP server 列表
 ├── var/                 # 运行产物：索引、trace 等，不进入 Git
 ├── docs/                # 代码导读
@@ -285,7 +284,7 @@ raw sources
 - `notes/` 保存原始资料，尽量作为 source of truth。
 - `wiki/` 保存 LLM 维护的结构化知识页，包括 `index.md`、`log.md`、`contradictions.md` 和各类页面目录。
 - `wiki/AGENTS.md` 定义 wiki schema，规定页面类型、frontmatter、引用规则、ingest/query/lint 流程。
-- `badcases/` 保存失败样例，后续转成 eval、skill、schema 或 prompt 的改进输入。
+- `evaluation/badcases/` 保存失败样例，后续转成 eval、skill、schema 或 prompt 的改进输入。
 
 ### RAG 索引
 
@@ -596,7 +595,7 @@ load_skill({ "name": "..." })
 
 ```text
 bad answer / weak retrieval / wrong tool choice
--> badcases/*.md
+-> evaluation/badcases/*.md
 -> examples/*-eval/questions.json
 -> update skill / schema / prompt / tool description
 -> rerun eval
@@ -604,10 +603,10 @@ bad answer / weak retrieval / wrong tool choice
 
 已有样例：
 
-- `badcases/TEMPLATE.md`：失败样例模板。
-- `examples/rag-eval/questions.json`：普通 RAG 检索评测。
-- `examples/wiki-eval/questions.json`：wiki-first 检索评测样例。
-- `examples/tool-routing-eval/questions.json`：工具路由评测样例数据。
+- `evaluation/badcases/TEMPLATE.md`：失败样例模板。
+- `evaluation/rag/questions.json`：普通 RAG 检索评测。
+- `evaluation/wiki/questions.json`：wiki-first 检索评测样例。
+- `evaluation/tool-routing/questions.json`：工具路由评测样例数据。
 
 Wiki eval 使用独立入口，并复用与 `search_notes` 相同的 wiki-first 排序：
 
@@ -644,7 +643,7 @@ examples/wiki-demo/raw/*.md
 - 让 `ingest_source` 更稳定地生成 source/concept/decision 页面。
 - 让 `lint_wiki` 能检查孤立页、缺引用、重复概念和冲突。
 - 让 `answer_from_wiki` 形成稳定的 wiki-first 回答格式。
-- 把真实 bad case 持续补进 `badcases/` 和 `examples/*-eval/`。
+- 把真实 bad case 持续补进 `evaluation/badcases/` 和对应的 `evaluation/*/questions.json`。
 
 中期方向是增强评测和工具路由：
 
@@ -713,8 +712,8 @@ dist/src/tests/**/*.test.js
 - skill manifest 懒加载
 - Agent policy contract：检索路由、局部读笔记、关联范围及高风险工具加载顺序；这类测试不请求 LLM，只防止 system prompt 的关键行为约束被意外删除。
 
-`npm run eval:rag` 默认读取 `examples/rag-eval/questions.json`，直接评估基础检索；
-`npm run eval:wiki` 默认读取 `examples/wiki-eval/questions.json`，从更多候选中优先返回
+`npm run eval:rag` 默认读取 `evaluation/rag/questions.json`，直接评估基础检索；
+`npm run eval:wiki` 默认读取 `evaluation/wiki/questions.json`，从更多候选中优先返回
 `wiki/` 结果。两个命令都可以通过第一个命令行参数指定评测问题文件。
 
 RAG eval 支持对比向量检索和 grep 检索：

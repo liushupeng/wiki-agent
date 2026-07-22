@@ -22,7 +22,7 @@ import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
  * 快速观察 topK 召回是否仍然命中预期笔记和关键词。
  */
 async function main() {
-    const questionsFile = path.resolve(process.argv[2] ?? 'examples/rag-eval/questions.json');
+    const questionsFile = path.resolve(process.argv[2] ?? 'evaluation/rag/questions.json');
     if (process.argv[3]) throw new Error('eval:rag reads the active index profile; pass no index file');
     const sourceRoots = await getKnowledgeSourceRoots();
     const mode = (process.env.RAG_EVAL_MODE ?? 'vector').toLowerCase();

@@ -16,7 +16,7 @@
 8. `src/rag/`
 9. `src/tools/`
 10. `scripts/rag/`
-11. `wiki/`、`skills/`、`badcases/`
+11. `wiki/`、`skills/`、`evaluation/`
 12. `src/tests/`
 
 ## 运行时总览
@@ -53,7 +53,7 @@ raw sources
 -> wiki/ maintained pages
 -> search_notes / grep_notes
 -> answer_from_wiki skill
--> badcases + eval updates
+-> evaluation/badcases + eval updates
 ```
 
 ## `src/main.ts`
@@ -514,13 +514,13 @@ RAG 能力被包装成四个工具：
 
 ## Bad Case And Eval
 
-`badcases/TEMPLATE.md` 定义失败样例格式。推荐把检索遗漏、工具路由错误、证据不足、幻觉、schema 缺口等问题都记录下来。
+`evaluation/badcases/TEMPLATE.md` 定义失败样例格式。推荐把检索遗漏、工具路由错误、证据不足、幻觉、schema 缺口等问题都记录下来。
 
 评测样例分三类：
 
-- `examples/rag-eval/questions.json`：普通 RAG 检索。
-- `examples/wiki-eval/questions.json`：wiki-first 检索。
-- `examples/tool-routing-eval/questions.json`：工具选择和 tool group 加载。
+- `evaluation/rag/questions.json`：普通 RAG 检索。
+- `evaluation/wiki/questions.json`：wiki-first 检索。
+- `evaluation/tool-routing/questions.json`：工具选择和 tool group 加载。
 
 RAG 和 Wiki eval 分别由 `scripts/rag/evaluateRag.ts`、`scripts/rag/evaluateWiki.ts`
 作为独立 CLI 入口；两者共享 `src/rag/evaluation.ts` 中的 retriever 构造与判分逻辑。
@@ -583,7 +583,7 @@ RAG 检索层评测脚本。它位于顶层 `scripts/rag/`，不调用 LLM，只
 默认输入：
 
 ```text
-examples/rag-eval/questions.json
+evaluation/rag/questions.json
 ```
 
 两个入口都打开 `activeProfile` 对应的 manifest，并拒绝 profile 与索引不一致的情况。
@@ -610,8 +610,8 @@ examples/rag-eval/questions.json
 `grepTerms` 会作为多个独立词项进行 OR 召回，并按单行命中的不同词项数量排序；它们只影响 grep 评测，不影响向量检索。
 
 `npm run eval:rag` 是独立的普通 RAG 评测入口，使用基础检索策略，默认评测
-`examples/rag-eval/questions.json`。`npm run eval:wiki` 是独立的 Wiki 评测入口，
-默认评测 `examples/wiki-eval/questions.json`，先检索更多候选，再将 `wiki/` 结果
+`evaluation/rag/questions.json`。`npm run eval:wiki` 是独立的 Wiki 评测入口，
+默认评测 `evaluation/wiki/questions.json`，先检索更多候选，再将 `wiki/` 结果
 排到 raw 资料之前。
 
 ## `src/config.ts` 和 `src/cli/`

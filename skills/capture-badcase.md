@@ -13,7 +13,7 @@ Turn a failure into durable improvement data:
 
 ```text
 failure
--> badcases/*.md
+-> evaluation/badcases/*.md
 -> eval case
 -> schema / skill / prompt / tool update recommendation
 ```
@@ -34,7 +34,7 @@ failure
 2. Summarize the actual behavior.
 3. Inspect trace if available.
 4. Classify the failure type.
-5. Create a bad case Markdown file under `badcases/`.
+5. Create a bad case Markdown file under `evaluation/badcases/`.
 6. Add or suggest an eval case under `examples/*-eval/`.
 7. Recommend the smallest durable fix: schema, skill, prompt, tool description, test, or eval.
 
