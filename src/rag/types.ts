@@ -20,7 +20,9 @@ export type TextChunk = {
     frontmatter?: Record<string, string | string[]>;
 };
 
-export type Vector = Record<string, number>;
+export type SparseVector = Record<string, number>;
+export type DenseVector = number[];
+export type Vector = SparseVector | DenseVector;
 
 export type IndexedChunk = TextChunk & {
     // 由 Embedder 生成的向量；当前 tf embedder 使用稀疏词频向量。
@@ -32,7 +34,7 @@ export type SearchResult = IndexedChunk & {
 };
 
 export type KnowledgeIndex = {
-    version: 1;
+    version: 2;
     createdAt: string;
     // 记录索引时的切分参数，便于对比不同实验结果。
     chunkSize: number;

@@ -7,8 +7,8 @@ import {
     createVectorEvalRetriever,
     evaluateRetriever
 } from '../../src/rag/evaluation.js';
+import { openActiveIndex } from '../../src/rag/indexRuntime.js';
 import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
-import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
 
 /**
  * RAG 检索评测入口。
@@ -16,7 +16,6 @@ import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
  * 用法：
  * - npm run eval:rag
  * - npm run eval:rag -- <questionsFile>
- * - npm run eval:rag -- <questionsFile> <indexFile>
  *
  * 这个脚本只评估检索层，不调用 LLM。RAG_EVAL_MODE 支持 vector、grep、both。
  * 它适合在调整 chunker、embedding、vector store 或 grep 策略后，
@@ -24,11 +23,11 @@ import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
  */
 async function main() {
     const questionsFile = path.resolve(process.argv[2] ?? 'examples/rag-eval/questions.json');
-    const indexFile = path.resolve(process.argv[3] ?? process.env.KNOWLEDGE_INDEX_PATH ?? 'var/knowledge/index.json');
+    if (process.argv[3]) throw new Error('eval:rag reads the active index profile; pass no index file');
     const sourceRoots = await getKnowledgeSourceRoots();
     const mode = (process.env.RAG_EVAL_MODE ?? 'vector').toLowerCase();
     const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
-    const vectorStore = createVectorStoreFromEnv({ filePath: indexFile });
+    const vectorStore = await openActiveIndex(process.env.RAG_EVAL_PROFILE);
     const options = { wikiFirst: false };
     const vectorRetriever = createVectorEvalRetriever(vectorStore, options);
     const grepRetriever = createGrepEvalRetriever(sourceRoots, options);

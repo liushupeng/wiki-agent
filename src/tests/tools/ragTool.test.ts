@@ -3,25 +3,36 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { embedText } from '../../rag/embeddings.js';
+import { TfEmbedder, embedText } from '../../rag/embeddings.js';
+import { getIndexPaths, parseRagIndexesConfig, resolveRagIndexProfile } from '../../rag/indexProfiles.js';
+import { writeIndexManifest } from '../../rag/indexRuntime.js';
 import { IndexedChunk } from '../../rag/types.js';
 import { JsonVectorStore } from '../../rag/vectorStore.js';
 import { GrepNotesTool, ReadNoteTool, RelatedNotesTool, SearchNotesTool } from '../../tools/ragTool.js';
 
 async function withKnowledgeIndex<T>(chunks: IndexedChunk[], run: (indexPath: string) => Promise<T>): Promise<T> {
-    const previousIndexPath = process.env.KNOWLEDGE_INDEX_PATH;
+    const previousConfigPath = process.env.RAG_INDEXES_CONFIG_PATH;
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-rag-tool-'));
-    const indexPath = path.join(dir, 'index.json');
-    process.env.KNOWLEDGE_INDEX_PATH = indexPath;
-    await new JsonVectorStore(indexPath).replaceChunks(toAsyncChunks(chunks), { chunkSize: 100, overlap: 10 });
+    const configPath = path.join(dir, 'rag.indexes.jsonc');
+    const config = {
+        indexDirectory: dir,
+        activeProfile: 'tf-v1',
+        profiles: [{ id: 'tf-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'tf' } }]
+    };
+    await fs.writeFile(configPath, JSON.stringify(config), 'utf-8');
+    process.env.RAG_INDEXES_CONFIG_PATH = configPath;
+    const profile = resolveRagIndexProfile(parseRagIndexesConfig(config));
+    const paths = getIndexPaths(profile, config.indexDirectory);
+    await new JsonVectorStore(paths.dataPath).replaceChunks(toAsyncChunks(chunks), { chunkSize: 100, overlap: 10 });
+    await writeIndexManifest(profile, paths, new TfEmbedder().identity);
 
     try {
-        return await run(indexPath);
+        return await run(paths.dataPath);
     } finally {
-        if (previousIndexPath === undefined) {
-            delete process.env.KNOWLEDGE_INDEX_PATH;
+        if (previousConfigPath === undefined) {
+            delete process.env.RAG_INDEXES_CONFIG_PATH;
         } else {
-            process.env.KNOWLEDGE_INDEX_PATH = previousIndexPath;
+            process.env.RAG_INDEXES_CONFIG_PATH = previousConfigPath;
         }
     }
 }
@@ -220,12 +231,12 @@ test('GrepNotesTool auto-detects regex queries', async () => {
 });
 
 test('SearchNotesTool returns formatted search matches', async () => {
-    await withKnowledgeIndex(TEST_CHUNKS, async indexPath => {
+    await withKnowledgeIndex(TEST_CHUNKS, async () => {
         const result = await new SearchNotesTool().execute({ query: 'agent retrieval', topK: 1 });
 
         assert.equal(result.status, 'success');
         assert.equal(result.metadata?.count, 1);
-        assert.equal(result.metadata?.indexPath, path.resolve(indexPath));
+        assert.equal(result.metadata?.indexProfile, 'tf-v1');
 
         const data = result.data as { query: string; matches: Array<Record<string, unknown>> };
         assert.equal(data.query, 'agent retrieval');
@@ -360,21 +371,27 @@ test('RelatedNotesTool can expand to source-root scope', async () => {
 });
 
 test('SearchNotesTool returns a helpful error when the index is missing', async () => {
-    const previousIndexPath = process.env.KNOWLEDGE_INDEX_PATH;
+    const previousConfigPath = process.env.RAG_INDEXES_CONFIG_PATH;
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-rag-tool-missing-'));
-    process.env.KNOWLEDGE_INDEX_PATH = path.join(dir, 'missing.json');
+    const configPath = path.join(dir, 'rag.indexes.jsonc');
+    await fs.writeFile(configPath, JSON.stringify({
+        indexDirectory: dir,
+        activeProfile: 'tf-v1',
+        profiles: [{ id: 'tf-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'tf' } }]
+    }), 'utf-8');
+    process.env.RAG_INDEXES_CONFIG_PATH = configPath;
 
     try {
         const result = await new SearchNotesTool().execute({ query: 'agent' });
 
         assert.equal(result.status, 'error');
-        assert.match(result.error ?? '', /no such file|cannot find/i);
+        assert.match(result.error ?? '', /cannot open RAG index manifest|ENOENT/i);
         assert.match(String(result.metadata?.hint), /npm run index:notes/);
     } finally {
-        if (previousIndexPath === undefined) {
-            delete process.env.KNOWLEDGE_INDEX_PATH;
+        if (previousConfigPath === undefined) {
+            delete process.env.RAG_INDEXES_CONFIG_PATH;
         } else {
-            process.env.KNOWLEDGE_INDEX_PATH = previousIndexPath;
+            process.env.RAG_INDEXES_CONFIG_PATH = previousConfigPath;
         }
     }
 });

@@ -1,0 +1,27 @@
+{
+  "$schema": "./rag.indexes.schema.json",
+  "indexDirectory": "var/indexes",
+  "activeProfile": "tf-v1",
+  "profiles": [
+    {
+      "id": "tf-v1",
+      "store": "json",
+      "chunkSize": 900,
+      "overlap": 120,
+      "embedder": {
+        "type": "tf"
+      }
+    },
+    {
+      "id": "bm25-v1",
+      "store": "json",
+      "chunkSize": 900,
+      "overlap": 120,
+      "embedder": {
+        "type": "bm25",
+        "k1": 1.2,
+        "b": 0.75
+      }
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wiki-agent.local/schemas/rag.indexes.schema.json",
+  "title": "Wiki Agent RAG index profiles",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["indexDirectory", "activeProfile", "profiles"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "indexDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "description": "所有 profile 索引目录的根路径；相对路径以启动 wiki-agent 时的工作目录为基准。"
+    },
+    "activeProfile": {
+      "type": "string",
+      "minLength": 1,
+      "description": "查询和评测默认使用的索引 profile。"
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/profile" }
+    }
+  },
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "store", "chunkSize", "overlap", "embedder"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "稳定 profile ID，同时作为 indexDirectory 下的索引目录名。"
+        },
+        "store": { "type": "string", "enum": ["json"] },
+        "chunkSize": { "type": "integer", "minimum": 1 },
+        "overlap": { "type": "integer", "minimum": 0 },
+        "embedder": {
+          "oneOf": [
+            { "$ref": "#/$defs/tfEmbedder" },
+            { "$ref": "#/$defs/bm25Embedder" },
+            { "$ref": "#/$defs/openAiCompatibleEmbedder" }
+          ]
+        }
+      }
+    },
+    "tfEmbedder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "tf" }
+      }
+    },
+    "bm25Embedder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "bm25" },
+        "k1": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1.2,
+          "description": "词频饱和参数。"
+        },
+        "b": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.75,
+          "description": "文档长度归一化参数。"
+        }
+      }
+    },
+    "openAiCompatibleEmbedder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "baseUrlEnv", "apiKeyEnv", "model", "dimensions"],
+      "properties": {
+        "type": { "const": "openai-compatible" },
+        "baseUrlEnv": { "type": "string", "minLength": 1 },
+        "apiKeyEnv": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "dimensions": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

@@ -7,8 +7,8 @@ import {
     createVectorEvalRetriever,
     evaluateRetriever
 } from '../../src/rag/evaluation.js';
+import { openActiveIndex } from '../../src/rag/indexRuntime.js';
 import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
-import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
 
 /**
  * Wiki 优先检索评测入口。
@@ -16,15 +16,14 @@ import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
  * 用法：
  * - npm run eval:wiki
  * - npm run eval:wiki -- <questionsFile>
- * - npm run eval:wiki -- <questionsFile> <indexFile>
  */
 async function main() {
     const questionsFile = path.resolve(process.argv[2] ?? 'examples/wiki-eval/questions.json');
-    const indexFile = path.resolve(process.argv[3] ?? process.env.KNOWLEDGE_INDEX_PATH ?? 'var/knowledge/index.json');
+    if (process.argv[3]) throw new Error('eval:wiki reads the active index profile; pass no index file');
     const sourceRoots = await getKnowledgeSourceRoots();
     const mode = (process.env.RAG_EVAL_MODE ?? 'vector').toLowerCase();
     const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
-    const vectorStore = createVectorStoreFromEnv({ filePath: indexFile });
+    const vectorStore = await openActiveIndex(process.env.RAG_EVAL_PROFILE);
     const options = { wikiFirst: true };
     const vectorRetriever = createVectorEvalRetriever(vectorStore, options);
     const grepRetriever = createGrepEvalRetriever(sourceRoots, options);

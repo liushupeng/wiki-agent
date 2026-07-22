@@ -330,13 +330,14 @@ KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 ```
 
 ```bash
-npm run index:notes -- notes
+npm run index:notes -- --profile tf-v1
 ```
 
-默认输出：
+每个 profile 写入独立目录：
 
 ```text
-var/knowledge/index.json
+var/indexes/tf-v1/index.json
+var/indexes/tf-v1/manifest.json
 ```
 
 索引数据流采用惰性读取和流式写入。每次只读取一个文件，逐个生成 chunk
@@ -349,14 +350,12 @@ iterateSourceDocuments / iterateSourceDocumentsFromRoots
 -> VectorStore.replaceChunks
 ```
 
-默认实现：
-
-- `RAG_CHUNKER=auto`：Markdown 使用 Markdown-aware chunker，文本使用固定长度 chunker。
-- `RAG_EMBEDDER=tf`：本地词频向量，不依赖外部 embedding 服务。
-- `RAG_STORE=json`：流式构建单个 JSON 索引，查询时全量加载并计算余弦相似度。
+默认 profile `tf-v1` 使用本地词频向量与 JSON 后端；`bm25-v1` 是零模型、零 API 成本的本地关键词检索基线。profile 定义于
+`config/rag.indexes.jsonc`：它固定 embedding、chunk 参数、向量后端与索引目录名。
+`manifest.json` 记录实际构建身份；查询端会验证 profile 指纹和 embedding 身份，不一致时拒绝查询并要求重建。
 
 当前可索引的 Markdown/Text 数据约 26 MiB，单 JSON 索引足以满足本地使用。
-若未来接入大量 HTML、表格或固定维度 embedding，再考虑迁移到专用向量数据库。
+固定维度 dense embedding 可先在 JSON 后端小规模评测；索引体积或延迟成为瓶颈后，再迁移至 LanceDB、Qdrant 等专用后端。
 
 索引期间，命令行会持续显示已处理文档数、chunk 数、耗时和当前文件；
 交互式终端会原地刷新，重定向日志时则每 5 秒输出一行。完成后还会汇总
@@ -373,7 +372,22 @@ iterateSourceDocuments / iterateSourceDocumentsFromRoots
 - `src/rag/vectorStore.ts`：`VectorStore`
 - `src/rag/indexPipeline.ts`：索引编排
 
-后续实验 LanceDB、pgvector、Qdrant、OpenAI embedding、本地 embedding 模型时，优先新增 adapter，不需要重写索引入口。
+构建 BM25 基线：
+
+```bash
+npm run index:notes -- --profile bm25-v1
+```
+
+在不切换线上 `activeProfile` 的情况下对比某个已构建 profile：
+
+```powershell
+$env:RAG_EVAL_PROFILE = 'bm25-v1'
+npm run eval:rag
+npm run eval:wiki
+Remove-Item Env:RAG_EVAL_PROFILE
+```
+
+要测试新的 embedding，新增一个 profile，构建其独立索引并运行 `eval:rag` / `eval:wiki`；确认收益后再将 `activeProfile` 切换到该 profile。OpenAI 兼容服务使用 profile 中声明的环境变量保存 endpoint 与 API key，不会写入 manifest。
 
 ## MCP / Tool Loading
 
@@ -671,12 +685,7 @@ MEMORY_KEEP_RECENT_MESSAGES=18
 MEMORY_MAX_CHARS=60000
 
 KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
-KNOWLEDGE_INDEX_PATH=var/knowledge/index.json
-RAG_STORE=json
-RAG_EMBEDDER=tf
-RAG_CHUNKER=auto
-RAG_CHUNK_SIZE=900
-RAG_CHUNK_OVERLAP=120
+RAG_INDEXES_CONFIG_PATH=config/rag.indexes.jsonc
 ```
 
 ## 测试

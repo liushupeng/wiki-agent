@@ -1,8 +1,15 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
-import { Embedder, TfEmbedder } from './embeddings.js';
 import { IndexedChunk, KnowledgeIndex, SearchResult, Vector } from './types.js';
+
+export type VectorSearchScoring = {
+    type: 'cosine';
+} | {
+    type: 'bm25';
+    k1: number;
+    b: number;
+};
 
 export type IndexMetadata = {
     createdAt?: string;
@@ -22,9 +29,8 @@ export interface VectorStore {
         chunks: AsyncIterable<IndexedChunk>,
         metadata: IndexMetadata
     ): Promise<void>;
-    search(query: string, topK?: number): Promise<SearchResult[]>;
+    search(vector: Vector, topK?: number): Promise<SearchResult[]>;
     findBySource(source: string): Promise<IndexedChunk[]>;
-    findRelated(source: string, topK?: number): Promise<SearchResult[]>;
 }
 
 /**
@@ -39,7 +45,7 @@ export class JsonVectorStore implements VectorStore {
 
     constructor(
         readonly filePath: string,
-        private readonly embedder: Embedder = new TfEmbedder()
+        private readonly scoring: VectorSearchScoring = { type: 'cosine' }
     ) {}
 
     async replaceChunks(
@@ -54,7 +60,7 @@ export class JsonVectorStore implements VectorStore {
             handle = await fs.open(temporaryPath, 'wx');
             await handle.writeFile([
                 '{',
-                '  "version": 1,',
+                    '  "version": 2,',
                 `  "createdAt": ${JSON.stringify(metadata.createdAt ?? new Date().toISOString())},`,
                 `  "chunkSize": ${metadata.chunkSize},`,
                 `  "overlap": ${metadata.overlap},`,
@@ -78,12 +84,14 @@ export class JsonVectorStore implements VectorStore {
         }
     }
 
-    async search(query: string, topK = 5): Promise<SearchResult[]> {
+    async search(vector: Vector, topK = 5): Promise<SearchResult[]> {
         const index = await loadKnowledgeIndex(this.filePath);
-        const queryVector = await this.embedder.embed(query);
 
-        return index.chunks
-            .map(chunk => ({ ...chunk, score: cosineSimilarity(queryVector, chunk.vector) }))
+        const scores = this.scoring.type === 'bm25'
+            ? bm25Scores(index.chunks, vector, this.scoring)
+            : index.chunks.map(chunk => ({ ...chunk, score: cosineSimilarity(vector, chunk.vector) }));
+
+        return scores
             .filter(chunk => chunk.score > 0)
             .sort((a, b) => b.score - a.score)
             .slice(0, topK);
@@ -95,41 +103,58 @@ export class JsonVectorStore implements VectorStore {
         return index.chunks.filter(chunk => normalizeSource(chunk.source) === normalized);
     }
 
-    async findRelated(source: string, topK = 8): Promise<SearchResult[]> {
-        const noteChunks = await this.findBySource(source);
-        const seedText = noteChunks.map(chunk => [
-            chunk.titlePath?.join(' '),
-            chunk.tags?.join(' '),
-            chunk.links?.join(' '),
-            chunk.text
-        ].filter(Boolean).join('\n')).join('\n');
-
-        if (!seedText.trim()) return [];
-
-        const results = await this.search(seedText, topK + noteChunks.length);
-        const normalizedSource = normalizeSource(source);
-        return results.filter(chunk => normalizeSource(chunk.source) !== normalizedSource).slice(0, topK);
-    }
 }
 
-/**
- * 根据环境变量创建检索后端。
- *
- * RAG 工具和脚本入口都通过这个工厂拿 VectorStore，避免直接依赖 JSON 实现。
- * 新增向量库时，在这里增加 RAG_STORE 分支即可。
- */
-export function createVectorStoreFromEnv(options: { filePath?: string; storeName?: string } = {}): VectorStore {
-    const storeName = (options.storeName ?? process.env.RAG_STORE ?? 'json').toLowerCase();
-    const filePath = path.resolve(options.filePath ?? process.env.KNOWLEDGE_INDEX_PATH ?? 'var/knowledge/index.json');
+export function createVectorStore(name: string, dataPath: string, scoring: VectorSearchScoring = { type: 'cosine' }): VectorStore {
+    if (name === 'json') return new JsonVectorStore(path.resolve(dataPath), scoring);
+    throw new Error(`unsupported RAG store: ${name}`);
+}
 
-    if (storeName === 'json') {
-        return new JsonVectorStore(filePath);
+function bm25Scores(chunks: IndexedChunk[], query: Vector, options: Extract<VectorSearchScoring, { type: 'bm25' }>): SearchResult[] {
+    if (Array.isArray(query)) throw new Error('BM25 requires sparse term-frequency vectors');
+    const queryTerms = Object.keys(query);
+    if (queryTerms.length === 0) return [];
+    if (chunks.some(chunk => Array.isArray(chunk.vector))) throw new Error('BM25 index contains dense vectors');
+
+    const documentCount = chunks.length;
+    const lengths = chunks.map(chunk => sparseVectorLength(chunk.vector as Record<string, number>));
+    const averageLength = lengths.reduce((sum, length) => sum + length, 0) / Math.max(documentCount, 1);
+    const documentFrequency = new Map<string, number>();
+    for (const chunk of chunks) {
+        const vector = chunk.vector as Record<string, number>;
+        for (const term of queryTerms) {
+            if (vector[term] !== undefined) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
+        }
     }
 
-    throw new Error(`unsupported RAG_STORE: ${storeName}`);
+    return chunks.map((chunk, index) => {
+        const vector = chunk.vector as Record<string, number>;
+        const lengthNormalization = options.k1 * (1 - options.b + options.b * (lengths[index] / Math.max(averageLength, 1)));
+        const score = queryTerms.reduce((sum, term) => {
+            const termFrequency = vector[term] ?? 0;
+            if (termFrequency === 0) return sum;
+            const frequency = documentFrequency.get(term) ?? 0;
+            const idf = Math.log(1 + (documentCount - frequency + 0.5) / (frequency + 0.5));
+            return sum + idf * (termFrequency * (options.k1 + 1)) / (termFrequency + lengthNormalization);
+        }, 0);
+        return { ...chunk, score };
+    });
+}
+
+function sparseVectorLength(vector: Record<string, number>): number {
+    return Object.values(vector).reduce((sum, value) => sum + value, 0);
 }
 
 export function cosineSimilarity(left: Vector, right: Vector): number {
+    if (Array.isArray(left) || Array.isArray(right)) {
+        if (!Array.isArray(left) || !Array.isArray(right)) {
+            throw new Error('cannot compare sparse and dense vectors');
+        }
+        if (left.length !== right.length) {
+            throw new Error(`cannot compare dense vectors with different dimensions: ${left.length} and ${right.length}`);
+        }
+        return left.reduce((sum, value, index) => sum + value * right[index], 0);
+    }
     let score = 0;
     const [small, large] = Object.keys(left).length < Object.keys(right).length ? [left, right] : [right, left];
 
@@ -142,9 +167,21 @@ export function cosineSimilarity(left: Vector, right: Vector): number {
 
 export async function loadKnowledgeIndex(filePath: string): Promise<KnowledgeIndex> {
     const content = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(content) as KnowledgeIndex;
+    const value: unknown = JSON.parse(content);
+    if (!isKnowledgeIndex(value)) {
+        throw new Error(`invalid knowledge index (expected version 2): ${filePath}`);
+    }
+    return value;
 }
 
 function normalizeSource(source: string): string {
     return source.replace(/\\/g, '/').toLowerCase();
+}
+
+function isKnowledgeIndex(value: unknown): value is KnowledgeIndex {
+    return typeof value === 'object'
+        && value !== null
+        && !Array.isArray(value)
+        && (value as { version?: unknown }).version === 2
+        && Array.isArray((value as { chunks?: unknown }).chunks);
 }

@@ -12,7 +12,7 @@ This directory is the agent-maintained wiki layer. Raw sources remain the source
 
 - `notes/raw/`: immutable or mostly read-only raw sources.
 - `wiki/`: maintained Markdown pages that summarize, connect, and reconcile source knowledge.
-- `var/knowledge/`: generated indexes and runtime artifacts.
+- `var/indexes/`: generated indexes and runtime artifacts.
 
 ## Page Types
 

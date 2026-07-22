@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { embedText } from '../../rag/embeddings.js';
+import { embedText, termFrequencies } from '../../rag/embeddings.js';
 import { IndexedChunk } from '../../rag/types.js';
 import { JsonVectorStore, loadKnowledgeIndex } from '../../rag/vectorStore.js';
 
@@ -34,7 +34,7 @@ test('JsonVectorStore saves chunks and searches by query similarity', async () =
         createChunk({ id: 'b#1', source: 'b.md', text: 'cooking recipe' })
     ), { chunkSize: 100, overlap: 10 });
 
-    const matches = await store.search('rag retrieval', 1);
+    const matches = await store.search(embedText('rag retrieval'), 1);
 
     assert.equal(matches.length, 1);
     assert.equal(matches[0].source, 'a.md');
@@ -45,7 +45,7 @@ test('JsonVectorStore saves chunks and searches by query similarity', async () =
     assert.equal(index.chunkSize, 100);
 });
 
-test('JsonVectorStore finds chunks by source and related notes', async () => {
+test('JsonVectorStore finds chunks by source', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-vector-store-'));
     const indexPath = path.join(dir, 'index.json');
     const store = new JsonVectorStore(indexPath);
@@ -57,11 +57,24 @@ test('JsonVectorStore finds chunks by source and related notes', async () => {
     ), { chunkSize: 100, overlap: 10 });
 
     const chunks = await store.findBySource('a.md');
-    const related = await store.findRelated('a.md', 1);
 
     assert.equal(chunks.length, 1);
-    assert.equal(related.length, 1);
-    assert.equal(related[0].source, 'b.md');
+});
+
+test('JsonVectorStore ranks sparse term frequencies with BM25', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-bm25-store-'));
+    const indexPath = path.join(dir, 'index.json');
+    const store = new JsonVectorStore(indexPath, { type: 'bm25', k1: 1.2, b: 0.75 });
+    const chunks: IndexedChunk[] = [
+        { ...createChunk({ id: 'a#1', source: 'a.md', text: 'agent retrieval' }), vector: termFrequencies('agent retrieval') },
+        { ...createChunk({ id: 'b#1', source: 'b.md', text: 'agent agent agent unrelated unrelated unrelated unrelated' }), vector: termFrequencies('agent agent agent unrelated unrelated unrelated unrelated') },
+        { ...createChunk({ id: 'c#1', source: 'c.md', text: 'cooking recipe' }), vector: termFrequencies('cooking recipe') }
+    ];
+    await store.replaceChunks(chunkStream(...chunks), { chunkSize: 100, overlap: 10 });
+
+    const matches = await store.search(termFrequencies('agent retrieval'), 2);
+    assert.deepEqual(matches.map(match => match.source), ['a.md', 'b.md']);
+    assert.equal(matches[0].score > matches[1].score, true);
 });
 
 test('JsonVectorStore replaces an existing index from a chunk stream', async () => {
@@ -108,4 +121,12 @@ test('JsonVectorStore keeps the existing index when a streaming write fails', as
         (await fs.readdir(dir)).filter(file => file.endsWith('.tmp')),
         []
     );
+});
+
+test('loadKnowledgeIndex rejects legacy index versions', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-legacy-index-'));
+    const indexPath = path.join(dir, 'index.json');
+    await fs.writeFile(indexPath, JSON.stringify({ version: 1, chunks: [] }), 'utf-8');
+
+    await assert.rejects(() => loadKnowledgeIndex(indexPath), /expected version 2/);
 });

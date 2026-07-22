@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { TfEmbedder } from '../../rag/embeddings.js';
 import { runIndexPipeline } from '../../rag/indexPipeline.js';
 import { SourceDocument } from '../../rag/types.js';
 import { JsonVectorStore, loadKnowledgeIndex } from '../../rag/vectorStore.js';
@@ -32,6 +33,7 @@ test('runIndexPipeline chunks documents, embeds chunks, and writes them to the v
         documents: documentStream(...documents),
         chunkSize: 200,
         overlap: 20,
+        embedder: new TfEmbedder(),
         vectorStore: new JsonVectorStore(indexPath)
     });
 
@@ -70,6 +72,7 @@ test('runIndexPipeline consumes documents from an async iterable', async () => {
         documents: documents(),
         chunkSize: 200,
         overlap: 20,
+        embedder: new TfEmbedder(),
         vectorStore: new JsonVectorStore(indexPath),
         onProgress: current => progress.push(current)
     });

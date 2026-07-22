@@ -1,7 +1,7 @@
 import path from 'path';
 import { chunkDocument } from './chunker.js';
 import { iterateSourceDocuments } from './documentLoader.js';
-import { Embedder, TfEmbedder } from './embeddings.js';
+import { Embedder } from './embeddings.js';
 import { IndexedChunk, SourceDocument } from './types.js';
 import { VectorStore } from './vectorStore.js';
 
@@ -10,7 +10,7 @@ export type IndexPipelineConfig = {
     chunkSize: number;
     overlap: number;
     vectorStore: VectorStore;
-    embedder?: Embedder;
+    embedder: Embedder;
     documents?: AsyncIterable<SourceDocument>;
     onProgress?: (progress: IndexPipelineProgress) => void;
 };
@@ -40,7 +40,7 @@ export type IndexPipelineStats = {
  */
 export async function runIndexPipeline(config: IndexPipelineConfig): Promise<IndexPipelineStats> {
     const sourceDir = path.resolve(config.sourceDir);
-    const embedder = config.embedder ?? new TfEmbedder();
+    const embedder = config.embedder;
     const documents = config.documents ?? iterateSourceDocuments(sourceDir);
     let documentCount = 0;
     let chunkCount = 0;

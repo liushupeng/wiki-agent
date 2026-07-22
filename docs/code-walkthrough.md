@@ -429,7 +429,8 @@ KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 默认 `JsonVectorStore` 写入：
 
 ```text
-var/knowledge/index.json
+var/indexes/<profileId>/index.json
+var/indexes/<profileId>/manifest.json
 ```
 
 构建索引时，`JsonVectorStore` 把 chunk 逐条写入临时 JSON 文件，全部成功后
@@ -449,7 +450,9 @@ scan file paths
 -> stream chunks into vector store
 ```
 
-可替换的是 loader、chunker、embedder、vector store。
+可替换的是 loader、chunker、embedder、vector store。`config/rag.indexes.jsonc` 的 profile 固定这些选择；manifest 记录构建时的 profile 指纹和 embedding 身份。查询端必须先通过 `openActiveIndex()` 校验 manifest，再创建对应的 runtime。
+
+`bm25-v1` 使用原始词频向量。JSON Store 在查询时按当前索引计算文档频率、平均长度，并以 Okapi BM25（默认 `k1=1.2`、`b=0.75`）评分；它不下载或调用任何模型，适合精确术语和低成本本地检索对比。
 
 ## `src/tools/ragTool.ts`
 
@@ -460,7 +463,7 @@ RAG 能力被包装成四个工具：
 - `read_note`：按 source 读取某篇笔记的 chunks。
 - `related_notes`：根据某篇笔记找相关 chunks。
 
-工具层通过 `createVectorStoreFromEnv()` 获取后端，不直接依赖 JSON 文件实现。
+工具层通过 `openActiveIndex()` 获取已校验的 Index Runtime，不直接依赖 JSON 文件或环境变量中的 embedding 名称。
 
 当前检索策略是 wiki-first：`search_notes` 会扩大候选集，再把 `wiki/` source 排在 raw source 前面；`grep_notes` 会按 knowledge sources 配置搜索多个目录。这样保留现有 RAG 管线，同时让 LLM Wiki 层成为默认优先证据来源。
 
@@ -565,19 +568,13 @@ RAG 索引入口脚本。它位于顶层 `scripts/rag/`，作为项目级辅助�
 
 ```bash
 npm run index:notes
-npm run index:notes -- notes
-npm run index:notes -- D:\my-notes var/knowledge/index.json
+npm run index:notes -- --profile tf-v1
 ```
 
 相关配置：
 
 - `KNOWLEDGE_SOURCES_CONFIG_PATH`
-- `KNOWLEDGE_INDEX_PATH`
-- `RAG_STORE`
-- `RAG_EMBEDDER`
-- `RAG_CHUNKER`
-- `RAG_CHUNK_SIZE`
-- `RAG_CHUNK_OVERLAP`
+- `RAG_INDEXES_CONFIG_PATH`
 
 ## `scripts/rag/evaluateRag.ts` 与 `scripts/rag/evaluateWiki.ts`
 
@@ -589,11 +586,7 @@ RAG 检索层评测脚本。它位于顶层 `scripts/rag/`，不调用 LLM，只
 examples/rag-eval/questions.json
 ```
 
-默认索引：
-
-```text
-var/knowledge/index.json
-```
+两个入口都打开 `activeProfile` 对应的 manifest，并拒绝 profile 与索引不一致的情况。
 
 问题格式：
 
@@ -664,12 +657,13 @@ npm test
 新增向量库：
 
 1. 实现 `VectorStore`。
-2. 在 `createVectorStoreFromEnv()` 中增加 `RAG_STORE` 分支。
+2. 在 `createVectorStore()` 中注册后端。
 3. 给 adapter 增加测试。
-4. RAG 工具无需改动。
+4. 在 profile 中声明新后端；RAG 工具无需改动。
 
 新增 embedding：
 
 1. 实现 `Embedder`。
-2. 在 `createEmbedderFromEnv()` 中增加 `RAG_EMBEDDER` 分支。
-3. 用 `indexPipeline` 测试验证生成索引。
+2. 在 `createEmbedder()` 中支持 profile 的 embedding 类型。
+3. 在 `config/rag.indexes.jsonc` 新增 profile，并全量构建其独立索引。
+4. 使用 `eval:rag` 与 `eval:wiki` 比较结果后才切换 `activeProfile`。

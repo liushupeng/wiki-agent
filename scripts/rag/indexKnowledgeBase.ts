@@ -1,69 +1,55 @@
 import fs from 'node:fs/promises';
-import path from 'path';
 import { clearLine, cursorTo } from 'node:readline';
 import { iterateSourceDocumentsFromRoots } from '../../src/rag/documentLoader.js';
-import { createEmbedderFromEnv } from '../../src/rag/embeddings.js';
+import { createEmbedder } from '../../src/rag/embeddings.js';
 import { runIndexPipeline, type IndexPipelineProgress } from '../../src/rag/indexPipeline.js';
+import { getIndexPaths, loadRagIndexesConfig, resolveRagIndexProfile } from '../../src/rag/indexProfiles.js';
+import { writeIndexManifest } from '../../src/rag/indexRuntime.js';
 import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
-import { createVectorStoreFromEnv } from '../../src/rag/vectorStore.js';
+import { createVectorStore } from '../../src/rag/vectorStore.js';
 
 /**
  * RAG 索引入口。
  *
  * 用法：
  * - npm run index:notes
- * - npm run index:notes -- <notesDir>
- * - npm run index:notes -- <notesDir> <indexPath>
+ * - npm run index:notes -- --profile tf-v1
  *
  * 默认读取 config/knowledge.sources.jsonc。
  * 可用 KNOWLEDGE_SOURCES_CONFIG_PATH 指向其他数据源配置文件。
- * CLI 显式传入 <notesDir> 时按单根目录索引，方便临时实验。
- * 默认写入 var/knowledge/index.json。
- * RAG_STORE、RAG_EMBEDDER 和 RAG_CHUNKER 控制实验方案；当前内置 json/tf/auto。
- * 这个文件只负责解析 CLI/env 配置并启动索引 pipeline；新增文件切分策略、
- * embedding 实现或向量库时，优先扩展 rag/ 下的 adapter，而不是改这里。
+ * RAG_INDEXES_CONFIG_PATH 指向 profile 配置；每个 profile 写入独立目录。
  */
 async function main() {
     const startedAt = performance.now();
-    const cliSourceDir = process.argv[2];
-    const sourceDir = path.resolve(cliSourceDir ?? 'notes');
-    const outputFile = path.resolve(process.argv[3] ?? process.env.KNOWLEDGE_INDEX_PATH ?? 'var/knowledge/index.json');
-    const chunkSize = Number(process.env.RAG_CHUNK_SIZE ?? 900);
-    const overlap = Number(process.env.RAG_CHUNK_OVERLAP ?? 120);
-    const chunker = (process.env.RAG_CHUNKER ?? 'auto').toLowerCase();
-    if (chunker !== 'auto') {
-        throw new Error(`unsupported RAG_CHUNKER: ${chunker}`);
-    }
-
-    const sourceRoots = cliSourceDir
-        ? undefined
-        : await getKnowledgeSourceRoots();
-    const documents = sourceRoots
-        ? iterateSourceDocumentsFromRoots(sourceRoots)
-        : undefined;
-    const sourceLabel = sourceRoots
-        ? sourceRoots.map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ')
-        : sourceDir;
+    const profileId = readProfileId(process.argv.slice(2));
+    const config = await loadRagIndexesConfig();
+    const profile = resolveRagIndexProfile(config, profileId);
+    const paths = getIndexPaths(profile, config.indexDirectory);
+    const sourceRoots = await getKnowledgeSourceRoots();
+    const documents = iterateSourceDocumentsFromRoots(sourceRoots);
+    const sourceLabel = sourceRoots.map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ');
     const progress = createProgressReporter(startedAt);
+    const embedder = createEmbedder(profile.embedder);
 
     progress.start();
     let stats: Awaited<ReturnType<typeof runIndexPipeline>>;
     try {
         stats = await runIndexPipeline({
-            sourceDir,
+            sourceDir: process.cwd(),
             documents,
-            chunkSize,
-            overlap,
-            embedder: createEmbedderFromEnv(),
-            vectorStore: createVectorStoreFromEnv({ filePath: outputFile }),
+            chunkSize: profile.chunkSize,
+            overlap: profile.overlap,
+            embedder,
+            vectorStore: createVectorStore(profile.store, paths.dataPath),
             onProgress: progress.update
         });
+        await writeIndexManifest(profile, paths, embedder.identity);
     } finally {
         progress.stop();
     }
 
     const elapsedSeconds = (performance.now() - startedAt) / 1000;
-    const indexBytes = (await fs.stat(outputFile)).size;
+    const indexBytes = (await fs.stat(paths.dataPath)).size;
     const peakMemoryBytes = process.resourceUsage().maxRSS * 1024;
     const chunksPerSecond = elapsedSeconds > 0 ? stats.chunkCount / elapsedSeconds : 0;
 
@@ -74,14 +60,22 @@ async function main() {
         `  Documents:     ${stats.documentCount.toLocaleString()}`,
         `  Chunks:        ${stats.chunkCount.toLocaleString()}`,
         `  Chunk config:  size=${stats.chunkSize}, overlap=${stats.overlap}`,
+        `  Profile:       ${profile.id}`,
         `  Embedder:      ${stats.embedder}`,
         `  Store:         ${stats.store}`,
-        `  Output:        ${outputFile}`,
+        `  Output:        ${paths.dataPath}`,
+        `  Manifest:      ${paths.manifestPath}`,
         `  Index size:    ${formatBytes(indexBytes)}`,
         `  Elapsed:       ${elapsedSeconds.toFixed(2)} s`,
         `  Throughput:    ${chunksPerSecond.toFixed(1)} chunks/s`,
         `  Peak memory:   ${formatBytes(peakMemoryBytes)}`
     ].join('\n'));
+}
+
+function readProfileId(args: string[]): string | undefined {
+    if (args.length === 0) return undefined;
+    if (args.length === 2 && args[0] === '--profile' && args[1]) return args[1];
+    throw new Error('usage: npm run index:notes -- [--profile <profileId>]');
 }
 
 function createProgressReporter(startedAt: number) {

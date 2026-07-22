@@ -3,7 +3,7 @@ import { GrepNotesMatch, grepMatchesToSearchResults, grepNotes } from './grep.js
 import { prioritizeWikiMatches } from './ranking.js';
 import { KnowledgeSourceRoot, sourceWithPrefix } from './sourceRoots.js';
 import { SearchResult } from './types.js';
-import { VectorStore } from './vectorStore.js';
+import { IndexRuntime } from './indexRuntime.js';
 
 export type EvalQuestion = {
     question: string;
@@ -50,7 +50,7 @@ export type EvalRetrieverOptions = {
  * 再将维护型 wiki 结果排在 raw 资料之前。
  */
 export function createVectorEvalRetriever(
-    vectorStore: Pick<VectorStore, 'search'>,
+    vectorStore: Pick<IndexRuntime, 'search'>,
     options: EvalRetrieverOptions
 ): EvalRetriever {
     return {
