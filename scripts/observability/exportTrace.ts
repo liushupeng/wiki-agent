@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import '../../src/env.js';
 import { exportTrace, TraceExportOptions } from '../../src/trace/export.js';
 
 export { exportTrace, TraceExportOptions };

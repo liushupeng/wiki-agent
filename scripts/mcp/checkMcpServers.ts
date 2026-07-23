@@ -1,4 +1,4 @@
-import dotenv from 'dotenv';
+import '../../src/env.js';
 import { loadMcpServerConfigs } from '../../src/mcp/config.js';
 import { StdioMcpClient } from '../../src/mcp/client.js';
 
@@ -13,8 +13,6 @@ import { StdioMcpClient } from '../../src/mcp/client.js';
  * 以及当前暴露了哪些工具。
  */
 async function main() {
-    dotenv.config();
-
     const configs = await loadMcpServerConfigs();
     if (configs.length === 0) {
         console.log('No enabled MCP servers. Set MCP_CONFIG_PATH and enable servers in the config file.');

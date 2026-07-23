@@ -1,7 +1,5 @@
 import dns from 'node:dns/promises';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import '../src/env.js';
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 

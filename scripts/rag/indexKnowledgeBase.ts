@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { clearLine, cursorTo } from 'node:readline';
+import '../../src/env.js';
 import { iterateSourceDocumentsFromRoots } from '../../src/rag/documentLoader.js';
 import { createEmbedder } from '../../src/rag/embeddings.js';
 import { runIndexPipeline, type IndexPipelineProgress } from '../../src/rag/indexPipeline.js';

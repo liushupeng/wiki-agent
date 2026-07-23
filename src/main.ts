@@ -1,5 +1,6 @@
 import readline from 'readline/promises';
 import { stdin as input, stdout as output } from 'process';
+import './env.js';
 import { AgentConfig } from './types.js';
 import { askToolApproval } from './cli/approvalPrompt.js';
 import { getApprovalMode } from './config.js';

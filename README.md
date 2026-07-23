@@ -12,7 +12,7 @@
 ```
 
 - `loop` 是由 LLM 驱动的规划-执行循环：模型基于当前 memory 决定下一步是回答还是调用工具，工具结果再写回 memory，触发下一轮再规划
-- `memory` 不只是聊天历史，而是分成短期、中期、长期三层：短期保留最近上下文，中期承接压缩摘要，长期通过 wiki、skills、eval 和 bad cases 沉淀可复用知识
+- `memory` 用于保持 Agent 的对话连续性：短期保留最近上下文，中期承接压缩摘要；长期 memory 已预留接口，但当前尚未实现写入与持久化
 - `tool` 是广义工具，代表模型可调用的外部能力：RAG 检索、skill 加载、文件系统、Shell、API、测试命令都属于这个范畴
 - `policy` 提供权限、审批、预算和终止约束
 - `observability` 通过 trace、日志和评测让 Agent 行为可解释、可调试
@@ -58,12 +58,25 @@ flowchart TD
 ## 核心设计取舍
 
 - **Agent loop 保持清晰**：`src/agent.ts` 只负责 LLM 驱动的规划-执行循环、模型调用、工具调度和 trace；工具执行、权限判断、协议适配都拆到独立模块。
-- **Memory 明确分层**：短期 memory 负责最近对话，中期 memory 负责压缩后的摘要，长期 memory 通过 wiki、skills、eval、bad cases 沉淀跨会话知识资产。
+- **Memory 与 Wiki 分层**：短期 memory 负责最近对话，中期 memory 负责压缩后的摘要；长期 memory 的持久化仍待实现。`wiki/`、skills、evaluation 是独立的长期知识与质量资产，不属于 `MemoryManager`。
 - **工具是广义能力入口**：RAG、grep、skill、MCP、本地文件、Git、Shell、测试命令都通过统一 `IAgentTool` 接口进入 Agent。
 - **检索采用 vector + grep 双通道**：语义问题优先 `search_notes`，明确术语、配置名、错误文本优先 `grep_notes`。
 - **工具 schema 按需暴露**：所有工具注册到 `ToolRegistry`，但每轮只暴露 core tools 和已加载 tool group，降低上下文占用。
 - **MCP 优先，本地工具兜底**：Filesystem/Git/SQLite 等成熟能力通过 MCP 接入；MCP 覆盖的本地等价工具会跳过，避免重复暴露。
 - **先沉淀数据，再谈训练**：当前重点是 trace、eval、bad case、wiki schema 和 skill，为未来 reranker、tool routing 或后训练准备数据资产。
+
+### Agent Memory 与 Wiki 知识层
+
+Agent memory 和 Wiki 都跨越多轮任务，但服务的目标不同；Wiki 不是 `MemoryManager` 的一个字段，而是独立的、可检索与可审查的知识层。
+
+| 层 | 主要内容 | 生命周期 | 当前载体 / 状态 |
+|---|---|---|---|
+| 短期 Memory | 当前对话、当前工具结果、当前任务状态 | 当前会话 | `MemoryManager` 的短期消息 |
+| 中期 Memory | 被压缩的较早对话摘要 | 当前会话 | `MemoryManager` 的中期摘要 |
+| 长期 Memory | 用户偏好、长期目标、稳定任务状态 | 跨任务 | 已有 `LongTermMemory` 结构；当前未实现写入和持久化 |
+| Wiki 知识层 | 有来源的事实、概念、决策、研究结论、跨页关系与冲突 | 长期持续维护 | `wiki/` + `wiki/AGENTS.md` + RAG 索引 |
+
+长期 memory 中反复出现、可验证且可复用的结论，可以在来源核验和用户确认后 promote 到 Wiki；Wiki 页面不应被 memory 压缩或自动遗忘机制直接改写。
 
 ## 和普通 RAG 的区别
 
@@ -165,12 +178,14 @@ npm run mcp:check
 `config/mcp.servers.jsonc` 配置使用 `mcp-server-filesystem`、`mcp-server-git` 和 `mcp-server-sqlite` 命令。
 
 还需要准备 DeepSeek 或其他 OpenAI-compatible LLM API key，并写入本地 `.env`。
+`.env.example` 会作为可提交的默认配置层自动加载；`.env` 只需保存密钥和本机覆盖项，无需复制所有默认值。
 
 可先检查 API 的 DNS、HTTPS 和认证是否可用；该命令请求轻量的 `/models`
 端点，不调用模型生成：
 
 ```powershell
-# 使用 .env 中的 BASE_URL 与 API_KEY
+# 检查合并后的配置，再检查 LLM API 连通性
+npm run check:config
 npm run check:llm
 
 # 临时检查其他 OpenAI-compatible Provider，例如后续的 HY3 配置
@@ -187,16 +202,15 @@ npm run check:llm
 
 ```bash
 npm install
-cp .env.example .env
 ```
 
-编辑 `.env`，至少填入：
+新建或编辑本地 `.env`，至少填入：
 
 ```env
-BASE_URL=https://api.deepseek.com
 API_KEY=your_api_key
-MODEL_NAME=deepseek-v4-pro
 ```
+
+`BASE_URL`、`MODEL_NAME` 和其他非敏感默认项已由 `.env.example` 提供；如需本机覆盖，再在 `.env` 写入同名变量。
 
 常用命令：
 
@@ -659,11 +673,17 @@ examples/wiki-demo/raw/*.md
 
 ## 配置
 
-`.env.example` 中的主要配置：
+配置按以下优先级合并：
+
+```text
+操作系统环境变量 > .env（密钥与本机覆盖项）> .env.example（版本化默认值）> 代码默认值
+```
+
+`.env.example` 中的主要默认配置：
 
 ```env
 BASE_URL=https://api.deepseek.com
-API_KEY=your_api_key
+# API_KEY 仅在本地 .env、系统环境变量或 CI secret 中设置
 MODEL_NAME=deepseek-v4-pro
 
 AGENT_SANDBOX_ROOT=C:\AgentSandbox
@@ -686,6 +706,8 @@ MEMORY_MAX_CHARS=60000
 KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 RAG_INDEXES_CONFIG_PATH=config/rag.indexes.jsonc
 ```
+
+运行 `npm run check:config` 可校验 LLM 凭证、知识源、active RAG profile 和 MCP 配置是否可读取，不会发送模型请求。
 
 ## 测试
 

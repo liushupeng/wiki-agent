@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx src/main.ts",
     "ask": "tsx src/main.ts",
+    "check:config": "tsx scripts/checkConfig.ts",
     "check:llm": "tsx scripts/checkLlm.ts",
     "trace:export": "tsx scripts/observability/exportTrace.ts",
     "index:notes": "tsx scripts/rag/indexKnowledgeBase.ts",

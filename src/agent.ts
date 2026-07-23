@@ -1,7 +1,7 @@
 // src/agent.ts
 import OpenAI from 'openai';
-import dotenv from 'dotenv';
 import { createHash } from 'node:crypto';
+import './env.js';
 import { IAgent, IMemory, IToolRegistry, AgentConfig } from './types.js';
 import { Color } from './cli/colors.js';
 import { PermissionPolicy } from './permissions.js';
@@ -13,8 +13,6 @@ import { parseJsonSafely } from './utils/json.js';
 import { redactSensitiveValues, writePromptArtifact } from './trace/artifacts.js';
 import { exportTrace } from './trace/export.js';
 import { buildToolObservation } from './context/toolObservation.js';
-
-dotenv.config();
 
 type StepResult =
     | { type: 'continue' }
