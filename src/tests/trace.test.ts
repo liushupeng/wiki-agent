@@ -17,6 +17,7 @@ test('file telemetry writes versioned spans with explicit parent-child identifie
     await run.end({ status: 'ok' });
 
     const [fileName] = await fs.readdir(tempDir);
+    assert.match(fileName!, /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[a-f0-9]{32}\.jsonl$/);
     const events = (await fs.readFile(path.join(tempDir, fileName!), 'utf-8'))
         .trim()
         .split('\n')
@@ -27,6 +28,7 @@ test('file telemetry writes versioned spans with explicit parent-child identifie
     const toolStart = starts.find(event => event.name === 'tool.execute');
 
     assert.equal(runStart?.schemaVersion, 2);
+    assert.match(fileName!, new RegExp(`_${runStart?.traceId}\\.jsonl$`));
     assert.equal(stepStart?.parentSpanId, runStart?.spanId);
     assert.equal(toolStart?.parentSpanId, stepStart?.spanId);
     assert.equal(events.filter(event => event.type === 'span_end').length, 3);

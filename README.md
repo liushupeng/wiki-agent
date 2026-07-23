@@ -521,11 +521,13 @@ Agent / Tools / RAG
 
 JSONL 只使用当前的 schema version 2。每条记录都是 `span_start`、`span_event` 或 `span_end`，并包含 `traceId`、`spanId`、`parentSpanId`、时间戳、状态和结构化 attributes。旧的扁平事件格式不再生成，也不能由导出工具导入。
 
+文件名采用 `<UTC 时间戳>_<traceId>.jsonl`，例如 `2026-07-23T14-22-10-123Z_33547b96af3674b2a8b4fa69caca0f9a.jsonl`；前半部分便于排序，后半部分可直接对应 Jaeger Trace。
+
 如需将既有 JSONL trace 离线导入 OpenTelemetry 后端，可显式执行导出命令。未传 `--endpoint` 时仅进行本地 dry run，不会发生网络请求：
 
 ```powershell
-npm run trace:export -- --input var/traces/trace-xxx.jsonl
-npm run trace:export -- --input var/traces/trace-xxx.jsonl --endpoint http://localhost:4318/v1/traces
+npm run trace:export -- --input var/traces/<timestamp>_<traceId>.jsonl
+npm run trace:export -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoint http://localhost:4318/v1/traces
 ```
 
 该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；不会修改源 trace。未传 `--endpoint` 时使用内存 exporter 做 dry run，不发送网络请求。
@@ -547,7 +549,7 @@ npm run trace:export -- --input var/traces/trace-xxx.jsonl --endpoint http://loc
 
 ```powershell
 npm run trace:export -- `
-  --input var/traces/trace-xxx.jsonl `
+  --input var/traces/<timestamp>_<traceId>.jsonl `
   --endpoint http://127.0.0.1:4318/v1/traces
 ```
 

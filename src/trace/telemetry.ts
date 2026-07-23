@@ -22,6 +22,7 @@ export type TraceEvent =
 
 export interface TraceSink {
     readonly filePath?: string;
+    startTrace?(traceId: string, startedAt: Date): void;
     write(event: TraceEvent): Promise<void>;
 }
 
@@ -30,28 +31,44 @@ export class NoopTraceSink implements TraceSink {
 }
 
 export class JsonlTraceSink implements TraceSink {
-    readonly filePath: string;
+    private filePathValue?: string;
 
-    constructor(traceDir = 'var/traces') {
-        const safeTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        this.filePath = path.resolve(traceDir, `trace-${safeTimestamp}.jsonl`);
+    constructor(private readonly traceDir = 'var/traces') {}
+
+    get filePath(): string | undefined {
+        return this.filePathValue;
+    }
+
+    startTrace(traceId: string, startedAt: Date): void {
+        if (this.filePathValue) return;
+        const safeTimestamp = startedAt.toISOString().replace(/[:.]/g, '-');
+        this.filePathValue = path.resolve(this.traceDir, `${safeTimestamp}_${traceId}.jsonl`);
     }
 
     async write(event: TraceEvent): Promise<void> {
-        await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-        await fs.appendFile(this.filePath, `${JSON.stringify(event)}\n`, 'utf-8');
+        this.startTrace(event.traceId, new Date(event.at));
+        const filePath = this.filePathValue;
+        if (!filePath) throw new Error('trace file path was not initialized');
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, 'utf-8');
     }
 }
 
 export class TraceLogger {
-    readonly filePath: string;
     private readonly sink: TraceSink;
 
     constructor(traceDirOrSink: string | TraceSink = 'var/traces') {
         this.sink = typeof traceDirOrSink === 'string'
             ? new JsonlTraceSink(traceDirOrSink)
             : traceDirOrSink;
-        this.filePath = this.sink.filePath ?? '';
+    }
+
+    get filePath(): string {
+        return this.sink.filePath ?? '';
+    }
+
+    startTrace(traceId: string, startedAt: Date): void {
+        this.sink.startTrace?.(traceId, startedAt);
     }
 
     async write(event: TraceEvent): Promise<void> {
@@ -119,19 +136,21 @@ export function createTelemetry(options: {
 }
 
 class FileTelemetry implements Telemetry {
-    readonly filePath: string;
-
     constructor(
         private readonly logger: TraceLogger,
         private readonly serviceName: string
-    ) {
-        this.filePath = logger.filePath;
+    ) {}
+
+    get filePath(): string | undefined {
+        return this.logger.filePath || undefined;
     }
 
     async startSpan(name: string, options: StartSpanOptions = {}): Promise<SpanHandle> {
         const startedAt = options.startedAt ?? new Date();
+        const traceId = createTraceId();
+        this.logger.startTrace(traceId, startedAt);
         const span = new FileSpan(this.logger, {
-            traceId: createTraceId(),
+            traceId,
             spanId: createSpanId(),
             name,
             kind: options.kind ?? 'internal',
