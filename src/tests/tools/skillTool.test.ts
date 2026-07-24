@@ -18,7 +18,8 @@ test('LoadSkillTool loads a skill by manifest name', async () => {
     process.env.SKILLS_DIR = tempDir;
 
     try {
-        await fs.writeFile(path.join(tempDir, 'example.md'), [
+        await fs.mkdir(path.join(tempDir, 'example-skill'));
+        await fs.writeFile(path.join(tempDir, 'example-skill', 'SKILL.md'), [
             '---',
             'name: example-skill',
             'description: Use for example tasks.',

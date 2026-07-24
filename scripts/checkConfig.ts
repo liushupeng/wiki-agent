@@ -3,6 +3,12 @@ import { loadMcpServerConfigs } from '../src/mcp/config.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile } from '../src/rag/indexProfiles.js';
 import { getKnowledgeSourceRoots } from '../src/rag/sourceRoots.js';
 
+/**
+ * 本地配置静态检查入口。
+ *
+ * 验证分层环境变量、LLM 必填项、知识源、active RAG profile 和 MCP 配置能否读取；
+ * 不连接 LLM 服务、不启动 MCP server，也不会修改任何运行时数据。
+ */
 async function main() {
     const errors: string[] = [];
     validateLlmEnvironment(errors);

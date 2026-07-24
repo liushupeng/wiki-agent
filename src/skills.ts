@@ -53,13 +53,19 @@ export function buildSkillManifestPrompt(manifests: SkillManifest[]): string {
     ].join('\n');
 }
 
-async function listSkillFiles(skillsDir: string): Promise<string[]> {
+async function listSkillFiles(skillsDir: string, relativeDir = ''): Promise<string[]> {
     try {
-        const entries = await fs.readdir(skillsDir, { withFileTypes: true });
-        return entries
-            .filter(entry => entry.isFile() && entry.name.endsWith('.md'))
-            .map(entry => entry.name)
-            .sort();
+        const entries = await fs.readdir(resolveSkillFile(skillsDir, relativeDir), { withFileTypes: true });
+        const skillFiles = entries
+            .filter(entry => entry.isFile() && entry.name === 'SKILL.md')
+            .map(entry => path.posix.join(relativeDir, entry.name));
+        const nestedSkillFiles = await Promise.all(
+            entries
+                .filter(entry => entry.isDirectory())
+                .map(entry => listSkillFiles(skillsDir, path.posix.join(relativeDir, entry.name)))
+        );
+
+        return [...skillFiles, ...nestedSkillFiles.flat()].sort();
     } catch (error: any) {
         if (error.code === 'ENOENT') return [];
         throw error;

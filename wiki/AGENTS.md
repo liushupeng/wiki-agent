@@ -10,7 +10,7 @@ This directory is the agent-maintained wiki layer. Raw sources remain the source
 
 ## Layers
 
-- `notes/raw/`: immutable or mostly read-only raw sources.
+- `notes/`: immutable or mostly read-only raw sources.
 - `wiki/`: maintained Markdown pages that summarize, connect, and reconcile source knowledge.
 - `var/indexes/`: generated indexes and runtime artifacts.
 
@@ -34,7 +34,7 @@ type: source | concept | project | decision | person | contradiction
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 sources:
-  - notes/raw/example.md
+  - notes/example.md
 tags:
   - agent
 status: draft | active | needs-review | stale

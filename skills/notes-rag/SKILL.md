@@ -1,9 +1,9 @@
 ---
-name: knowledge-rag
+name: notes-rag
 description: 当用户的问题需要结合本地 Markdown 笔记、标签、wiki links 或历史记录回答时使用。
 ---
 
-# Notes RAG Skill
+# 笔记 RAG 技能
 
 ## 触发场景
 

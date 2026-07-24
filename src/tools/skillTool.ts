@@ -12,7 +12,7 @@ export class LoadSkillTool extends BaseAgentTool {
             parameters: {
                 type: 'object',
                 properties: {
-                    name: { type: 'string', description: 'skill 名称，例如 knowledge-rag 或 note-curation' }
+                    name: { type: 'string', description: 'skill 名称，例如 notes-rag 或 note-curation' }
                 },
                 required: ['name']
             }

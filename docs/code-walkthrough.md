@@ -49,10 +49,10 @@ main.ts
 
 ```text
 raw sources
--> ingest_source skill
+-> ingest skill
 -> wiki/ maintained pages
 -> search_notes / grep_notes
--> answer_from_wiki skill
+-> wiki-answer skill
 -> evaluation/badcases + eval updates
 ```
 
@@ -506,11 +506,11 @@ RAG 能力被包装成四个工具：
 
 `skills/` 中的维护型 wiki skills 把业务方法论沉淀为可按需加载的流程：
 
-- `analyze_knowledge_sources`：真实目录接入前做 source audit，输出 source policy、ignore 规则和首批验证范围。
-- `ingest_source`：把 raw source 编译进 wiki。
-- `answer_from_wiki`：先查 wiki，证据不足再查 raw sources。
-- `lint_wiki`：检查 wiki 健康度。
-- `capture_badcase`：把失败样例转成 bad case 和 eval 候选。
+- `source-audit`：真实目录接入前做 source audit，输出 source policy、ignore 规则和首批验证范围。
+- `ingest`：把 raw source 编译进 wiki。
+- `wiki-answer`：先查 wiki，证据不足再查 raw sources。
+- `wiki-lint`：检查 wiki 健康度。
+- `badcase`：把失败样例转成 bad case 和 eval 候选。
 
 这些 skill 先保持 Markdown 形式。只有当某个流程稳定、高频且需要严格参数时，再固化成 TypeScript 工具。
 
@@ -518,16 +518,13 @@ RAG 能力被包装成四个工具：
 
 `evaluation/badcases/TEMPLATE.md` 定义失败样例格式。推荐把检索遗漏、工具路由错误、证据不足、幻觉、schema 缺口等问题都记录下来。
 
-评测样例分三类：
+评测样例分两类：
 
 - `evaluation/rag/questions.json`：普通 RAG 检索。
 - `evaluation/wiki/questions.json`：wiki-first 检索。
-- `evaluation/tool-routing/questions.json`：工具选择和 tool group 加载。
 
 RAG 和 Wiki eval 分别由 `scripts/rag/evaluateRag.ts`、`scripts/rag/evaluateWiki.ts`
 作为独立 CLI 入口；两者共享 `src/rag/evaluation.ts` 中的 retriever 构造与判分逻辑。
-tool-routing eval 当前先作为数据格式，后续可以新增专门脚本读取 trace 中的
-`assistant_message.toolCalls` 进行评估。
 
 ## `src/tools/shellTool.ts`
 

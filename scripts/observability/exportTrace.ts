@@ -5,6 +5,12 @@ import { exportTrace, TraceExportOptions } from '../../src/trace/export.js';
 
 export { exportTrace, TraceExportOptions };
 
+/**
+ * 离线 Trace 导出入口。
+ *
+ * 将本地 schema version 2 JSONL trace 转换并发送到指定 OTLP 后端；
+ * 未提供 --endpoint 时仅校验和统计输入文件，不会发起网络请求。
+ */
 function parseArgs(args: string[]): TraceExportOptions {
     let inputPath: string | undefined;
     let endpoint: string | undefined;

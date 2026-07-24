@@ -4,7 +4,7 @@
     {
       "name": "filesystem",
       "command": "mcp-server-filesystem",
-      "args": ["C:\\AgentSandbox"],
+      "args": ["var\\sandbox"],
       "toolNamePrefix": "mcp_fs",
       "defaultPermission": "mcp",
       "defaultRiskLevel": "write",

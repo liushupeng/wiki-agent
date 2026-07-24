@@ -3,7 +3,7 @@ name: note-curation
 description: 当用户要求整理、总结、关联或改进本地 Markdown 笔记时使用。
 ---
 
-# Note Curation Skill
+# 笔记整理技能
 
 ## 触发场景
 
@@ -16,11 +16,9 @@ description: 当用户要求整理、总结、关联或改进本地 Markdown 笔
 3. 使用 `related_notes` 发现相邻主题、重复概念和可建立链接的笔记。
 4. 输出时区分原文事实、结构化整理和你的建议。
 5. 如果建议新建链接或标签，说明依据来自哪些笔记。
+6. 只有需要按文件路径进行 `grep_search` 或 `glob_search` 时，才先加载 `filesystem` tool group。
 
 ## 可用工具
 
-- `search_notes`
-- `read_note`
-- `related_notes`
-- `grep_search`
-- `glob_search`
+- 默认 core 工具：`search_notes`、`read_note`、`related_notes`
+- 需要加载 `filesystem` tool group：`grep_search`、`glob_search`

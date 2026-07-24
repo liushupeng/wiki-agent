@@ -17,6 +17,9 @@ import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
  * 用法：
  * - npm run eval:wiki
  * - npm run eval:wiki -- <questionsFile>
+ *
+ * 这个脚本只评估检索层，不调用 LLM。它与 eval:rag 使用相同评测数据格式，
+ * 但会扩大候选集后优先返回 maintained wiki 命中，用于验证 Wiki-first 策略。
  */
 async function main() {
     const questionsFile = path.resolve(process.argv[2] ?? 'evaluation/wiki/questions.json');

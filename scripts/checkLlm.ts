@@ -9,6 +9,12 @@ type ProbeConfig = {
     timeoutMs: number;
 };
 
+/**
+ * LLM API 连通性检查入口。
+ *
+ * 依次验证 DNS 解析、HTTPS 可达性和 Bearer API key 认证，调用轻量的 `/models`
+ * 端点而不触发模型生成，因此不会消耗生成 token。
+ */
 async function main() {
     const config = resolveProbeConfig();
     const endpoint = buildModelsEndpoint(config.baseUrl);

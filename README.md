@@ -232,7 +232,7 @@ wiki-agent/
 ├── skills/              # 可按需加载的 skill Markdown
 ├── wiki/                # Agent 维护的结构化 Markdown wiki
 ├── notes/               # 默认 Markdown 知识源示例
-├── evaluation/          # RAG/Wiki/工具路由评测题与失败案例
+├── evaluation/          # RAG/Wiki 评测题与失败案例
 ├── config/              # 示例配置，例如 MCP server 列表
 ├── var/                 # 运行产物：索引、trace 等，不进入 Git
 ├── docs/                # 代码导读
@@ -589,7 +589,7 @@ HTTP 是默认协议；如使用 gRPC，设置 `OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 
 ## Skill 懒加载
 
-启动时只把 `skills/` 下每个 skill 的 `name` 和 `description` 注入 system prompt。任务命中 skill manifest 时，LLM 需要先调用：
+启动时只把 `skills/*/SKILL.md` 下每个 skill 的 `name` 和 `description` 注入 system prompt。任务命中 skill manifest 时，LLM 需要先调用：
 
 ```text
 load_skill({ "name": "..." })
@@ -599,11 +599,11 @@ load_skill({ "name": "..." })
 
 内置维护型 wiki skills：
 
-- `analyze_knowledge_sources`：真实目录接入前做 source audit，产出 source policy、ignore 规则和首批验证范围。
-- `ingest_source`：把 raw source 整理进 maintained wiki，并更新 index/log/contradictions。
-- `answer_from_wiki`：优先基于 wiki 回答，证据不足再回查 raw sources。
-- `lint_wiki`：检查孤立页面、缺引用、重复概念、过期结论和冲突。
-- `capture_badcase`：把失败回答、检索遗漏或工具选择错误沉淀为 bad case 和 eval 候选。
+- `source-audit`：真实目录接入前做 source audit，产出 source policy、ignore 规则和首批验证范围。
+- `ingest`：把 raw source 整理进 maintained wiki，并更新 index/log/contradictions。
+- `wiki-answer`：优先基于 wiki 回答，证据不足再回查 raw sources。
+- `wiki-lint`：检查孤立页面、缺引用、重复概念、过期结论和冲突。
+- `badcase`：把失败回答、检索遗漏或工具选择错误沉淀为 bad case 和 eval 候选。
 
 ## Bad Case And Eval Loop
 
@@ -612,7 +612,7 @@ load_skill({ "name": "..." })
 ```text
 bad answer / weak retrieval / wrong tool choice
 -> evaluation/badcases/*.md
--> examples/*-eval/questions.json
+-> evaluation/rag/questions.json or evaluation/wiki/questions.json
 -> update skill / schema / prompt / tool description
 -> rerun eval
 ```
@@ -622,7 +622,6 @@ bad answer / weak retrieval / wrong tool choice
 - `evaluation/badcases/TEMPLATE.md`：失败样例模板。
 - `evaluation/rag/questions.json`：普通 RAG 检索评测。
 - `evaluation/wiki/questions.json`：wiki-first 检索评测样例。
-- `evaluation/tool-routing/questions.json`：工具路由评测样例数据。
 
 Wiki eval 使用独立入口，并复用与 `search_notes` 相同的 wiki-first 排序：
 
@@ -633,16 +632,16 @@ npm run eval:wiki
 
 ## 端到端作品集演示
 
-推荐用 `examples/wiki-demo/` 展示完整闭环：
+一个原始资料到 Wiki 再到评测的最小闭环：
 
 ```text
-examples/wiki-demo/raw/*.md
--> ingest_source
+notes/<source>.md
+-> ingest
 -> wiki/sources + wiki/concepts + wiki/index.md + wiki/log.md
 -> search_notes / grep_notes
--> answer_from_wiki
--> capture_badcase
--> examples/*-eval/questions.json
+-> wiki-answer
+-> badcase
+-> evaluation/rag/questions.json or evaluation/wiki/questions.json
 ```
 
 这个 demo 重点展示的不是“能调用一次 LLM”，而是 Agent 工程中更重要的部分：
@@ -656,14 +655,13 @@ examples/wiki-demo/raw/*.md
 
 短期方向是继续完善 LLM Wiki 层：
 
-- 让 `ingest_source` 更稳定地生成 source/concept/decision 页面。
-- 让 `lint_wiki` 能检查孤立页、缺引用、重复概念和冲突。
-- 让 `answer_from_wiki` 形成稳定的 wiki-first 回答格式。
+- 让 `ingest` 更稳定地生成 source/concept/decision 页面。
+- 让 `wiki-lint` 能检查孤立页、缺引用、重复概念和冲突。
+- 让 `wiki-answer` 形成稳定的 wiki-first 回答格式。
 - 把真实 bad case 持续补进 `evaluation/badcases/` 和对应的 `evaluation/*/questions.json`。
 
 中期方向是增强评测和工具路由：
 
-- 增加 tool-routing eval 脚本，评估模型是否正确调用 `load_tool_group`。
 - 对比 vector、grep、wiki-first retrieval 在不同问题类型下的表现。
 - 用 trace 中的 `gen_ai.chat`、`tool.execute` 与 RAG 子 span 做行为分析。
 
