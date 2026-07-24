@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { getActiveSpan } from '../trace/telemetry.js';
 import { IMemory } from '../types.js';
 import { estimateMessagesSize } from '../utils/tokenBudget.js';
+import { LongTermMemoryItem, LongTermMemoryKind, MemoryStore } from './memoryStore.js';
 
 type FunctionToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
     type: 'function';
@@ -54,20 +55,53 @@ class MidTermMemory {
 }
 
 class LongTermMemory {
-    private items: string[] = [];
+    private items: LongTermMemoryItem[] = [];
 
     toMessage(): MemoryMessage | undefined {
         if (this.items.length === 0) return undefined;
         return {
             role: 'system',
-            content: `以下是长期记忆，用于保持跨任务连续性：\n${this.items.map((item, index) => `${index + 1}. ${item}`).join('\n')}`
+            content: `以下是经用户明确确认的长期记忆，用于保持跨任务连续性：\n${this.items.map((item, index) => `${index + 1}. [${item.kind}] ${item.content}`).join('\n')}`
         };
+    }
+
+    replace(items: LongTermMemoryItem[]): void {
+        this.items = [...items];
+    }
+
+    add(item: LongTermMemoryItem): void {
+        const existingIndex = this.items.findIndex(existing => existing.id === item.id);
+        if (existingIndex >= 0) {
+            this.items[existingIndex] = item;
+        } else {
+            this.items.unshift(item);
+        }
+    }
+
+    getItems(): LongTermMemoryItem[] {
+        return [...this.items];
+    }
+
+    remove(memoryId: string): boolean {
+        const existingIndex = this.items.findIndex(item => item.id === memoryId);
+        if (existingIndex < 0) return false;
+        this.items.splice(existingIndex, 1);
+        return true;
     }
 
     clear(): void {
         this.items = [];
     }
 }
+
+type MemoryManagerOptions = {
+    maxHistoryMessages?: number;
+    keepRecentMessages?: number;
+    sessionId?: string;
+    memoryDirectory?: string;
+    sessionRetentionDays?: number;
+    journalRetentionDays?: number;
+};
 
 export class MemoryManager implements IMemory {
     private readonly systemMessage?: MemoryMessage;
@@ -77,13 +111,32 @@ export class MemoryManager implements IMemory {
     private readonly maxHistoryMessages: number;
     private readonly keepRecentMessages: number;
     private readonly maxHistoryChars: number;
+    private readonly store?: MemoryStore;
+    readonly sessionId?: string;
+    readonly resumedSession: boolean;
 
-    constructor(systemPrompt: string, options: { maxHistoryMessages?: number; keepRecentMessages?: number } = {}) {
+    constructor(systemPrompt: string, options: MemoryManagerOptions = {}) {
         this.maxHistoryMessages = options.maxHistoryMessages ?? Number(process.env.MEMORY_MAX_MESSAGES ?? 40);
         this.keepRecentMessages = options.keepRecentMessages ?? Number(process.env.MEMORY_KEEP_RECENT_MESSAGES ?? 18);
         this.maxHistoryChars = Number(process.env.MEMORY_MAX_CHARS ?? 60000);
         if (systemPrompt.trim()) {
             this.systemMessage = { role: 'system', content: systemPrompt.trim() };
+        }
+        const shouldPersist = options.memoryDirectory !== undefined || options.sessionId !== undefined;
+        if (shouldPersist) {
+            this.store = new MemoryStore(options.memoryDirectory);
+            this.store.prune({
+                sessionRetentionDays: options.sessionRetentionDays ?? readRetentionDays('MEMORY_SESSION_RETENTION_DAYS', 30),
+                journalRetentionDays: options.journalRetentionDays ?? readRetentionDays('MEMORY_JOURNAL_RETENTION_DAYS', 90)
+            });
+            this.sessionId = options.sessionId ?? this.store.createSessionId();
+            this.resumedSession = this.store.hasSession(this.sessionId);
+            this.store.ensureSession(this.sessionId);
+            this.shortTerm.replace(this.store.loadSessionMessages(this.sessionId));
+            this.longTerm.replace(this.store.loadLongTermMemories());
+            this.compactIfNeeded();
+        } else {
+            this.resumedSession = false;
         }
     }
 
@@ -100,18 +153,50 @@ export class MemoryManager implements IMemory {
         const toolCalls = 'tool_calls' in message ? message.tool_calls : undefined;
         if (!message.content && (!toolCalls || toolCalls.length === 0)) return;
         this.shortTerm.append(message);
+        if (this.store && this.sessionId) {
+            this.store.appendSessionMessage(this.sessionId, message);
+        }
         this.compactIfNeeded();
     }
 
     clear(): void {
         this.shortTerm.clear();
         this.midTerm.clear();
-        this.longTerm.clear();
-        console.log('🧹 [MemoryManager] 滚动区历史已被安全释放，已恢复初始 System 设定。');
+        if (this.store && this.sessionId) {
+            this.store.clearSessionMessages(this.sessionId);
+        } else {
+            this.longTerm.clear();
+        }
+        console.log('🧹 [MemoryManager] 会话历史已被清空；长期记忆保持不变。');
     }
 
     getRoundCount(): number {
         return this.shortTerm.getMessages().filter(msg => msg.role === 'user').length;
+    }
+
+    remember(content: string, kind: LongTermMemoryKind = 'fact'): LongTermMemoryItem {
+        if (!this.store) {
+            throw new Error('persistent memory store is not configured');
+        }
+        const item = this.store.remember(content, kind);
+        this.longTerm.add(item);
+        return item;
+    }
+
+    getLongTermMemories(): LongTermMemoryItem[] {
+        return this.longTerm.getItems();
+    }
+
+    forget(memoryId: string): boolean {
+        if (!this.store) {
+            throw new Error('persistent memory store is not configured');
+        }
+        if (!this.store.forget(memoryId)) return false;
+        return this.longTerm.remove(memoryId);
+    }
+
+    close(): void {
+        this.store?.close();
     }
 
     private compactIfNeeded(): void {
@@ -148,4 +233,9 @@ function summarizeMessage(message: MemoryMessage): string {
         ? ` tool_calls=${message.tool_calls.filter(isFunctionToolCall).map(call => call.function.name).join(',')}`
         : '';
     return `role=${message.role}${toolCalls} content=${content.replace(/\s+/g, ' ').slice(0, 240)}`;
+}
+
+function readRetentionDays(name: string, fallback: number): number {
+    const value = Number(process.env[name] ?? fallback);
+    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 }

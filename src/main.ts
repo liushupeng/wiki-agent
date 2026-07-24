@@ -19,6 +19,7 @@ async function main() {
     console.log("=================================================\n");
 
     const rl = readline.createInterface({ input, output });
+    const runtimeArguments = parseRuntimeArguments(process.argv.slice(2));
 
     // 初始化 Agent 运行时配置
     const config: AgentConfig = {
@@ -40,7 +41,11 @@ async function main() {
     const systemPrompt = skillManifestPrompt
         ? `${WIKI_AGENT_SYSTEM_PROMPT}\n\n${skillManifestPrompt}`
         : WIKI_AGENT_SYSTEM_PROMPT;
-    const memory = new MemoryManager(systemPrompt);
+    const memory = new MemoryManager(systemPrompt, {
+        sessionId: runtimeArguments.sessionId,
+        memoryDirectory: process.env.MEMORY_DIR ?? 'var/memory'
+    });
+    console.log(`🗂️ [会话] ${memory.resumedSession ? '已恢复' : '已创建'}：${memory.sessionId}`);
 
     // 初始化工具注册中心：MCP 优先注册，等价本地工具作为兜底能力按需跳过。
     const registry = new ToolRegistry();
@@ -56,14 +61,14 @@ async function main() {
 
     try {
         // 单次运行模式: npm run ask -- "检索我的 Agent 笔记"
-        const oneShotInstruction = process.argv.slice(2).join(' ').trim();
+        const oneShotInstruction = runtimeArguments.instruction;
         if (oneShotInstruction) {
             toolExposureController.resetToCore();
             await agent.run(oneShotInstruction, chunk => process.stdout.write(chunk));
             return;
         }
 
-        console.log('进入多轮 REPL。输入 exit / quit 退出，输入 clear 清空对话记忆。');
+        console.log('进入多轮 REPL。输入 exit / quit 退出，输入 clear 清空会话历史，输入 remember <内容> 保存长期记忆，输入 memories / forget <ID> 查看或删除长期记忆。');
 
         while (true) {
             const instruction = (await rl.question('\n你 > ')).trim();
@@ -71,6 +76,36 @@ async function main() {
             if (['exit', 'quit'].includes(instruction.toLowerCase())) break;
             if (instruction.toLowerCase() === 'clear') {
                 memory.clear();
+                continue;
+            }
+            if (instruction.toLowerCase().startsWith('remember ')) {
+                const content = instruction.slice('remember '.length).trim();
+                if (!content) {
+                    console.log('请输入要保存的长期记忆，例如：remember 我偏好使用中文回答。');
+                    continue;
+                }
+                const item = memory.remember(content);
+                console.log(`💾 [长期记忆] 已保存 ${item.id}`);
+                continue;
+            }
+            if (instruction.toLowerCase() === 'memories') {
+                const items = memory.getLongTermMemories();
+                if (items.length === 0) {
+                    console.log('当前没有长期记忆。');
+                } else {
+                    for (const item of items) {
+                        console.log(`- ${item.id} [${item.kind}] ${item.content}`);
+                    }
+                }
+                continue;
+            }
+            if (instruction.toLowerCase().startsWith('forget ')) {
+                const memoryId = instruction.slice('forget '.length).trim();
+                if (!memoryId) {
+                    console.log('请输入要删除的长期记忆 ID；可先输入 memories 查看。');
+                    continue;
+                }
+                console.log(memory.forget(memoryId) ? '🗑️ [长期记忆] 已删除。' : '未找到对应的长期记忆 ID。');
                 continue;
             }
 
@@ -81,7 +116,27 @@ async function main() {
     } finally {
         rl.close();
         await mcpRegistration.close();
+        memory.close();
     }
 }
 
 main();
+
+function parseRuntimeArguments(args: string[]): { instruction: string; sessionId?: string } {
+    const instructionParts: string[] = [];
+    let sessionId: string | undefined;
+
+    for (let index = 0; index < args.length; index++) {
+        const argument = args[index];
+        if (argument !== '--session') {
+            instructionParts.push(argument);
+            continue;
+        }
+        const value = args[++index]?.trim();
+        if (!value) throw new Error('--session requires a non-empty session ID');
+        sessionId = value;
+    }
+
+    return { instruction: instructionParts.join(' ').trim(), sessionId };
+}
+

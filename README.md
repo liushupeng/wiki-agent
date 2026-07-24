@@ -12,7 +12,7 @@
 ```
 
 - `loop` 是由 LLM 驱动的规划-执行循环：模型基于当前 memory 决定下一步是回答还是调用工具，工具结果再写回 memory，触发下一轮再规划
-- `memory` 用于保持 Agent 的对话连续性：短期保留最近上下文，中期承接压缩摘要；长期 memory 已预留接口，但当前尚未实现写入与持久化
+- `memory` 用于保持 Agent 的对话连续性：短期保留最近上下文，中期承接压缩摘要；用户明确保存的长期 memory 与会话消息持久化在本地
 - `tool` 是广义工具，代表模型可调用的外部能力：RAG 检索、skill 加载、文件系统、Shell、API、测试命令都属于这个范畴
 - `policy` 提供权限、审批、预算和终止约束
 - `observability` 通过 trace、日志和评测让 Agent 行为可解释、可调试
@@ -58,7 +58,7 @@ flowchart TD
 ## 核心设计取舍
 
 - **Agent loop 保持清晰**：`src/agent.ts` 只负责 LLM 驱动的规划-执行循环、模型调用、工具调度和 trace；工具执行、权限判断、协议适配都拆到独立模块。
-- **Memory 与 Wiki 分层**：短期 memory 负责最近对话，中期 memory 负责压缩后的摘要；长期 memory 的持久化仍待实现。`wiki/`、skills、evaluation 是独立的长期知识与质量资产，不属于 `MemoryManager`。
+- **Memory 与 Wiki 分层**：短期 memory 负责最近对话，中期 memory 负责压缩后的摘要；用户明确保存的长期 memory 与会话历史存于 `var/memory/`。`wiki/`、skills、evaluation 是独立的长期知识与质量资产，不属于 `MemoryManager`。
 - **工具是广义能力入口**：RAG、grep、skill、MCP、本地文件、Git、Shell、测试命令都通过统一 `IAgentTool` 接口进入 Agent。
 - **检索采用 vector + grep 双通道**：语义问题优先 `search_notes`，明确术语、配置名、错误文本优先 `grep_notes`。
 - **工具 schema 按需暴露**：所有工具注册到 `ToolRegistry`，但每轮只暴露 core tools 和已加载 tool group，降低上下文占用。
@@ -73,7 +73,7 @@ Agent memory 和 Wiki 都跨越多轮任务，但服务的目标不同；Wiki �
 |---|---|---|---|
 | 短期 Memory | 当前对话、当前工具结果、当前任务状态 | 当前会话 | `MemoryManager` 的短期消息 |
 | 中期 Memory | 被压缩的较早对话摘要 | 当前会话 | `MemoryManager` 的中期摘要 |
-| 长期 Memory | 用户偏好、长期目标、稳定任务状态 | 跨任务 | 已有 `LongTermMemory` 结构；当前未实现写入和持久化 |
+| 长期 Memory | 用户偏好、长期目标、稳定任务状态 | 跨任务 | `var/memory/agent.db`，仅由 `remember <内容>` 显式写入 |
 | Wiki 知识层 | 有来源的事实、概念、决策、研究结论、跨页关系与冲突 | 长期持续维护 | `wiki/` + `wiki/AGENTS.md` + RAG 索引 |
 
 长期 memory 中反复出现、可验证且可复用的结论，可以在来源核验和用户确认后 promote 到 Wiki；Wiki 页面不应被 memory 压缩或自动遗忘机制直接改写。
@@ -217,6 +217,7 @@ API_KEY=your_api_key
 ```bash
 npm run dev
 npm run ask -- "检索我的 Agent 笔记"
+npm run ask -- --session <sessionId> "继续上一会话的任务"
 npm run index:notes -- notes
 npm run eval:rag
 npm run mcp:check
@@ -702,10 +703,15 @@ RUN_TESTS_MAX_TIMEOUT_MS=120000
 MEMORY_MAX_MESSAGES=40
 MEMORY_KEEP_RECENT_MESSAGES=18
 MEMORY_MAX_CHARS=60000
+MEMORY_DIR=var/memory
+MEMORY_SESSION_RETENTION_DAYS=30
+MEMORY_JOURNAL_RETENTION_DAYS=90
 
 KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 RAG_INDEXES_CONFIG_PATH=config/rag.indexes.jsonc
 ```
+
+每次启动会创建并输出 `sessionId`。使用 `--session <sessionId>` 可恢复该会话；REPL 中输入 `remember <内容>` 才会保存长期记忆，使用 `memories` 查看、`forget <ID>` 删除。会话全文保存在 SQLite，按日 Markdown 摘要位于 `var/memory/journals/`；`clear` 只清空当前会话，不删除已明确保存的长期记忆。
 
 运行 `npm run check:config` 可校验 LLM 凭证、知识源、active RAG profile 和 MCP 配置是否可读取，不会发送模型请求。
 

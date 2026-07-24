@@ -10,7 +10,7 @@
 2. `src/agent.ts`
 3. `src/tools/base.ts`、`src/tools/registry.ts`、`src/tools/exposure.ts`、`src/tools/executor.ts`
 4. `src/permissions.ts`
-5. `src/context/memory.ts`
+5. `src/context/memory.ts`、`src/context/memoryStore.ts`
 6. `src/trace/`
 7. `src/mcp/`
 8. `src/rag/`
@@ -25,7 +25,7 @@
 main.ts
 -> 读取配置
 -> 构造 system prompt + skill manifest
--> 初始化 MemoryManager
+-> 初始化 MemoryManager（内部创建 MemoryStore）
 -> 注册工具
 -> 创建 WikiAgent
 -> REPL 或单次运行
@@ -311,7 +311,8 @@ Shell 工具还有 allowlist 和危险 token 检查。危险工具或危险命�
 
 - 初始化时写入 system prompt。
 - `append()` 忽略空消息。
-- `clear()` 只保留 system prompt。
+- 接入持久化存储时，启动会恢复指定 `sessionId` 的会话消息和显式长期记忆。
+- `clear()` 清空当前会话消息；显式长期记忆保持不变。
 - `getRoundCount()` 统计 user 消息数。
 - 超过消息数或字符预算时自动压缩较早上下文。
 
@@ -326,6 +327,8 @@ while (splitIndex > 0 && nonSystem[splitIndex]?.role === 'tool') {
 这避免保留区从 `tool` message 开始，因为 `tool` message 必须跟在对应 assistant `tool_calls` 后面。
 
 压缩会在当前 run span 中写入 `memory.compaction` event。
+
+`MemoryManager` 内部使用 `src/context/memoryStore.ts` 的 `MemoryStore` 保存 `var/memory/agent.db` 中的会话全文和长期记忆，并在 `var/memory/journals/YYYY-MM-DD.md` 写入可人工阅读的用户/assistant 摘要。`main.ts` 只创建 `MemoryManager`，默认新建 `sessionId`，可通过 `--session <sessionId>` 恢复；只有 REPL 的 `remember <内容>` 命令会写入长期记忆，避免模型自动把临时推断沉淀为跨会话事实。
 
 ## `src/trace/`
 

@@ -1,5 +1,13 @@
 import { ToolResult } from '../types.js';
 
+/**
+ * 工具原始结果与 LLM 上下文之间的边界层。
+ *
+ * 工具可能返回大文件、长检索列表或深层对象；这些数据若直接写入 memory，
+ * 会迅速耗尽上下文预算。这里将 `ToolResult` 序列化为仍保持 JSON 结构的
+ * `ToolObservation`：优先保留完整结果，超限时递归压缩，最后才退化为受
+ * 字符预算限制的预览。Agent 将该结果作为 `role: tool` 消息写回模型。
+ */
 const DEFAULT_CONTEXT_TOOL_RESULT_MAX_CHARS = 6_000;
 const MAX_OBJECT_KEYS = 12;
 const MAX_ARRAY_ITEMS = 5;
