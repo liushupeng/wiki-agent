@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { loadMcpServerConfigs } from '../../mcp/config.js';
+import { shouldRegisterMcpTool } from '../../mcp/register.js';
 
 test('loadMcpServerConfigs returns an empty list when MCP config path is not configured', async () => {
     assert.deepEqual(await loadMcpServerConfigs({}), []);
@@ -25,11 +26,28 @@ test('loadMcpServerConfigs parses enabled stdio server configs from a JSONC file
             command: 'npx',
             args: ['-y', '@modelcontextprotocol/server-sqlite', 'memory.db'],
             toolNamePrefix: 'mcp_sqlite',
+            disabledTools: [],
             defaultPermission: 'mcp',
             defaultRiskLevel: 'write',
             enabled: true
         }]);
     });
+});
+
+test('loadMcpServerConfigs reads disabled MCP tool names', async () => {
+    await withMcpConfig([{
+        name: 'filesystem',
+        command: 'mcp-server-filesystem',
+        disabledTools: ['write_file', 'write_file']
+    }], async configPath => {
+        const [config] = await loadMcpServerConfigs({ MCP_CONFIG_PATH: configPath });
+        assert.deepEqual(config?.disabledTools, ['write_file']);
+    });
+});
+
+test('disabled MCP tools are not registered into the Agent registry', () => {
+    assert.equal(shouldRegisterMcpTool({ disabledTools: ['write_file'] }, 'write_file'), false);
+    assert.equal(shouldRegisterMcpTool({ disabledTools: ['write_file'] }, 'read_file'), true);
 });
 
 test('loadMcpServerConfigs accepts JSONC comments and trailing commas', async () => {
@@ -66,6 +84,9 @@ test('loadMcpServerConfigs rejects invalid JSON and invalid shapes', async () =>
     });
     await withMcpConfig([{ name: 'fs' }], async configPath => {
         await assert.rejects(() => loadMcpServerConfigs({ MCP_CONFIG_PATH: configPath }), /command must be/);
+    });
+    await withMcpConfig([{ name: 'fs', command: 'mcp-server-filesystem', disabledTools: [''] }], async configPath => {
+        await assert.rejects(() => loadMcpServerConfigs({ MCP_CONFIG_PATH: configPath }), /disabledTools must be/);
     });
 });
 

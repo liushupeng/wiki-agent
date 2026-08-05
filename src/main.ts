@@ -52,7 +52,10 @@ async function main() {
     const toolExposureController = new ToolExposureController();
     const mcpRegistration = await registerConfiguredMcpTools(registry);
     const localToolNamesCoveredByMcp = getLocalToolNamesCoveredByMcp(mcpRegistration.tools);
-    for (const tool of createDefaultTools({ skipToolNames: localToolNamesCoveredByMcp, exposureController: toolExposureController })) {
+    for (const tool of await createDefaultTools({
+        skipToolNames: localToolNamesCoveredByMcp,
+        exposureController: toolExposureController
+    })) {
         registry.register(tool);
     }
     registry.setSchemaFilter(tool => toolExposureController.shouldExpose(tool));
@@ -128,6 +131,7 @@ function parseRuntimeArguments(args: string[]): { instruction: string; sessionId
 
     for (let index = 0; index < args.length; index++) {
         const argument = args[index];
+        if (argument === '--') continue;
         if (argument !== '--session') {
             instructionParts.push(argument);
             continue;

@@ -1,7 +1,7 @@
-import path from 'path';
 import fs from 'fs/promises';
 import { BaseAgentTool } from './base.js';
 import { resolveSafePath } from '../sandbox.js';
+import { defaultWriteScopes, loadWriteScopes, resolveWriteScopePath, WriteScopesConfig } from '../config/writeScopes.js';
 import { getMaxFileBytes, limitText } from '../limits.js';
 import { ToolResult } from '../types.js';
 
@@ -117,44 +117,71 @@ export class WriteFileTool extends BaseAgentTool {
     readonly riskLevel = 'write' as const;
     readonly isReadOnly = false;
     readonly requiresApproval = true;
-    readonly schema = {
+    readonly schema: ReturnType<typeof createWriteFileSchema>;
+
+    constructor(private readonly writeScopes: WriteScopesConfig = defaultWriteScopes()) {
+        super();
+        this.schema = createWriteFileSchema(writeScopes);
+    }
+
+    static async create(): Promise<WriteFileTool> {
+        return new WriteFileTool(await loadWriteScopes());
+    }
+
+    validateArgs(args: unknown): string[] {
+        if (typeof args !== 'object' || args === null) return ['args must be an object'];
+        const typed = args as { filename?: unknown; content?: unknown; scope?: unknown };
+        const errors: string[] = [];
+        if (typeof typed.filename !== 'string' || !typed.filename.trim()) errors.push('filename must be a non-empty string');
+        if (typeof typed.content !== 'string') errors.push('content must be a string');
+        if (typed.scope !== undefined && (typeof typed.scope !== 'string' || !this.writeScopes.scopes.some(scope => scope.name === typed.scope))) {
+            errors.push(`scope must be one of: ${this.writeScopes.scopes.map(scope => scope.name).join(', ')}`);
+        }
+        return errors;
+    }
+
+    async execute(args: { filename: string, content: string, scope?: string }): Promise<ToolResult> {
+        try {
+            const scopeName = args.scope ?? this.writeScopes.defaultScope;
+            const scope = this.writeScopes.scopes.find(item => item.name === scopeName);
+            if (!scope) return this.error(`unknown write scope: ${scopeName}`);
+
+            const targetPath = await resolveWriteScopePath(scope, args.filename);
+            await fs.writeFile(targetPath, args.content, 'utf-8');
+            return this.ok(
+                { scope: scope.name, filename: args.filename, bytesWritten: Buffer.byteLength(args.content, 'utf-8') },
+                { message: `file written: ${scope.name}/${args.filename}` }
+            );
+        } catch (error: any) {
+            return this.error(error.message);
+        }
+    }
+}
+
+function createWriteFileSchema(writeScopes: WriteScopesConfig) {
+    const scopeNames = writeScopes.scopes.map(scope => scope.name);
+    const scopeDescription = writeScopes.scopes
+        .map(scope => `${scope.name}: ${scope.description}`)
+        .join('；');
+
+    return {
         type: 'function' as const,
         function: {
             name: 'write_file',
-            description: '在安全沙盒内创建新文件或覆盖已有文件，写入指定的文本内容',
+            description: `在受配置约束的目录内创建新文件或覆盖已有文件。省略 scope 时使用默认作用域 "${writeScopes.defaultScope}"。可用作用域：${scopeDescription}`,
             parameters: {
                 type: 'object',
                 properties: {
-                    filename: { type: 'string', description: '目标文件路径，例如: output.md' },
+                    scope: {
+                        type: 'string',
+                        enum: scopeNames,
+                        description: `目标写入作用域。仅可选择已配置名称；省略时使用 "${writeScopes.defaultScope}"。`
+                    },
+                    filename: { type: 'string', description: '相对于所选作用域根目录的文件路径，例如: output.md' },
                     content: { type: 'string', description: '要写入的完整文本内容' }
                 },
                 required: ['filename', 'content']
             }
         }
     };
-
-    validateArgs(args: unknown): string[] {
-        if (typeof args !== 'object' || args === null) return ['args must be an object'];
-        const typed = args as { filename?: unknown; content?: unknown };
-        const errors: string[] = [];
-        if (typeof typed.filename !== 'string' || !typed.filename.trim()) errors.push('filename must be a non-empty string');
-        if (typeof typed.content !== 'string') errors.push('content must be a string');
-        return errors;
-    }
-
-    async execute(args: { filename: string, content: string }): Promise<ToolResult> {
-        try {
-            const safePath = resolveSafePath(args.filename);
-
-            await fs.mkdir(path.dirname(safePath), { recursive: true });
-
-            await fs.writeFile(safePath, args.content, 'utf-8');
-            return this.ok(
-                { filename: args.filename, bytesWritten: Buffer.byteLength(args.content, 'utf-8') },
-                { message: `file written: ${args.filename}` }
-            );
-        } catch (error: any) {
-            return this.error(error.message);
-        }
-    }
 }

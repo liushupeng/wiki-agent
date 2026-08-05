@@ -93,7 +93,7 @@ const systemPrompt = skillManifestPrompt
 
 工具注册通过 `ToolRegistry` 完成。registry 保存完整工具全集，但 `getSchemas()` 会经过 `ToolExposureController` 过滤，所以 LLM 默认只看到 core 工具和当前已加载分组。
 
-工具注册采用 MCP 优先策略：`registerConfiguredMcpTools()` 先按 `MCP_CONFIG_PATH` 动态加载 MCP 工具，随后 `createDefaultTools()` 注册本地工具。`getLocalToolNamesCoveredByMcp()` 会根据 MCP 暴露的远程工具名跳过等价本地工具，例如 Filesystem MCP 覆盖 `read_file`、`write_file`、`list_dir`、`glob_search`，Git MCP 覆盖 `git_status`、`git_diff`。最终内置工具和 MCP 工具都进入同一个 `ToolRegistry`，Agent loop 不需要区分来源。
+工具注册采用 MCP 优先策略：`registerConfiguredMcpTools()` 先按 `MCP_CONFIG_PATH` 动态加载 MCP 工具，随后 `createDefaultTools()` 注册本地工具。`getLocalToolNamesCoveredByMcp()` 会根据 MCP 实际注册的远程工具名跳过等价本地工具，例如 Filesystem MCP 覆盖 `read_file`、`list_dir`、`glob_search`，Git MCP 覆盖 `git_status`、`git_diff`。`write_file` 需执行作用域策略，因此通过 Filesystem server 的 `disabledTools` 排除同名远端工具，始终由本地实现注册。最终内置工具和 MCP 工具都进入同一个 `ToolRegistry`，Agent loop 不需要区分来源。
 
 工具暴露采用“核心工具 + 按需分组”：`core` 默认暴露，包含 RAG、笔记读取、skill 和 `load_tool_group`；`filesystem`、`git`、`sqlite`、`coding`、`shell` 只在模型调用 `load_tool_group` 后暴露完整 schema。
 
@@ -328,7 +328,7 @@ while (splitIndex > 0 && nonSystem[splitIndex]?.role === 'tool') {
 
 压缩会在当前 run span 中写入 `memory.compaction` event。
 
-`MemoryManager` 内部使用 `src/context/memoryStore.ts` 的 `MemoryStore` 保存 `var/memory/agent.db` 中的会话全文和长期记忆，并在 `var/memory/journals/YYYY-MM-DD.md` 写入可人工阅读的用户/assistant 摘要。`main.ts` 只创建 `MemoryManager`，默认新建 `sessionId`，可通过 `--session <sessionId>` 恢复；只有 REPL 的 `remember <内容>` 命令会写入长期记忆，避免模型自动把临时推断沉淀为跨会话事实。
+`MemoryManager` 内部使用 `src/context/memoryStore.ts` 的 `MemoryStore` 保存 `var/memory/agent.db` 中的会话全文和长期记忆，并在 `var/memory/journals/YYYY-MM-DD.md` 写入可人工阅读的用户/assistant 摘要。`main.ts` 只创建 `MemoryManager`，默认新建 `sessionId`；在 Windows 上通过 npm 恢复时使用 `npm run ask -- -- --session <sessionId> "问题"`。只有 REPL 的 `remember <内容>` 命令会写入长期记忆，避免模型自动把临时推断沉淀为跨会话事实。
 
 ## `src/trace/`
 
@@ -476,13 +476,13 @@ RAG 能力被包装成四个工具：
 
 ## `src/tools/fileTool.ts`
 
-文件工具运行在 `AGENT_SANDBOX_ROOT` 内：
+读取类文件工具运行在 `AGENT_SANDBOX_ROOT` 内：
 
 - `list_dir`：列目录。
 - `read_file`：读取文件，受 `READ_FILE_MAX_BYTES` 和 `TOOL_OUTPUT_MAX_CHARS` 限制。
-- `write_file`：写文件，风险等级为 `write`，需要审批。
+- `write_file`：写文件，风险等级为 `write`，需要审批。它独立读取 `WRITE_SCOPES_CONFIG_PATH` 指向的 JSONC 作用域配置；省略 `scope` 时写入默认 `sandbox`，显式 `scope: "wiki"` 时写入配置的 `wiki/` 根目录。
 
-路径都通过 `resolveSafePath()` 检查，防止目录穿越。
+`write_file` 的根路径必须是工作区内的配置相对路径；调用者只能选择预声明的 scope，且会拒绝目录穿越、工作区外根目录和符号链接逃逸。
 
 ## `src/tools/searchTool.ts`
 

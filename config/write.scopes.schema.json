@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wiki-agent.local/schemas/write.scopes.schema.json",
+  "title": "Wiki Agent write scopes",
+  "description": "定义 write_file 可以写入的命名目录。所有 root 必须相对于工作区，且不能越出工作区。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["defaultScope", "scopes"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema 文件路径，供 Cursor/VS Code 提供校验、悬浮说明和自动补全。"
+    },
+    "defaultScope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "write_file 未传 scope 时使用的作用域名称。必须出现在 scopes 中。"
+    },
+    "scopes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/scope"
+      }
+    }
+  },
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "root", "description"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "供 Agent 传给 write_file.scope 的稳定标识，例如 sandbox 或 wiki。"
+        },
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "description": "相对于 AGENT_WORKSPACE_ROOT 的目录；禁止绝对路径和工作区外路径。"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "说明该作用域适合写入什么内容；会显示在 write_file 的工具 schema 中。"
+        }
+      }
+    }
+  }
+}

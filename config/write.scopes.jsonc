@@ -1,0 +1,18 @@
+{
+  "$schema": "./write.scopes.schema.json",
+
+  // 未指定 scope 的通用产物写入此目录。
+  "defaultScope": "sandbox",
+  "scopes": [
+    {
+      "name": "sandbox",
+      "root": "var/sandbox",
+      "description": "默认隔离输出目录；普通文件写入不指定 scope 时使用此处。"
+    },
+    {
+      "name": "wiki",
+      "root": "wiki",
+      "description": "维护型 Wiki 页面及其 index、log、contradictions 更新；仅在 Wiki 维护任务中使用。"
+    }
+  ]
+}

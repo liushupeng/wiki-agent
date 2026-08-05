@@ -60,6 +60,15 @@
           "minLength": 1,
           "description": "MCP 工具注册到 Agent 后的名称前缀，用于避免不同 server 的工具重名；默认 mcp_<name>。"
         },
+        "disabledTools": {
+          "type": "array",
+          "default": [],
+          "description": "已启动但不注册给 Agent 的 MCP 原始工具名称。用于由本地工具提供更严格实现的能力。",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "defaultPermission": {
           "type": "string",
           "enum": ["read", "write", "shell", "rag", "mcp"],

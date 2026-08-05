@@ -10,6 +10,7 @@ const serverConfig: McpServerConfig = {
     command: 'npx',
     args: [],
     toolNamePrefix: 'mcp_fs',
+    disabledTools: [],
     defaultPermission: 'mcp',
     defaultRiskLevel: 'write',
     enabled: true

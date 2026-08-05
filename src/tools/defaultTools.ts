@@ -36,13 +36,14 @@ const LOCAL_TOOLS_COVERED_BY_MCP_REMOTE_TOOL: Record<string, string[]> = {
  * 新增工具时优先在这里加入实例，让 main.ts 只负责启动编排，
  * 避免入口文件随着工具数量增长而持续膨胀。
  */
-export function createDefaultTools(options: CreateDefaultToolsOptions = {}): IAgentTool[] {
+export async function createDefaultTools(options: CreateDefaultToolsOptions = {}): Promise<IAgentTool[]> {
     const skipToolNames = new Set(options.skipToolNames ?? []);
     const exposureController = options.exposureController ?? new ToolExposureController();
+    const writeFileTool = await WriteFileTool.create();
     return [
         new ListDirTool(),
         new ReadFileTool(),
-        new WriteFileTool(),
+        writeFileTool,
         new GlobSearchTool(),
         new GrepSearchTool(),
         new SearchNotesTool(),

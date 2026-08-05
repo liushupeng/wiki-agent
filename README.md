@@ -1,6 +1,6 @@
 # wiki-agent
 
-`wiki-agent` 是一个本地优先的 LLM Wiki / Agentic RAG 项目，用来展示一个 Agent 系统如何从“会检索 Markdown 笔记”演进为“会维护长期知识资产”的工程实现。
+`wiki-agent` 是一个 LLM Wiki / Agentic RAG 项目，用来展示一个 Agent 系统如何从“会检索 Markdown 笔记”演进为“会维护长期知识资产”的工程实现。
 
 它不是只把文件切 chunk 后交给向量检索，而是把 Agent loop、memory、tool、permission policy、observability、MCP、skill 和 eval 组合起来，让 LLM 能按任务规划、选择工具、读取证据、维护 wiki，并把失败样例沉淀为可改进的数据。
 
@@ -62,7 +62,7 @@ flowchart TD
 - **工具是广义能力入口**：RAG、grep、skill、MCP、本地文件、Git、Shell、测试命令都通过统一 `IAgentTool` 接口进入 Agent。
 - **检索采用 vector + grep 双通道**：语义问题优先 `search_notes`，明确术语、配置名、错误文本优先 `grep_notes`。
 - **工具 schema 按需暴露**：所有工具注册到 `ToolRegistry`，但每轮只暴露 core tools 和已加载 tool group，降低上下文占用。
-- **MCP 优先，本地工具兜底**：Filesystem/Git/SQLite 等成熟能力通过 MCP 接入；MCP 覆盖的本地等价工具会跳过，避免重复暴露。
+- **MCP 优先，本地工具兜底**：Filesystem/Git/SQLite 等成熟能力通过 MCP 接入；MCP 覆盖的本地等价工具会跳过，避免重复暴露。需要更严格策略的本地工具可通过 MCP 配置排除同名远端能力。
 - **先沉淀数据，再谈训练**：当前重点是 trace、eval、bad case、wiki schema 和 skill，为未来 reranker、tool routing 或后训练准备数据资产。
 
 ### Agent Memory 与 Wiki 知识层
@@ -217,7 +217,7 @@ API_KEY=your_api_key
 ```bash
 npm run dev
 npm run ask -- "检索我的 Agent 笔记"
-npm run ask -- --session <sessionId> "继续上一会话的任务"
+npm run ask -- -- --session <sessionId> "继续上一会话的任务"
 npm run index:notes -- notes
 npm run eval:rag
 npm run mcp:check
@@ -234,7 +234,7 @@ wiki-agent/
 ├── wiki/                # Agent 维护的结构化 Markdown wiki
 ├── notes/               # 默认 Markdown 知识源示例
 ├── evaluation/          # RAG/Wiki 评测题与失败案例
-├── config/              # 示例配置，例如 MCP server 列表
+├── config/              # 示例配置，例如 MCP server 列表、write_file 作用域
 ├── var/                 # 运行产物：索引、trace 等，不进入 Git
 ├── docs/                # 代码导读
 ├── .env.example         # 运行配置模板
@@ -433,7 +433,7 @@ Remove-Item Env:RAG_EVAL_PROFILE
 
 启动时会先注册 MCP 工具，再注册本地工具。如果 MCP 已经提供等价能力，本地对应工具会跳过，避免模型同时看到两套做同一件事的工具。当前过滤规则：
 
-- Filesystem MCP 覆盖 `list_dir`、`read_file`、`write_file`、`glob_search`。
+- Filesystem MCP 覆盖 `list_dir`、`read_file`、`glob_search`。`write_file` 由本地受限作用域实现提供，Filesystem MCP 的同名远端能力在配置中排除。
 - Git MCP 覆盖 `git_status`、`git_diff`。
 - `grep_search`、RAG、skill、`apply_patch`、`run_tests`、`execute_command` 仍由本地工具提供。
 
@@ -450,11 +450,27 @@ MCP server config
 -> LLM tool schema
 ```
 
-Agent loop 不感知具体 MCP server。Filesystem、Git、SQLite 或后续其他 MCP 都以相同方式接入：在 `.env` 中用 `MCP_CONFIG_PATH` 指向 MCP 配置文件，配置文件声明 stdio server 的 `command`、`args`、工具名前缀和默认风险等级。
+Agent loop 不感知具体 MCP server。Filesystem、Git、SQLite 或后续其他 MCP 都以相同方式接入：在 `.env` 中用 `MCP_CONFIG_PATH` 指向 MCP 配置文件，配置文件声明 stdio server 的 `command`、`args`、工具名前缀、`disabledTools` 和默认风险等级。
 
 ```env
 MCP_CONFIG_PATH=config/mcp.servers.jsonc
 ```
+
+### `write_file` 可配置作用域
+
+`write_file` 是唯一的通用写入工具，风险等级为 `write`，仍需按审批策略执行。它不接受任意根目录：`scope` 只能选择 `WRITE_SCOPES_CONFIG_PATH` 指向的 JSONC 文件中预先声明的名称，`filename` 必须相对于该作用域根目录；路径穿越、工作区外根目录和符号链接逃逸都会被拒绝。
+
+默认作用域为 `sandbox`。项目的 [config/write.scopes.jsonc](config/write.scopes.jsonc) 另外声明 `wiki -> wiki/`，因此维护型 Skill 应调用：
+
+```json
+{
+  "scope": "wiki",
+  "filename": "concepts/agent-rag.md",
+  "content": "..."
+}
+```
+
+普通临时输出省略 `scope`，仍会写入 `var/sandbox/`。新增例如 `abc` 的目录时，在该受信任配置中增加一个名称、工作区内相对 `root` 及用途说明；该说明会自动出现在工具 schema 中，供 Agent 选择正确作用域。
 
 MCP tool 的风险等级按以下顺序确定：
 
@@ -711,7 +727,7 @@ KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 RAG_INDEXES_CONFIG_PATH=config/rag.indexes.jsonc
 ```
 
-每次启动会创建并输出 `sessionId`。使用 `--session <sessionId>` 可恢复该会话；REPL 中输入 `remember <内容>` 才会保存长期记忆，使用 `memories` 查看、`forget <ID>` 删除。会话全文保存在 SQLite，按日 Markdown 摘要位于 `var/memory/journals/`；`clear` 只清空当前会话，不删除已明确保存的长期记忆。
+每次启动会创建并输出 `sessionId`。在 Windows 上使用 `npm run ask` 恢复会话时，需用 `npm run ask -- -- --session <sessionId> "问题"`；第二个 `--` 用于阻止 npm 将 `--session` 解析为自身配置。REPL 中输入 `remember <内容>` 才会保存长期记忆，使用 `memories` 查看、`forget <ID>` 删除。会话全文保存在 SQLite，按日 Markdown 摘要位于 `var/memory/journals/`；`clear` 只清空当前会话，不删除已明确保存的长期记忆。
 
 运行 `npm run check:config` 可校验 LLM 凭证、知识源、active RAG profile 和 MCP 配置是否可读取，不会发送模型请求。
 

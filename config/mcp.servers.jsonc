@@ -6,6 +6,7 @@
       "command": "mcp-server-filesystem",
       "args": ["var\\sandbox"],
       "toolNamePrefix": "mcp_fs",
+      "disabledTools": ["write_file"],
       "defaultPermission": "mcp",
       "defaultRiskLevel": "write",
       "enabled": true

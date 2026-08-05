@@ -1,4 +1,5 @@
 import '../src/env.js';
+import { loadWriteScopes } from '../src/config/writeScopes.js';
 import { loadMcpServerConfigs } from '../src/mcp/config.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile } from '../src/rag/indexProfiles.js';
 import { getKnowledgeSourceRoots } from '../src/rag/sourceRoots.js';
@@ -13,9 +14,10 @@ async function main() {
     const errors: string[] = [];
     validateLlmEnvironment(errors);
 
-    const [sourceRoots, ragConfig] = await Promise.all([
+    const [sourceRoots, ragConfig, writeScopes] = await Promise.all([
         getKnowledgeSourceRoots(),
-        loadRagIndexesConfig()
+        loadRagIndexesConfig(),
+        loadWriteScopes()
     ]);
     const activeProfile = resolveRagIndexProfile(ragConfig);
     validateEmbeddingEnvironment(activeProfile.embedder, errors);
@@ -29,6 +31,7 @@ async function main() {
     console.log(`  LLM model:       ${process.env.MODEL_NAME}`);
     console.log(`  Knowledge roots: ${sourceRoots.map(root => root.prefix).join(', ')}`);
     console.log(`  Active profile:  ${activeProfile.id}`);
+    console.log(`  Write scopes:    ${writeScopes.scopes.map(scope => scope.name).join(', ')}`);
     console.log(`  MCP servers:     ${mcpConfigs.filter(config => config.enabled !== false).length}`);
 }
 

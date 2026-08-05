@@ -1,6 +1,6 @@
 import { Color } from '../cli/colors.js';
 import { ToolRegistry } from '../tools/registry.js';
-import { loadMcpServerConfigs } from './config.js';
+import { loadMcpServerConfigs, McpServerConfig } from './config.js';
 import { StdioMcpClient } from './client.js';
 import { McpAgentTool } from './toolAdapter.js';
 
@@ -25,6 +25,7 @@ export async function registerConfiguredMcpTools(registry: ToolRegistry): Promis
             await client.connect();
             const { tools } = await client.listTools();
             for (const tool of tools) {
+                if (!shouldRegisterMcpTool(config, tool.name)) continue;
                 const agentTool = new McpAgentTool(client, config, tool);
                 registry.register(agentTool);
                 registeredTools.push({
@@ -34,7 +35,8 @@ export async function registerConfiguredMcpTools(registry: ToolRegistry): Promis
                 });
             }
             clients.push(client);
-            console.log(Color.green(`🔌 MCP server connected: [${config.name}] (${tools.length} tools)`));
+            const registeredCount = tools.filter(tool => shouldRegisterMcpTool(config, tool.name)).length;
+            console.log(Color.green(`🔌 MCP server connected: [${config.name}] (${registeredCount}/${tools.length} tools)`));
         } catch (error: any) {
             await client.close().catch(() => undefined);
             console.warn(Color.yellow(`⚠️ MCP server skipped: [${config.name}] ${error.message}`));
@@ -47,4 +49,8 @@ export async function registerConfiguredMcpTools(registry: ToolRegistry): Promis
             await Promise.allSettled(clients.map(client => client.close()));
         }
     };
+}
+
+export function shouldRegisterMcpTool(config: Pick<McpServerConfig, 'disabledTools'>, remoteToolName: string): boolean {
+    return !config.disabledTools.includes(remoteToolName);
 }

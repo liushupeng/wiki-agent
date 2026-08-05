@@ -12,6 +12,7 @@ export type McpServerConfig = {
     cwd?: string;
     env?: Record<string, string>;
     toolNamePrefix: string;
+    disabledTools: string[];
     defaultPermission: ToolPermission;
     defaultRiskLevel: ToolRiskLevel;
     enabled: boolean;
@@ -25,6 +26,7 @@ type RawMcpServerConfig = {
     env?: unknown;
     enabled?: unknown;
     toolNamePrefix?: unknown;
+    disabledTools?: unknown;
     defaultPermission?: unknown;
     defaultRiskLevel?: unknown;
 };
@@ -81,6 +83,14 @@ function normalizeMcpServerConfig(value: RawMcpServerConfig, index: number): Mcp
     if (!args) {
         throw new Error(`invalid MCP server config "${value.name}": args must be a string array`);
     }
+    const disabledTools = value.disabledTools === undefined
+        ? []
+        : Array.isArray(value.disabledTools) && value.disabledTools.every(item => typeof item === 'string' && item.trim())
+            ? [...new Set(value.disabledTools.map(item => item.trim()))]
+            : undefined;
+    if (!disabledTools) {
+        throw new Error(`invalid MCP server config "${value.name}": disabledTools must be a string array of non-empty names`);
+    }
 
     return {
         name: value.name.trim(),
@@ -91,6 +101,7 @@ function normalizeMcpServerConfig(value: RawMcpServerConfig, index: number): Mcp
         toolNamePrefix: typeof value.toolNamePrefix === 'string' && value.toolNamePrefix.trim()
             ? value.toolNamePrefix.trim()
             : `mcp_${value.name.trim()}`,
+        disabledTools,
         defaultPermission: isToolPermission(value.defaultPermission) ? value.defaultPermission : 'mcp',
         defaultRiskLevel: isToolRiskLevel(value.defaultRiskLevel) ? value.defaultRiskLevel : 'write',
         enabled: value.enabled !== false

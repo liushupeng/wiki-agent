@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createDefaultTools, getLocalToolNamesCoveredByMcp } from '../../tools/defaultTools.js';
 
-test('createDefaultTools returns the CLI default tool set', () => {
-    const toolNames = createDefaultTools().map(tool => tool.name);
+test('createDefaultTools returns the CLI default tool set', async () => {
+    const toolNames = (await createDefaultTools()).map(tool => tool.name);
 
     assert.deepEqual(toolNames, [
         'list_dir',
@@ -25,7 +25,7 @@ test('createDefaultTools returns the CLI default tool set', () => {
     ]);
 });
 
-test('createDefaultTools skips local tools covered by MCP tools', () => {
+test('createDefaultTools skips local tools covered by MCP tools', async () => {
     const skipToolNames = getLocalToolNamesCoveredByMcp([
         { remoteToolName: 'read_text_file' },
         { remoteToolName: 'write_file' },
@@ -34,7 +34,7 @@ test('createDefaultTools skips local tools covered by MCP tools', () => {
         { remoteToolName: 'git_status' },
         { remoteToolName: 'git_diff_staged' }
     ]);
-    const toolNames = createDefaultTools({ skipToolNames }).map(tool => tool.name);
+    const toolNames = (await createDefaultTools({ skipToolNames })).map(tool => tool.name);
 
     assert.equal(toolNames.includes('read_file'), false);
     assert.equal(toolNames.includes('write_file'), false);
