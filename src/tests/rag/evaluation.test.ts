@@ -50,6 +50,7 @@ test('scoreQuestion fails when term coverage is below the threshold', () => {
 
 test('evaluateRetriever searches vector queries and summarizes accuracy', async () => {
     const searchedQueries: string[] = [];
+    const progress: string[] = [];
     const vectorRetriever = {
         name: 'vector',
         async search(item: { question: string }): Promise<SearchResult[]> {
@@ -62,9 +63,10 @@ test('evaluateRetriever searches vector queries and summarizes accuracy', async 
     const summary = await evaluateRetriever([
         { question: 'hit question', expectedSource: 'agent.md', expectedTerms: ['Agent'] },
         { question: 'miss question', expectedSource: 'agent.md', expectedTerms: ['Agent'] }
-    ], vectorRetriever);
+    ], vectorRetriever, 5, event => progress.push(`${event.completed}/${event.total}:${event.question.id}`));
 
     assert.deepEqual(searchedQueries, ['hit question', 'miss question']);
+    assert.deepEqual(progress, ['1/2:question-1', '2/2:question-2']);
     assert.equal(summary.status, 'success');
     assert.equal(summary.retriever, 'vector');
     assert.equal(summary.passed, 1);

@@ -54,6 +54,12 @@ export type EvalRetriever = {
     rerank?(candidates: SearchResult[], topK: number): SearchResult[];
 };
 
+export type EvalProgress = {
+    completed: number;
+    total: number;
+    question: Required<Pick<EvalQuestion, 'id' | 'category' | 'queryType' | 'primaryStage' | 'difficulty'>> & EvalQuestion;
+};
+
 export type EvalRetrieverOptions = {
     wikiFirst: boolean;
 };
@@ -151,12 +157,14 @@ export function createGrepEvalRetriever(
 export async function evaluateRetriever(
     questions: EvalQuestion[],
     retriever: EvalRetriever,
-    topK = 5
+    topK = 5,
+    onProgress?: (progress: EvalProgress) => void
 ): Promise<EvalSummary> {
     const results: EvalQuestionResult[] = [];
 
     for (const [index, sourceQuestion] of questions.entries()) {
         const item = normalizeEvalQuestion(sourceQuestion, index);
+        onProgress?.({ completed: index + 1, total: questions.length, question: item });
         const candidateK = Math.max(topK * 4, topK);
         const candidates = retriever.candidateSearch
             ? await retriever.candidateSearch(item, candidateK)
