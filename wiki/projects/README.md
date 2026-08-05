@@ -1,3 +1,3 @@
-# Project Pages
+# 项目页面
 
-Project-specific context, current state, open questions, and links to relevant decisions or concepts.
+项目专属的上下文、当前状态、待解问题，以及指向相关决策或概念的链接。

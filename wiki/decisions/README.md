@@ -1,3 +1,3 @@
-# Decision Pages
+# 决策页面
 
-Architectural, product, or research decisions with context, options considered, rationale, citations, and consequences.
+记录架构、产品或研究决策的上下文、备选方案、理由、引用与后果。

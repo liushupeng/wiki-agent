@@ -1,3 +1,3 @@
-# Concept Pages
+# 概念页面
 
-Durable concept explanations synthesized from one or more source pages. Keep citations explicit and update pages when new sources change the synthesis.
+由一个或多个来源页综合而成、可长期维护的概念说明。应保留清晰引用；当新来源改变既有综合判断时，及时更新页面。

@@ -1,3 +1,3 @@
-# People And Organizations
+# 人物与组织
 
-Pages for people, teams, companies, or institutions when they are important to the maintained wiki.
+当人物、团队、公司或机构对维护型 Wiki 具有重要性时，为其建立页面。

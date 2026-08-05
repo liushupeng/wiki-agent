@@ -1,3 +1,3 @@
-# Source Pages
+# 来源页面
 
-One page per raw source. Each page should summarize the source, list durable claims, and link to related concept/project/decision pages.
+每个原始来源对应一个页面。页面应概括来源、列出可长期复用的结论，并链接到相关的概念、项目或决策页面。

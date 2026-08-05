@@ -1,24 +1,24 @@
 ---
-title: contradictions
+title: 矛盾与待解问题
 type: contradiction
 status: active
 ---
 
-# Contradictions And Open Questions
+# 矛盾与待解问题
 
-Use this file to track unresolved conflicts, stale claims, and evidence gaps found during ingest, query, or lint passes.
+使用此文件记录接入、问答或检查过程中发现的未解决冲突、过时结论与证据缺口。
 
-## Template
+## 模板
 
 ```text
-## [YYYY-MM-DD] Short conflict title
-- Status: open | resolved | stale
-- Claim A: statement and citation
-- Claim B: statement and citation
-- Impact: why this matters
-- Next action: source to check, question to ask, or page to update
+## [YYYY-MM-DD] 简短的冲突标题
+- 状态：open | resolved | stale
+- 结论 A：陈述与引用
+- 结论 B：陈述与引用
+- 影响：此问题为何重要
+- 下一步：待检查的来源、待追问的问题或待更新的页面
 ```
 
-## Open Items
+## 待处理项
 
-No contradictions recorded yet.
+尚未记录矛盾。
