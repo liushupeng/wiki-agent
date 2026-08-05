@@ -11,7 +11,7 @@ import {
 import { openActiveIndex } from '../../src/rag/indexRuntime.js';
 import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
 import { getEvaluationExperiment, parseEvaluationMode } from '../../src/evaluation/experiments.js';
-import { parseRecallEvalArgs } from '../../src/evaluation/cli.js';
+import { parseRecallEvalCommand, recallUsage } from '../../src/evaluation/cli.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } from '../../src/rag/indexProfiles.js';
 
 /**
@@ -21,13 +21,19 @@ import { loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } 
  * - npm run eval:recall
  * - npm run eval:recall -- -- --variant both --retriever both
  *
- * 这个脚本只评估检索层，不调用 LLM。--variant 支持 raw-only、raw-wiki、both；
+ * 不带参数或传入 --help 时只打印帮助，不读取索引或题库。这个脚本只评估检索层，
+ * 不调用 LLM。--variant 支持 raw-only、raw-wiki、both；
  * --retriever 支持 vector、grep、both。
  * 它适合在调整 chunker、embedding、vector store 或 grep 策略后，
  * 快速观察 topK 召回是否仍然命中预期笔记和关键词。
  */
 async function main() {
-    const arguments_ = parseRecallEvalArgs(process.argv.slice(2));
+    const command = parseRecallEvalCommand(process.argv.slice(2));
+    if (command.action === 'help') {
+        console.log(recallUsage());
+        return;
+    }
+    const arguments_ = command.args;
     const questionsFile = path.resolve(arguments_.questionsFile ?? 'evaluation/questions.json');
     const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
     const results: Record<string, unknown> = {};

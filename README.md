@@ -233,7 +233,7 @@ npm test
 - `raw-only`：仅 `notes/`，使用 `tf-v1/raw-only`。
 - `raw-wiki`：`notes/ + wiki/`，重排时 Wiki 优先，使用 `tf-v1/raw-wiki`。
 
-`tf-v1` 的 variants 在配置中显式绑定 source config。无参数会构建 active profile 的全部 variants；manifest 会记录 profile、variant、数据源配置指纹、文档数和 chunk 数，运行时若任一身份不匹配会拒绝混用：
+`tf-v1` 的 variants 在配置中显式绑定 source config。三个资源消耗型命令在无参数时只输出帮助（exit code 0），不会构建索引、运行评测或调用 LLM。实际构建索引必须显式指定 profile；省略 `--variant` 时构建该 profile 的全部 variants。manifest 会记录 profile、variant、数据源配置指纹、文档数和 chunk 数，运行时若任一身份不匹配会拒绝混用：
 
 ```powershell
 npm run index:knowledge
@@ -241,7 +241,7 @@ npm run index:knowledge -- -- --profile tf-v1 --variant raw-only
 npm run index:knowledge -- -- --profile tf-v1 --variant raw-wiki
 ```
 
-检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）：
+检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。提供题目文件、`--variant` 或 `--retriever` 中任一参数才会实际运行：
 
 ```powershell
 npm run eval:recall -- -- --variant both --retriever both
@@ -249,7 +249,7 @@ npm run eval:recall -- -- --variant both --retriever both
 
 `--variant` 选择索引实验组（默认 `both`），而 `--retriever` 选择检索实现（默认 `vector`）。召回报告写入 `var/evals/recall/<timestamp>/report.json`。
 
-Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，可通过显式 CLI 参数选择可复现样本或指定题目；不要在无意调用 LLM 时执行：
+Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，必须通过显式 CLI 参数选择可复现样本、指定题目，或用 `--all` 明确允许全量运行；无参数只显示帮助且绝不调用 LLM：
 
 ```powershell
 npm run eval:agent -- -- --variant both --random-count 5 --seed baseline-1
@@ -257,7 +257,7 @@ npm run eval:agent -- -- --variant both --random-count 5 --seed baseline-1
 npm run eval:agent -- -- --variant raw-only --question-ids investment-pillars,raft-components
 ```
 
-`--random-count` 与 `--question-ids` 不能组合；`--seed` 仅可与 `--random-count` 一起使用。未指定选择参数时，Agent 评测运行全部题目。旧的 `RAG_EVAL_MODE`、`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 和 `AGENT_EVAL_QUESTION_IDS` 环境变量不再作为评测入口读取。
+`--all`、`--random-count` 与 `--question-ids` 互斥；`--seed` 仅可与 `--random-count` 一起使用。全量 Agent 评测必须明确传入 `--all`。`--help` 可显示三条命令的完整用法；非法参数会同时输出错误和 usage。旧的 `RAG_EVAL_MODE`、`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 和 `AGENT_EVAL_QUESTION_IDS` 环境变量不再作为评测入口读取。
 
 双组 Agent 输出写入 `var/evals/agent/<time>/`：`report.json` 含 Git/题库 SHA、模型和 source/profile/variant identity、总体与分类汇总及 raw/wiki lift；`review/` 含匿名 A/B 的 `review.jsonl`、CSV、HTML 与 `annotation-template.csv`。盲测映射只保存在 `blind-mapping.internal.json`，勿交给标注者。`npm run build` 与 `node --test` 均不调用 LLM。
 
@@ -340,10 +340,16 @@ raw sources
 
 ### RAG 索引
 
-默认索引命令：
+先查看索引命令帮助（不构建索引）：
 
 ```bash
 npm run index:knowledge
+```
+
+实际构建必须显式指定 profile：
+
+```bash
+npm run index:knowledge -- -- --profile tf-v1
 ```
 
 索引 profile 在 `config/rag.indexes.jsonc` 中声明多个 variant；每个 variant 显式绑定一个 knowledge sources 配置。日常 `ask` 固定使用 active profile 的 `raw-wiki` variant。该配置文件支持注释，并通过同目录的 JSON Schema 提供字段说明、校验和自动补全。
@@ -573,7 +579,7 @@ JSONL 只使用当前的 schema version 2。每条记录都是 `span_start`、`s
 
 文件名采用 `<UTC 时间戳>_<traceId>.jsonl`，例如 `2026-07-23T14-22-10-123Z_33547b96af3674b2a8b4fa69caca0f9a.jsonl`；前半部分便于排序，后半部分可直接对应 Jaeger Trace。
 
-如需将既有 JSONL trace 离线导入 OpenTelemetry 后端，可显式执行导出命令。未传 `--endpoint` 时仅进行本地 dry run，不会发生网络请求：
+如需将既有 JSONL trace 离线导入 OpenTelemetry 后端，可显式执行导出命令。无参或传入 `--help` 时仅显示帮助；未传 `--endpoint` 时仅进行本地 dry run，不会发生网络请求：
 
 ```powershell
 npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl
@@ -781,10 +787,9 @@ dist/src/tests/**/*.test.js
 - skill manifest 懒加载
 - Agent policy contract：检索路由、局部读笔记、关联范围及高风险工具加载顺序；这类测试不请求 LLM，只防止 system prompt 的关键行为约束被意外删除。
 
-`npm run eval:recall` 默认读取 `evaluation/questions.json`，默认比较两个索引实验组并仅评估 vector 检索；可通过第一个命令行参数指定评测问题文件。参数为 `--variant raw-only|raw-wiki|both` 和 `--retriever vector|grep|both`，报告写入 `var/evals/recall/<timestamp>/`。
+`npm run eval:recall` 无参数时仅显示帮助。带参数运行时默认读取 `evaluation/questions.json`，默认比较两个索引实验组并仅评估 vector 检索；可通过第一个命令行参数指定评测问题文件。参数为 `--variant raw-only|raw-wiki|both` 和 `--retriever vector|grep|both`，报告写入 `var/evals/recall/<timestamp>/`。
 
-`npm run eval:agent` 会串行调用真实 Agent，因此会消耗模型 token 和本地检索时间；默认运行
-`evaluation/questions.json` 的全部题目，并默认运行两个索引实验组。支持通过 CLI 的随机或指定题目 ID 控制成本：
+`npm run eval:agent` 无参数时仅显示帮助，绝不创建 Agent 或调用 LLM。实际运行会串行调用真实 Agent，因此会消耗模型 token 和本地检索时间；必须通过 `--random-count`、`--question-ids` 或明确的 `--all` 选择题目，并默认运行两个索引实验组。支持通过 CLI 的随机或指定题目 ID 控制成本：
 
 ```powershell
 npm run eval:agent -- -- --variant both --random-count 3 --seed 20260805
@@ -799,7 +804,7 @@ RAG eval 支持对比向量检索和 grep 检索：
 
 ```bash
 # 默认：两个索引实验组，且只评估向量检索 search_notes
-npm run eval:recall
+npm run eval:recall -- -- --variant both
 
 # 只评估 grep 检索 grep_notes
 npm run eval:recall -- -- --retriever grep

@@ -9,6 +9,7 @@ import { writeIndexManifest } from '../../src/rag/indexRuntime.js';
 import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
 import { createVectorStore } from '../../src/rag/vectorStore.js';
 import { getSourceConfigIdentity } from '../../src/evaluation/experiments.js';
+import { indexKnowledgeUsage, parseIndexKnowledgeCommand } from '../../src/rag/indexCli.js';
 
 /**
  * RAG 索引入口。
@@ -18,11 +19,16 @@ import { getSourceConfigIdentity } from '../../src/evaluation/experiments.js';
  * - npm run index:knowledge -- -- --profile tf-v1
  * - npm run index:knowledge -- -- --profile tf-v1 --variant raw-only
  *
- * 不带参数时构建 active profile 的全部 variants。每个 variant 固定自己的 source config，
- * 并写入 profile/variant 独立目录。
+ * 不带参数或传入 --help 时只打印帮助，不读取来源、不构建索引。实际构建必须显式传入
+ * --profile；省略 --variant 时构建该 profile 的全部 variants。
  */
 async function main() {
-    const arguments_ = readArguments(process.argv.slice(2));
+    const command = parseIndexKnowledgeCommand(process.argv.slice(2));
+    if (command.action === 'help') {
+        console.log(indexKnowledgeUsage());
+        return;
+    }
+    const arguments_ = command.args;
     const config = await loadRagIndexesConfig();
     const profile = resolveRagIndexProfile(config, arguments_.profileId);
     const variants = arguments_.variantId
@@ -94,21 +100,6 @@ async function buildVariant(
         `  Throughput:    ${chunksPerSecond.toFixed(1)} chunks/s`,
         `  Peak memory:   ${formatBytes(peakMemoryBytes)}`
     ].join('\n'));
-}
-
-function readArguments(args: string[]): { profileId?: string; variantId?: string } {
-    if (args.length === 0) return {};
-    const values: { profileId?: string; variantId?: string } = {};
-    for (let index = 0; index < args.length; index += 2) {
-        const option = args[index];
-        const value = args[index + 1];
-        if (!value || (option !== '--profile' && option !== '--variant')) {
-            throw new Error('usage: npm run index:knowledge -- -- [--profile <profileId>] [--variant <variantId>]');
-        }
-        if (option === '--profile') values.profileId = value;
-        else values.variantId = value;
-    }
-    return values;
 }
 
 function createProgressReporter(startedAt: number) {

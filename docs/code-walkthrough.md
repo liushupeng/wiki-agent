@@ -569,13 +569,16 @@ npm run index:knowledge -- -- --profile tf-v1
 npm run index:knowledge -- -- --profile tf-v1 --variant raw-only
 ```
 
+无参数（或 `--help`）只输出帮助并以 exit code 0 退出，不读取来源或创建索引。实际构建必须
+显式传入 `--profile`；省略 `--variant` 时构建该 profile 的全部 variants。
+
 相关配置：
 
 - `RAG_INDEXES_CONFIG_PATH`
 
 `rag.indexes.jsonc` 的 profile 包含 variants。每个 variant 显式绑定 source config，
-索引和 manifest 写入 `var/indexes/<profile>/<variant>/`；不带参数会构建 active profile
-的全部 variants。日常 `ask` 使用 `tf-v1/raw-wiki`。
+索引和 manifest 写入 `var/indexes/<profile>/<variant>/`；日常 `ask` 使用
+`tf-v1/raw-wiki`。
 
 ## `scripts/evaluation/evaluateRecall.ts`
 
@@ -587,7 +590,8 @@ RAG 检索层评测脚本。它位于顶层 `scripts/evaluation/`，不调用 LL
 evaluation/questions.json
 ```
 
-`eval:recall` 与 `eval:agent` 均接受 `--variant raw-only|raw-wiki|both`，显式选择
+`eval:recall` 与 `eval:agent` 无参数或传入 `--help` 时都只输出帮助。两者均接受
+`--variant raw-only|raw-wiki|both`，显式选择
 `tf-v1` 下的索引实验组和对应 source config；默认 `both`。召回评测另以
 `--retriever vector|grep|both` 选择检索实现，默认 `vector`。两类参数语义分离，不通过
 进程环境变量切换索引或检索器。
@@ -613,16 +617,17 @@ evaluation/questions.json
 
 `grepTerms` 会作为多个独立词项进行 OR 召回，并按单行命中的不同词项数量排序；它们只影响 grep 评测，不影响向量检索。
 
-`npm run eval:recall` 是独立的召回评测入口，默认评测 `evaluation/questions.json` 的两个索引实验组，
-使用 vector 检索，并将报告写入 `var/evals/recall/<timestamp>/report.json`：
+`npm run eval:recall` 是独立的召回评测入口，带任意执行参数时默认评测
+`evaluation/questions.json` 的两个索引实验组，使用 vector 检索，并将报告写入
+`var/evals/recall/<timestamp>/report.json`：
 
 ```powershell
 npm run eval:recall -- -- --variant both --retriever both
 ```
 
-`npm run eval:agent` 的参数为 `--variant raw-only|raw-wiki|both`、`--random-count <n>`、
-`--seed <seed>` 与 `--question-ids <id1,id2,...>`。随机抽样与指定 ID 互斥，`--seed` 必须随
-`--random-count` 提供；不指定题目选择参数时运行全题。旧的 `RAG_EVAL_MODE`、
+`npm run eval:agent` 的参数为 `--variant raw-only|raw-wiki|both`、`--all`、`--random-count <n>`、
+`--seed <seed>` 与 `--question-ids <id1,id2,...>`。`--all`、随机抽样与指定 ID 互斥，`--seed` 必须随
+`--random-count` 提供；全题运行必须明确传入 `--all`，从而避免无意调用 LLM。旧的 `RAG_EVAL_MODE`、
 `AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 与 `AGENT_EVAL_QUESTION_IDS` 不再读取。
 
 ## `src/config.ts` 和 `src/cli/`

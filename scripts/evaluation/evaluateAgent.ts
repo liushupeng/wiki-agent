@@ -13,13 +13,19 @@ import { ToolRegistry } from '../../src/tools/registry.js';
 import { AgentEvalQuestion, collectAgentTraceMetrics, parseJsonlV2, scoreAgentAnswer } from '../../src/evaluation/agent.js';
 import { selectAgentEvalQuestions, summarizeAgentResults, summarizeAgentResultsByCategory } from '../../src/evaluation/agent.js';
 import { getEvaluationExperiment, parseEvaluationMode, getSourceConfigIdentity } from '../../src/evaluation/experiments.js';
-import { parseAgentEvalArgs } from '../../src/evaluation/cli.js';
+import { agentUsage, parseAgentEvalCommand } from '../../src/evaluation/cli.js';
 import { FileReviewArtifactWriter, NoopReviewTracePublisher, ReviewPair } from '../../src/evaluation/reviewArtifacts.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } from '../../src/rag/indexProfiles.js';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+/**
+ * Agent 评测入口。
+ *
+ * 无参数或 --help 只输出帮助，不创建 Agent 且绝不调用 LLM。执行时必须用
+ * --all、--random-count 或 --question-ids 显式选择题目，避免意外全量评测。
+ */
 type AgentEvalRun = {
     status: 'success';
     questionsFile: string;
@@ -32,7 +38,12 @@ type AgentEvalRun = {
 const execFileAsync = promisify(execFile);
 
 async function main(): Promise<void> {
-    const arguments_ = parseAgentEvalArgs(process.argv.slice(2));
+    const command = parseAgentEvalCommand(process.argv.slice(2));
+    if (command.action === 'help') {
+        console.log(agentUsage());
+        return;
+    }
+    const arguments_ = command.args;
     const questionsFile = path.resolve(arguments_.questionsFile ?? 'evaluation/questions.json');
     const questions = validateQuestions(JSON.parse(await fs.readFile(questionsFile, 'utf-8')));
     const selectedQuestions = selectAgentEvalQuestions(questions, {

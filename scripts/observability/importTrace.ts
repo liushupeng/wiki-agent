@@ -6,13 +6,25 @@ import type { TraceExportOptions } from '../../src/trace/export.js';
 
 export { exportTrace, TraceExportOptions };
 
+function usage(): string {
+    return [
+        'usage:',
+        '  npm run trace:import',
+        '  npm run trace:import -- -- --input <trace.jsonl> [--endpoint <OTLP HTTP traces URL>] [--service-name <name>]',
+        '',
+        'Run without arguments prints this help. Omitting --endpoint performs a local dry run and sends no network requests.'
+    ].join('\n');
+}
+
 /**
  * 离线 Trace 导出入口。
  *
  * 将本地 schema version 2 JSONL trace 转换并发送到指定 OTLP 后端；
  * 未提供 --endpoint 时仅校验和统计输入文件，不会发起网络请求。
  */
-function parseArgs(args: string[]): TraceExportOptions {
+function parseArgs(args: string[]): TraceExportOptions | undefined {
+    if (args.length === 0 || args.includes('--help')) return undefined;
+
     let inputPath: string | undefined;
     let endpoint: string | undefined;
     let serviceName: string | undefined;
@@ -23,12 +35,17 @@ function parseArgs(args: string[]): TraceExportOptions {
         else if (value === '--service-name') serviceName = args[++index];
         else throw new Error(`unknown argument: ${value}`);
     }
-    if (!inputPath) throw new Error('usage: npm run trace:import -- -- --input <trace.jsonl> [--endpoint <OTLP HTTP traces URL>] [--service-name <name>]');
+    if (!inputPath) throw new Error(usage());
     return { inputPath, endpoint, serviceName };
 }
 
 async function main(): Promise<void> {
-    const report = await exportTrace(parseArgs(process.argv.slice(2)));
+    const options = parseArgs(process.argv.slice(2));
+    if (!options) {
+        console.log(usage());
+        return;
+    }
+    const report = await exportTrace(options);
     const message = report.mode === 'exported' ? `已导出 ${report.spanCount} 个 span 至 OTLP 后端。` : 'Dry run 完成：未发送任何网络请求。';
     console.log(`${message}\n运行=${report.runCount}，事件=${report.eventCount}，跳过=${report.skippedEventCount}，Trace ID=${report.traceIds.join(', ') || '无'}，文件=${report.inputPath}`);
 }
