@@ -3,22 +3,63 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { SpanKind } from '@opentelemetry/api';
+import { ExportResultCode } from '@opentelemetry/core';
+import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace';
 import { exportTrace } from '../trace/export.js';
 
 test('exportTrace exports version 2 spans without network output by default', async () => {
     await withTrace(version2Trace(), async inputPath => {
         const report = await exportTrace({ inputPath });
 
-        assert.deepEqual(report, {
-            inputPath,
-            mode: 'dry-run',
-            runCount: 1,
-            spanCount: 2,
-            eventCount: 1,
-            skippedEventCount: 0
-        });
+        assert.equal(report.inputPath, inputPath);
+        assert.equal(report.mode, 'dry-run');
+        assert.equal(report.runCount, 1);
+        assert.equal(report.spanCount, 2);
+        assert.equal(report.eventCount, 1);
+        assert.equal(report.skippedEventCount, 0);
+        assert.deepEqual(report.traceIds, ['a'.repeat(32)]);
     });
 });
+
+test('exportTrace preserves JSONL trace, span, parent, and kind identities', async () => {
+    await withTrace(version2Trace(), async inputPath => {
+        const exporter = new RetainingSpanExporter();
+        await exportTrace({ inputPath, spanExporter: exporter });
+
+        const spans = exporter.spans;
+        const root = spans.find(span => span.name === 'wiki_agent.run');
+        const child = spans.find(span => span.name === 'tool.execute');
+
+        assert.equal(root?.spanContext().traceId, 'a'.repeat(32));
+        assert.equal(root?.spanContext().spanId, 'b'.repeat(16));
+        assert.equal(root?.parentSpanContext, undefined);
+        assert.equal(child?.spanContext().traceId, 'a'.repeat(32));
+        assert.equal(child?.spanContext().spanId, 'c'.repeat(16));
+        assert.equal(child?.parentSpanContext?.spanId, 'b'.repeat(16));
+        assert.equal(child?.kind, SpanKind.CLIENT);
+        assert.equal(exporter.exportCallCount, 1);
+    });
+});
+
+class RetainingSpanExporter implements SpanExporter {
+    readonly spans: ReadableSpan[] = [];
+    exportCallCount = 0;
+
+    export(spans: ReadableSpan[], resultCallback: (result: { code: ExportResultCode }) => void): void {
+        this.exportCallCount += 1;
+        this.spans.push(...spans);
+        resultCallback({ code: ExportResultCode.SUCCESS });
+    }
+
+    forceFlush(): Promise<void> {
+        return Promise.resolve();
+    }
+
+    shutdown(): Promise<void> {
+        return Promise.resolve();
+    }
+}
 
 test('exportTrace rejects traces that do not use the current schema', async () => {
     await withTrace([{ type: 'run_start', at: '2026-01-01T00:00:00.000Z' }], async inputPath => {
@@ -52,7 +93,7 @@ function version2Trace(): unknown[] {
             spanId: toolSpanId,
             parentSpanId: runSpanId,
             name: 'tool.execute',
-            kind: 'internal',
+            kind: 'client',
             startedAt: '2026-01-01T00:00:01.000Z',
             attributes: { 'tool.name': 'search_notes' },
             at: '2026-01-01T00:00:01.000Z'

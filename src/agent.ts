@@ -139,7 +139,7 @@ export class WikiAgent implements IAgent {
                 endpoint: LOCAL_JAEGER_OTLP_HTTP_ENDPOINT,
                 timeoutMillis: AUTO_TRACE_EXPORT_TIMEOUT_MILLIS
             });
-            console.log(Color.green(`\n📤 [Trace 导出] ${report.spanCount} 个 span 已导入 OTLP：${report.inputPath}`));
+            console.log(Color.green(`\n📤 [Trace 导出] ${report.spanCount} 个 span 已导入 OTLP；Trace ID：${report.traceIds.join(', ') || '无'}；文件：${report.inputPath}`));
         } catch (error: any) {
             console.warn(Color.yellow(`\n⚠️ [Trace 导出失败] 本地 trace 已保留：${preview(error.message, 512)}`));
         }
@@ -392,7 +392,8 @@ export class WikiAgent implements IAgent {
                 'wiki_agent.observation.chars': observationForContext.originalChars,
                 'wiki_agent.observation.context_chars': observationForContext.contextChars,
                 'wiki_agent.observation.truncated': observationForContext.truncated,
-                'tool.duration_ms': Date.now() - startedAt
+                'tool.duration_ms': Date.now() - startedAt,
+                ...buildToolErrorTraceAttributes(observation.error)
             }
         });
 
@@ -413,6 +414,17 @@ function summarizeToolCalls(toolCalls: OpenAI.Chat.Completions.ChatCompletionMes
         .filter(isFunctionToolCall)
         .map(call => `${call.function.name}(${buildToolArgumentTraceAttributes(call.function.arguments)['tool.arguments.preview']})`)
         .join('; ');
+}
+
+const MAX_TOOL_ERROR_MESSAGE_CHARS = 1_000;
+
+function buildToolErrorTraceAttributes(error: string | undefined): Record<string, string | boolean> {
+    if (!error) return {};
+    const truncated = error.length > MAX_TOOL_ERROR_MESSAGE_CHARS;
+    return {
+        'error.message': truncated ? error.slice(0, MAX_TOOL_ERROR_MESSAGE_CHARS) : error,
+        'error.message.truncated': truncated
+    };
 }
 
 function buildToolArgumentTraceAttributes(rawArguments: string): Record<string, string | boolean> {

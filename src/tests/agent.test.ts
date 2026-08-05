@@ -51,6 +51,7 @@ class TestMemory implements IMemory {
 class TestRegistry implements IToolRegistry {
     readonly tool = new SafeTool();
     readonly executeCalls: Array<{ name: string; argsStr: string }> = [];
+    nextResult?: ToolResult;
 
     register(_tool: IAgentTool): void {}
 
@@ -64,7 +65,7 @@ class TestRegistry implements IToolRegistry {
 
     async execute(name: string, argsStr: string): Promise<ToolResult> {
         this.executeCalls.push({ name, argsStr });
-        return { status: 'success', data: { name, args: JSON.parse(argsStr || '{}') } };
+        return this.nextResult ?? { status: 'success', data: { name, args: JSON.parse(argsStr || '{}') } };
     }
 
     has(name: string): boolean {
@@ -103,7 +104,8 @@ function createAgent(options: {
             runCount: 1,
             spanCount: 0,
             eventCount: 0,
-            skippedEventCount: 0
+            skippedEventCount: 0,
+            traceIds: []
         }))
     );
 }
@@ -221,7 +223,8 @@ test('WikiAgent automatically exports its completed file trace to local Jaeger',
                 runCount: 1,
                 spanCount: 3,
                 eventCount: 0,
-                skippedEventCount: 0
+                skippedEventCount: 0,
+                traceIds: []
             };
         }
     });
@@ -287,6 +290,41 @@ test('WikiAgent.run executes tool calls and continues replanning', async () => {
     assert.equal((toolSpan?.attributes as Record<string, unknown>)?.['tool.arguments.preview'], '{"value":"ok"}');
     assert.match((toolSpan?.attributes as Record<string, unknown>)?.['tool.arguments.sha256'] as string, /^[a-f0-9]{64}$/);
     assert.equal(events.filter(event => event.type === 'span_end').length > 0, true);
+});
+
+test('WikiAgent records bounded tool error messages in failed tool spans', async () => {
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-error-'));
+    const registry = new TestRegistry();
+    registry.nextResult = {
+        status: 'execution_failed',
+        error: 'remote filesystem denied access'
+    };
+    const agent = createAgent({ traceDir, registry });
+    attachFakeClient(agent, [
+        [{
+            choices: [{
+                delta: {
+                    tool_calls: [{
+                        index: 0,
+                        id: 'call_error',
+                        function: { name: 'safe_tool', arguments: '{}' }
+                    }]
+                }
+            }]
+        }],
+        [{ choices: [{ delta: { content: 'recovered' } }] }]
+    ]);
+
+    await agent.run('use a failing tool', () => {});
+
+    const events = await readTraceEvents(traceDir);
+    const toolEnd = events.find(event => event.type === 'span_end'
+        && event.spanId === events.find(start => start.type === 'span_start' && start.name === 'tool.execute')?.spanId);
+    const attributes = toolEnd?.attributes as Record<string, unknown>;
+    assert.equal(toolEnd?.status, 'error');
+    assert.equal(attributes['tool.status'], 'execution_failed');
+    assert.equal(attributes['error.message'], 'remote filesystem denied access');
+    assert.equal(attributes['error.message.truncated'], false);
 });
 
 test('WikiAgent.run stops before model calls when maxLoopSteps is exceeded', async () => {

@@ -559,18 +559,16 @@ npm run trace:export -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoin
 2. 在解压目录启动：
 
 ```powershell
-.\jaeger.exe --set=extensions.jaeger_storage.backends.some_storage.memory.max_traces=500
+.\jaeger.exe --set=extensions.jaeger_storage.backends.some_storage.memory.max_traces=500 --set=extensions.jaeger_query.enable_tracing=false
 ```
 
 3. 执行 `npm run ask` 会自动导入。也可手动导入既有 trace：
 
 ```powershell
-npm run trace:export -- `
-  --input var/traces/<timestamp>_<traceId>.jsonl `
-  --endpoint http://127.0.0.1:4318/v1/traces
+npm run trace:export -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoint http://127.0.0.1:4318/v1/traces
 ```
 
-Jaeger all-in-one 的 OTLP HTTP 端口为 `4318`，使用内存存储；以上命令最多保留 500 条 trace，达到上限后覆盖最早写入的 trace。关闭进程后已导入的 trace 会丢失。
+Jaeger all-in-one 的 OTLP HTTP 端口为 `4318`，使用内存存储；以上命令最多保留 500 条 trace，达到上限后覆盖最早写入的 trace。`extensions.jaeger_query.enable_tracing=false` 会关闭 Jaeger 查询服务自身的内部追踪，避免 Windows 上 `localhost` 解析至 IPv6 `::1`、但 gRPC 仅监听 IPv4 时产生连接告警；不会影响应用 Trace 的接收、存储或查询。关闭进程后已导入的 trace 会丢失。
 
 ### Prompt artifact
 
