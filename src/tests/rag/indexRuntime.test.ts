@@ -28,18 +28,20 @@ function config(): RagIndexesConfig {
     return parseRagIndexesConfig({
         indexDirectory: 'var/indexes',
         activeProfile: 'tf-v1',
-        profiles: [{ id: 'tf-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'tf' } }]
+        activeVariant: 'raw-wiki',
+        profiles: [{ id: 'tf-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'tf' }, variants: [{ id: 'raw-wiki', sourceConfigPath: 'config/knowledge.sources.jsonc' }] }]
     });
 }
 
 test('index runtime opens a profile-bound manifest and uses its embedder', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-index-runtime-'));
     const profile = resolveRagIndexProfile(config());
-    const paths = getIndexPaths(profile, directory);
+    const variant = profile.variants[0]!;
+    const paths = getIndexPaths(profile, variant, directory);
     await new JsonVectorStore(paths.dataPath).replaceChunks(chunks(chunk()), { chunkSize: 100, overlap: 10 });
-    await writeIndexManifest(profile, paths, new TfEmbedder().identity);
+    await writeIndexManifest(profile, variant, paths, new TfEmbedder().identity);
 
-    const runtime = await openIndexRuntime(profile, paths);
+    const runtime = await openIndexRuntime(profile, variant, paths);
     const matches = await runtime.search('memory', 1);
     assert.equal(matches[0].source, 'wiki/agent.md');
     assert.equal(runtime.manifest.profileId, 'tf-v1');
@@ -48,12 +50,13 @@ test('index runtime opens a profile-bound manifest and uses its embedder', async
 test('index runtime rejects a manifest built for changed profile settings', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-index-runtime-mismatch-'));
     const profile = resolveRagIndexProfile(config());
-    const paths = getIndexPaths(profile, directory);
+    const variant = profile.variants[0]!;
+    const paths = getIndexPaths(profile, variant, directory);
     await new JsonVectorStore(paths.dataPath).replaceChunks(chunks(chunk()), { chunkSize: 100, overlap: 10 });
-    await writeIndexManifest(profile, paths, new TfEmbedder().identity);
+    await writeIndexManifest(profile, variant, paths, new TfEmbedder().identity);
 
     const changed = { ...profile, chunkSize: 120 };
-    await assert.rejects(() => openIndexRuntime(changed, paths), /profile changed since this index was built/);
+    await assert.rejects(() => openIndexRuntime(changed, variant, paths), /profile changed since this index was built/);
 });
 
 test('index runtime applies BM25 scoring for a BM25 profile', async () => {
@@ -61,17 +64,19 @@ test('index runtime applies BM25 scoring for a BM25 profile', async () => {
     const profile = resolveRagIndexProfile(parseRagIndexesConfig({
         indexDirectory: 'var/indexes',
         activeProfile: 'bm25-v1',
-        profiles: [{ id: 'bm25-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'bm25', k1: 1.2, b: 0.75 } }]
+        activeVariant: 'raw-wiki',
+        profiles: [{ id: 'bm25-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'bm25', k1: 1.2, b: 0.75 }, variants: [{ id: 'raw-wiki', sourceConfigPath: 'config/knowledge.sources.jsonc' }] }]
     }));
     if (profile.embedder.type !== 'bm25') throw new Error('expected BM25 profile');
-    const paths = getIndexPaths(profile, directory);
+    const variant = profile.variants[0]!;
+    const paths = getIndexPaths(profile, variant, directory);
     const items: IndexedChunk[] = [
         { ...chunk(), vector: termFrequencies('agent memory retrieval') },
         { ...chunk(), id: 'cooking.md#1', source: 'raw/cooking.md', vector: termFrequencies('cooking recipe') }
     ];
     await new JsonVectorStore(paths.dataPath).replaceChunks(chunks(...items), { chunkSize: 100, overlap: 10 });
-    await writeIndexManifest(profile, paths, new Bm25Embedder(profile.embedder).identity);
+    await writeIndexManifest(profile, variant, paths, new Bm25Embedder(profile.embedder).identity);
 
-    const matches = await (await openIndexRuntime(profile, paths)).search('memory', 1);
+    const matches = await (await openIndexRuntime(profile, variant, paths)).search('memory', 1);
     assert.equal(matches[0].source, 'wiki/agent.md');
 });

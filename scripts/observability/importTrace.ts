@@ -23,7 +23,7 @@ function parseArgs(args: string[]): TraceExportOptions {
         else if (value === '--service-name') serviceName = args[++index];
         else throw new Error(`unknown argument: ${value}`);
     }
-    if (!inputPath) throw new Error('usage: npm run trace:export -- --input <trace.jsonl> [--endpoint <OTLP HTTP traces URL>] [--service-name <name>]');
+    if (!inputPath) throw new Error('usage: npm run trace:import -- -- --input <trace.jsonl> [--endpoint <OTLP HTTP traces URL>] [--service-name <name>]');
     return { inputPath, endpoint, serviceName };
 }
 

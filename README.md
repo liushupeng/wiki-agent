@@ -172,7 +172,7 @@ where.exe mcp-server-git
 where.exe mcp-server-sqlite
 
 # 检查 MCP server 是否能启动并列出工具
-npm run mcp:check
+npm run check:mcp
 ```
 
 `config/mcp.servers.jsonc` 配置使用 `mcp-server-filesystem`、`mcp-server-git` 和 `mcp-server-sqlite` 命令。
@@ -215,14 +215,51 @@ API_KEY=your_api_key
 常用命令：
 
 ```bash
-npm run dev
 npm run ask -- "检索我的 Agent 笔记"
 npm run ask -- -- --session <sessionId> "继续上一会话的任务"
-npm run index:notes -- notes
-npm run eval:rag
-npm run mcp:check
+npm run index:knowledge
+npm run eval:recall
+npm run eval:agent
+npm run check:mcp
 npm test
 ```
+
+## 可复现评测
+
+`evaluation/questions.json` 是统一的 50 题主题库；题目按检索漏斗标记 `primaryStage`（候选召回、重排、证据、Agent），并保留分类、难度与查询类型。
+
+实验组严格分开：
+
+- `raw-only`：仅 `notes/`，使用 `tf-v1/raw-only`。
+- `raw-wiki`：`notes/ + wiki/`，重排时 Wiki 优先，使用 `tf-v1/raw-wiki`。
+
+`tf-v1` 的 variants 在配置中显式绑定 source config。无参数会构建 active profile 的全部 variants；manifest 会记录 profile、variant、数据源配置指纹、文档数和 chunk 数，运行时若任一身份不匹配会拒绝混用：
+
+```powershell
+npm run index:knowledge
+npm run index:knowledge -- -- --profile tf-v1 --variant raw-only
+npm run index:knowledge -- -- --profile tf-v1 --variant raw-wiki
+```
+
+检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）：
+
+```powershell
+npm run eval:recall -- -- --variant both --retriever both
+```
+
+`--variant` 选择索引实验组（默认 `both`），而 `--retriever` 选择检索实现（默认 `vector`）。召回报告写入 `var/evals/recall/<timestamp>/report.json`。
+
+Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，可通过显式 CLI 参数选择可复现样本或指定题目；不要在无意调用 LLM 时执行：
+
+```powershell
+npm run eval:agent -- -- --variant both --random-count 5 --seed baseline-1
+
+npm run eval:agent -- -- --variant raw-only --question-ids investment-pillars,raft-components
+```
+
+`--random-count` 与 `--question-ids` 不能组合；`--seed` 仅可与 `--random-count` 一起使用。未指定选择参数时，Agent 评测运行全部题目。旧的 `RAG_EVAL_MODE`、`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 和 `AGENT_EVAL_QUESTION_IDS` 环境变量不再作为评测入口读取。
+
+双组 Agent 输出写入 `var/evals/agent/<time>/`：`report.json` 含 Git/题库 SHA、模型和 source/profile/variant identity、总体与分类汇总及 raw/wiki lift；`review/` 含匿名 A/B 的 `review.jsonl`、CSV、HTML 与 `annotation-template.csv`。盲测映射只保存在 `blind-mapping.internal.json`，勿交给标注者。`npm run build` 与 `node --test` 均不调用 LLM。
 
 ## 目录结构
 
@@ -306,14 +343,10 @@ raw sources
 默认索引命令：
 
 ```bash
-npm run index:notes
+npm run index:knowledge
 ```
 
-默认通过 `config/knowledge.sources.jsonc` 索引多个知识源。该文件支持注释，并通过同目录的 JSON Schema 提供字段说明、校验和自动补全。可以用环境变量指定其他配置文件：
-
-```env
-KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
-```
+索引 profile 在 `config/rag.indexes.jsonc` 中声明多个 variant；每个 variant 显式绑定一个 knowledge sources 配置。日常 `ask` 固定使用 active profile 的 `raw-wiki` variant。该配置文件支持注释，并通过同目录的 JSON Schema 提供字段说明、校验和自动补全。
 
 配置文件中每个 source 的 `name` 会写入检索结果的 `source` 前缀，例如 `wiki/index.md`、`raw/agent-rag.md`。CLI 显式传入目录时仍可临时索引单根目录：
 
@@ -344,14 +377,17 @@ KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 ```
 
 ```bash
-npm run index:notes -- --profile tf-v1
+npm run index:knowledge -- -- --profile tf-v1
+npm run index:knowledge -- -- --profile tf-v1 --variant raw-only
 ```
 
-每个 profile 写入独立目录：
+每个 profile/variant 写入独立目录：
 
 ```text
-var/indexes/tf-v1/index.json
-var/indexes/tf-v1/manifest.json
+var/indexes/tf-v1/raw-only/index.json
+var/indexes/tf-v1/raw-only/manifest.json
+var/indexes/tf-v1/raw-wiki/index.json
+var/indexes/tf-v1/raw-wiki/manifest.json
 ```
 
 索引数据流采用惰性读取和流式写入。每次只读取一个文件，逐个生成 chunk
@@ -365,8 +401,8 @@ iterateSourceDocuments / iterateSourceDocumentsFromRoots
 ```
 
 默认 profile `tf-v1` 使用本地词频向量与 JSON 后端；`bm25-v1` 是零模型、零 API 成本的本地关键词检索基线。profile 定义于
-`config/rag.indexes.jsonc`：它固定 embedding、chunk 参数、向量后端与索引目录名。
-`manifest.json` 记录实际构建身份；查询端会验证 profile 指纹和 embedding 身份，不一致时拒绝查询并要求重建。
+`config/rag.indexes.jsonc`：它固定 embedding、chunk 参数、向量后端；variant 固定语料 source config 与索引目录名。
+`manifest.json` 记录 profile、variant、source config、文档数和 chunk 数；查询端会验证这些身份及 embedding，不一致时拒绝查询并要求重建。
 
 当前可索引的 Markdown/Text 数据约 26 MiB，单 JSON 索引足以满足本地使用。
 固定维度 dense embedding 可先在 JSON 后端小规模评测；索引体积或延迟成为瓶颈后，再迁移至 LanceDB、Qdrant 等专用后端。
@@ -389,19 +425,16 @@ iterateSourceDocuments / iterateSourceDocumentsFromRoots
 构建 BM25 基线：
 
 ```bash
-npm run index:notes -- --profile bm25-v1
+npm run index:knowledge -- -- --profile bm25-v1
 ```
 
-在不切换线上 `activeProfile` 的情况下对比某个已构建 profile：
+在不切换日常 `tf-v1/raw-wiki` 的情况下构建另一个 profile/variant：
 
 ```powershell
-$env:RAG_EVAL_PROFILE = 'bm25-v1'
-npm run eval:rag
-npm run eval:wiki
-Remove-Item Env:RAG_EVAL_PROFILE
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
 ```
 
-要测试新的 embedding，新增一个 profile，构建其独立索引并运行 `eval:rag` / `eval:wiki`；确认收益后再将 `activeProfile` 切换到该 profile。OpenAI 兼容服务使用 profile 中声明的环境变量保存 endpoint 与 API key，不会写入 manifest。
+要测试新的 embedding，新增一个 profile 及其 variants，构建对应的独立索引；确认收益后再将 `activeProfile` / `activeVariant` 切换到目标组合。OpenAI 兼容服务使用 profile 中声明的环境变量保存 endpoint 与 API key，不会写入 manifest。
 
 ## MCP / Tool Loading
 
@@ -543,8 +576,8 @@ JSONL 只使用当前的 schema version 2。每条记录都是 `span_start`、`s
 如需将既有 JSONL trace 离线导入 OpenTelemetry 后端，可显式执行导出命令。未传 `--endpoint` 时仅进行本地 dry run，不会发生网络请求：
 
 ```powershell
-npm run trace:export -- --input var/traces/<timestamp>_<traceId>.jsonl
-npm run trace:export -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoint http://localhost:4318/v1/traces
+npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl
+npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoint http://localhost:4318/v1/traces
 ```
 
 该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；不会修改源 trace。未传 `--endpoint` 时使用内存 exporter 做 dry run，不发送网络请求。
@@ -565,7 +598,7 @@ npm run trace:export -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoin
 3. 执行 `npm run ask` 会自动导入。也可手动导入既有 trace：
 
 ```powershell
-npm run trace:export -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoint http://127.0.0.1:4318/v1/traces
+npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoint http://127.0.0.1:4318/v1/traces
 ```
 
 Jaeger all-in-one 的 OTLP HTTP 端口为 `4318`，使用内存存储；以上命令最多保留 500 条 trace，达到上限后覆盖最早写入的 trace。`extensions.jaeger_query.enable_tracing=false` 会关闭 Jaeger 查询服务自身的内部追踪，避免 Windows 上 `localhost` 解析至 IPv6 `::1`、但 gRPC 仅监听 IPv4 时产生连接告警；不会影响应用 Trace 的接收、存储或查询。关闭进程后已导入的 trace 会丢失。
@@ -627,7 +660,7 @@ load_skill({ "name": "..." })
 ```text
 bad answer / weak retrieval / wrong tool choice
 -> evaluation/badcases/*.md
--> evaluation/rag/questions.json or evaluation/wiki/questions.json
+-> evaluation/questions.json
 -> update skill / schema / prompt / tool description
 -> rerun eval
 ```
@@ -635,15 +668,7 @@ bad answer / weak retrieval / wrong tool choice
 已有样例：
 
 - `evaluation/badcases/TEMPLATE.md`：失败样例模板。
-- `evaluation/rag/questions.json`：普通 RAG 检索评测。
-- `evaluation/wiki/questions.json`：wiki-first 检索评测样例。
-
-Wiki eval 使用独立入口，并复用与 `search_notes` 相同的 wiki-first 排序：
-
-```bash
-npm run index:notes
-npm run eval:wiki
-```
+- `evaluation/questions.json`：统一主题评测集。
 
 ## 端到端作品集演示
 
@@ -656,7 +681,7 @@ notes/<source>.md
 -> search_notes / grep_notes
 -> wiki-answer
 -> badcase
--> evaluation/rag/questions.json or evaluation/wiki/questions.json
+-> evaluation/questions.json
 ```
 
 这个 demo 重点展示的不是“能调用一次 LLM”，而是 Agent 工程中更重要的部分：
@@ -673,7 +698,7 @@ notes/<source>.md
 - 让 `ingest` 更稳定地生成 source/concept/decision 页面。
 - 让 `wiki-lint` 能检查孤立页、缺引用、重复概念和冲突。
 - 让 `wiki-answer` 形成稳定的 wiki-first 回答格式。
-- 把真实 bad case 持续补进 `evaluation/badcases/` 和对应的 `evaluation/*/questions.json`。
+- 把真实 bad case 持续补进 `evaluation/badcases/` 和 `evaluation/questions.json`。
 
 中期方向是增强评测和工具路由：
 
@@ -756,28 +781,31 @@ dist/src/tests/**/*.test.js
 - skill manifest 懒加载
 - Agent policy contract：检索路由、局部读笔记、关联范围及高风险工具加载顺序；这类测试不请求 LLM，只防止 system prompt 的关键行为约束被意外删除。
 
-`npm run eval:rag` 默认读取 `evaluation/rag/questions.json`，直接评估基础检索；
-`npm run eval:wiki` 默认读取 `evaluation/wiki/questions.json`，从更多候选中优先返回
-`wiki/` 结果。两个命令都可以通过第一个命令行参数指定评测问题文件。
+`npm run eval:recall` 默认读取 `evaluation/questions.json`，默认比较两个索引实验组并仅评估 vector 检索；可通过第一个命令行参数指定评测问题文件。参数为 `--variant raw-only|raw-wiki|both` 和 `--retriever vector|grep|both`，报告写入 `var/evals/recall/<timestamp>/`。
+
+`npm run eval:agent` 会串行调用真实 Agent，因此会消耗模型 token 和本地检索时间；默认运行
+`evaluation/questions.json` 的全部题目，并默认运行两个索引实验组。支持通过 CLI 的随机或指定题目 ID 控制成本：
+
+```powershell
+npm run eval:agent -- -- --variant both --random-count 3 --seed 20260805
+```
+
+每题的 memory、JSONL v2 trace 均隔离在 `var/evals/agent/<timestamp>/<题号>-<id>/`，并在根目录写入
+`report.json`。评测强制自动审批、关闭 prompt artifact 且不自动导入 Jaeger。报告包含答案
+`expectedTerms` 覆盖率、来源证据命中（`rag.read_note` 或检索来源）、`sourceHit && termCoverage >= 60%`
+的 pass、步骤数、总时延、RAG 工具调用数/占比、工具失败详情和终止原因。
 
 RAG eval 支持对比向量检索和 grep 检索：
 
 ```bash
-# 默认：只评估向量检索 search_notes
-npm run eval:rag
+# 默认：两个索引实验组，且只评估向量检索 search_notes
+npm run eval:recall
 
 # 只评估 grep 检索 grep_notes
-$env:RAG_EVAL_MODE="grep"; npm run eval:rag
+npm run eval:recall -- -- --retriever grep
 
-# 同时输出 vector 和 grep 两组结果，方便比较 accuracy、topSources
-$env:RAG_EVAL_MODE="both"; npm run eval:rag
-```
-
-Wiki-first 评测同样支持 vector、grep 与 both 模式：
-
-```bash
-npm run eval:wiki
-$env:RAG_EVAL_MODE="both"; npm run eval:wiki
+# 比较两个索引实验组的 vector 和 grep 结果
+npm run eval:recall -- -- --variant both --retriever both
 ```
 
 评测问题可以提供 `grepTerms`，让 grep 分别检索多个词项、按同一行命中的词项数排序。`question` 始终用于向量检索。

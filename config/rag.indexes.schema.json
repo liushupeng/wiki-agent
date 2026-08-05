@@ -4,7 +4,7 @@
   "title": "Wiki Agent RAG index profiles",
   "type": "object",
   "additionalProperties": false,
-  "required": ["indexDirectory", "activeProfile", "profiles"],
+  "required": ["indexDirectory", "activeProfile", "activeVariant", "profiles"],
   "properties": {
     "$schema": { "type": "string" },
     "indexDirectory": {
@@ -15,7 +15,12 @@
     "activeProfile": {
       "type": "string",
       "minLength": 1,
-      "description": "查询和评测默认使用的索引 profile。"
+      "description": "查询和评测默认使用的检索 profile。"
+    },
+    "activeVariant": {
+      "type": "string",
+      "minLength": 1,
+      "description": "日常查询默认使用的语料 variant；必须属于 activeProfile。"
     },
     "profiles": {
       "type": "array",
@@ -27,7 +32,7 @@
     "profile": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "store", "chunkSize", "overlap", "embedder"],
+      "required": ["id", "store", "chunkSize", "overlap", "embedder", "variants"],
       "properties": {
         "id": {
           "type": "string",
@@ -43,6 +48,28 @@
             { "$ref": "#/$defs/bm25Embedder" },
             { "$ref": "#/$defs/openAiCompatibleEmbedder" }
           ]
+        },
+        "variants": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/variant" }
+        }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sourceConfigPath"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "稳定语料 variant ID，同时作为 profile 下的索引目录名。"
+        },
+        "sourceConfigPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "该 variant 固定使用的 knowledge sources JSONC 配置。"
         }
       }
     },

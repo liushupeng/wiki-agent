@@ -521,13 +521,8 @@ RAG 能力被包装成四个工具：
 
 `evaluation/badcases/TEMPLATE.md` 定义失败样例格式。推荐把检索遗漏、工具路由错误、证据不足、幻觉、schema 缺口等问题都记录下来。
 
-评测样例分两类：
-
-- `evaluation/rag/questions.json`：普通 RAG 检索。
-- `evaluation/wiki/questions.json`：wiki-first 检索。
-
-RAG 和 Wiki eval 分别由 `scripts/rag/evaluateRag.ts`、`scripts/rag/evaluateWiki.ts`
-作为独立 CLI 入口；两者共享 `src/rag/evaluation.ts` 中的 retriever 构造与判分逻辑。
+`evaluation/questions.json` 是统一主题评测集；`scripts/evaluation/evaluateRecall.ts`
+是不调用 LLM 的检索层 CLI 入口。
 
 ## `src/tools/shellTool.ts`
 
@@ -569,26 +564,33 @@ RAG 索引入口脚本。它位于顶层 `scripts/rag/`，作为项目级辅助�
 用法：
 
 ```bash
-npm run index:notes
-npm run index:notes -- --profile tf-v1
+npm run index:knowledge
+npm run index:knowledge -- -- --profile tf-v1
+npm run index:knowledge -- -- --profile tf-v1 --variant raw-only
 ```
 
 相关配置：
 
-- `KNOWLEDGE_SOURCES_CONFIG_PATH`
 - `RAG_INDEXES_CONFIG_PATH`
 
-## `scripts/rag/evaluateRag.ts` 与 `scripts/rag/evaluateWiki.ts`
+`rag.indexes.jsonc` 的 profile 包含 variants。每个 variant 显式绑定 source config，
+索引和 manifest 写入 `var/indexes/<profile>/<variant>/`；不带参数会构建 active profile
+的全部 variants。日常 `ask` 使用 `tf-v1/raw-wiki`。
 
-RAG 检索层评测脚本。它位于顶层 `scripts/rag/`，不调用 LLM，只验证检索是否召回预期内容。
+## `scripts/evaluation/evaluateRecall.ts`
+
+RAG 检索层评测脚本。它位于顶层 `scripts/evaluation/`，不调用 LLM，只验证检索是否召回预期内容。
 
 默认输入：
 
 ```text
-evaluation/rag/questions.json
+evaluation/questions.json
 ```
 
-两个入口都打开 `activeProfile` 对应的 manifest，并拒绝 profile 与索引不一致的情况。
+`eval:recall` 与 `eval:agent` 均接受 `--variant raw-only|raw-wiki|both`，显式选择
+`tf-v1` 下的索引实验组和对应 source config；默认 `both`。召回评测另以
+`--retriever vector|grep|both` 选择检索实现，默认 `vector`。两类参数语义分离，不通过
+进程环境变量切换索引或检索器。
 
 问题格式：
 
@@ -603,7 +605,7 @@ evaluation/rag/questions.json
 
 评测逻辑：
 
-1. 根据 `RAG_EVAL_MODE` 构造 `vector` 或 `grep` 的 `EvalRetriever`。
+1. 根据 CLI 的 `--retriever` 构造 `vector` 或 `grep` 的 `EvalRetriever`。
 2. 两种 retriever 都调用 `evaluateRetriever()` 执行评测和汇总。
 3. 检查 `expectedSource` 是否命中。
 4. 检查 `expectedTerms` 命中率。
@@ -611,10 +613,17 @@ evaluation/rag/questions.json
 
 `grepTerms` 会作为多个独立词项进行 OR 召回，并按单行命中的不同词项数量排序；它们只影响 grep 评测，不影响向量检索。
 
-`npm run eval:rag` 是独立的普通 RAG 评测入口，使用基础检索策略，默认评测
-`evaluation/rag/questions.json`。`npm run eval:wiki` 是独立的 Wiki 评测入口，
-默认评测 `evaluation/wiki/questions.json`，先检索更多候选，再将 `wiki/` 结果
-排到 raw 资料之前。
+`npm run eval:recall` 是独立的召回评测入口，默认评测 `evaluation/questions.json` 的两个索引实验组，
+使用 vector 检索，并将报告写入 `var/evals/recall/<timestamp>/report.json`：
+
+```powershell
+npm run eval:recall -- -- --variant both --retriever both
+```
+
+`npm run eval:agent` 的参数为 `--variant raw-only|raw-wiki|both`、`--random-count <n>`、
+`--seed <seed>` 与 `--question-ids <id1,id2,...>`。随机抽样与指定 ID 互斥，`--seed` 必须随
+`--random-count` 提供；不指定题目选择参数时运行全题。旧的 `RAG_EVAL_MODE`、
+`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 与 `AGENT_EVAL_QUESTION_IDS` 不再读取。
 
 ## `src/config.ts` 和 `src/cli/`
 
@@ -667,5 +676,5 @@ npm test
 
 1. 实现 `Embedder`。
 2. 在 `createEmbedder()` 中支持 profile 的 embedding 类型。
-3. 在 `config/rag.indexes.jsonc` 新增 profile，并全量构建其独立索引。
-4. 使用 `eval:rag` 与 `eval:wiki` 比较结果后才切换 `activeProfile`。
+3. 在 `config/rag.indexes.jsonc` 新增 profile 及其 variants，并构建独立索引。
+4. 使用 `eval:recall -- -- --variant both --retriever both` 比较结果后才切换 `activeProfile` / `activeVariant`。

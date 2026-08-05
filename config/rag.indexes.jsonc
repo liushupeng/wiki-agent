@@ -2,6 +2,7 @@
   "$schema": "./rag.indexes.schema.json",
   "indexDirectory": "var/indexes",
   "activeProfile": "tf-v1",
+  "activeVariant": "raw-wiki",
   "profiles": [
     {
       "id": "tf-v1",
@@ -10,7 +11,17 @@
       "overlap": 120,
       "embedder": {
         "type": "tf"
-      }
+      },
+      "variants": [
+        {
+          "id": "raw-only",
+          "sourceConfigPath": "config/evaluation/raw-only.sources.jsonc"
+        },
+        {
+          "id": "raw-wiki",
+          "sourceConfigPath": "config/evaluation/raw-wiki.sources.jsonc"
+        }
+      ]
     },
     {
       "id": "bm25-v1",
@@ -21,7 +32,17 @@
         "type": "bm25",
         "k1": 1.2,
         "b": 0.75
-      }
+      },
+      "variants": [
+        {
+          "id": "raw-only",
+          "sourceConfigPath": "config/evaluation/raw-only.sources.jsonc"
+        },
+        {
+          "id": "raw-wiki",
+          "sourceConfigPath": "config/evaluation/raw-wiki.sources.jsonc"
+        }
+      ]
     }
   ]
 }

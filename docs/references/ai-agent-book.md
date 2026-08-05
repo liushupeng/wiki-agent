@@ -33,7 +33,7 @@
 | 执行风险分级与人工审批 | `src/permissions.ts`、`src/cli/approvalPrompt.ts`、`src/sandbox.ts` | `PermissionPolicy` 结合工具风险与 `APPROVAL_MODE` 作出 allow、ask 或 deny 决策。 |
 | 失败应成为行动信号 | `src/tools/executor.ts` | 工具结果包含结构化错误；对相同失败调用实施重试上限。 |
 | 可观测性采用 span 树 | `src/trace/telemetry.ts`、`src/trace/export.ts` | 统一记录 `wiki_agent.run`、step、`gen_ai.chat`、`tool.execute`、RAG 子 span。 |
-| 评估要可重复且可诊断 | `src/rag/evaluation.ts`、`scripts/rag/evaluateRag.ts`、`scripts/rag/evaluateWiki.ts` | 将向量/grep 检索与 wiki-first 策略放到独立评测入口中比较。 |
+| 评估要可重复且可诊断 | `src/rag/evaluation.ts`、`scripts/evaluation/evaluateRecall.ts` | 在统一题库上比较候选召回、排序与 Wiki 策略。 |
 | 提示规则需要回归保护 | `src/tests/agentPolicy.test.ts` | 对工具路由、安全边界和渐进检索策略做无需 LLM 的契约测试。 |
 
 ## 近期优先级

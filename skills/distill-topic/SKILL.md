@@ -87,4 +87,4 @@ tags:
 - 保留稳定结论、结构化框架、引用路径和待验证问题。
 - 观点归属必须谨慎：区分“用户已经验证的观点”“用户吸收并认可的观点”“来源作者的观点”和“Agent 综合推断”。
 - 优先小而聚焦的主题页；主题过大时，拆成多个 concept 页并在父页面建立索引。
-- 完成后说明需要运行 `npm run index:notes`，并建议用原问题回归测试 Wiki-first 是否生效。
+- 完成后说明需要运行 `npm run index:knowledge` 重建 `raw-wiki` variant，并建议用原问题回归测试 Wiki-first 是否生效。

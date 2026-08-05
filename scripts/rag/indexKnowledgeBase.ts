@@ -4,29 +4,45 @@ import '../../src/env.js';
 import { iterateSourceDocumentsFromRoots } from '../../src/rag/documentLoader.js';
 import { createEmbedder } from '../../src/rag/embeddings.js';
 import { runIndexPipeline, type IndexPipelineProgress } from '../../src/rag/indexPipeline.js';
-import { getIndexPaths, loadRagIndexesConfig, resolveRagIndexProfile } from '../../src/rag/indexProfiles.js';
+import { getIndexPaths, loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } from '../../src/rag/indexProfiles.js';
 import { writeIndexManifest } from '../../src/rag/indexRuntime.js';
 import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
 import { createVectorStore } from '../../src/rag/vectorStore.js';
+import { getSourceConfigIdentity } from '../../src/evaluation/experiments.js';
 
 /**
  * RAG 索引入口。
  *
  * 用法：
- * - npm run index:notes
- * - npm run index:notes -- --profile tf-v1
+ * - npm run index:knowledge
+ * - npm run index:knowledge -- -- --profile tf-v1
+ * - npm run index:knowledge -- -- --profile tf-v1 --variant raw-only
  *
- * 默认读取 config/knowledge.sources.jsonc。
- * 可用 KNOWLEDGE_SOURCES_CONFIG_PATH 指向其他数据源配置文件。
- * RAG_INDEXES_CONFIG_PATH 指向 profile 配置；每个 profile 写入独立目录。
+ * 不带参数时构建 active profile 的全部 variants。每个 variant 固定自己的 source config，
+ * 并写入 profile/variant 独立目录。
  */
 async function main() {
-    const startedAt = performance.now();
-    const profileId = readProfileId(process.argv.slice(2));
+    const arguments_ = readArguments(process.argv.slice(2));
     const config = await loadRagIndexesConfig();
-    const profile = resolveRagIndexProfile(config, profileId);
-    const paths = getIndexPaths(profile, config.indexDirectory);
-    const sourceRoots = await getKnowledgeSourceRoots();
+    const profile = resolveRagIndexProfile(config, arguments_.profileId);
+    const variants = arguments_.variantId
+        ? [resolveRagIndexVariant(profile, arguments_.variantId)]
+        : profile.variants;
+
+    for (const variant of variants) {
+        await buildVariant(profile, variant, config.indexDirectory);
+    }
+}
+
+async function buildVariant(
+    profile: ReturnType<typeof resolveRagIndexProfile>,
+    variant: ReturnType<typeof resolveRagIndexVariant>,
+    indexDirectory: string
+) {
+    const startedAt = performance.now();
+    const paths = getIndexPaths(profile, variant, indexDirectory);
+    const sourceRoots = await getKnowledgeSourceRoots({ KNOWLEDGE_SOURCES_CONFIG_PATH: variant.sourceConfigPath });
+    const sourceConfig = await getSourceConfigIdentity(variant.sourceConfigPath);
     const documents = iterateSourceDocumentsFromRoots(sourceRoots);
     const sourceLabel = sourceRoots.map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ');
     const progress = createProgressReporter(startedAt);
@@ -44,7 +60,11 @@ async function main() {
             vectorStore: createVectorStore(profile.store, paths.dataPath),
             onProgress: progress.update
         });
-        await writeIndexManifest(profile, paths, embedder.identity);
+        await writeIndexManifest(profile, variant, paths, embedder.identity, {
+            sourceConfig,
+            documentCount: stats.documentCount,
+            chunkCount: stats.chunkCount
+        });
     } finally {
         progress.stop();
     }
@@ -62,6 +82,9 @@ async function main() {
         `  Chunks:        ${stats.chunkCount.toLocaleString()}`,
         `  Chunk config:  size=${stats.chunkSize}, overlap=${stats.overlap}`,
         `  Profile:       ${profile.id}`,
+        `  Variant:       ${variant.id}`,
+        `  Source config: ${sourceConfig.path}`,
+        `  Source hash:   ${sourceConfig.fingerprint}`,
         `  Embedder:      ${stats.embedder}`,
         `  Store:         ${stats.store}`,
         `  Output:        ${paths.dataPath}`,
@@ -73,10 +96,19 @@ async function main() {
     ].join('\n'));
 }
 
-function readProfileId(args: string[]): string | undefined {
-    if (args.length === 0) return undefined;
-    if (args.length === 2 && args[0] === '--profile' && args[1]) return args[1];
-    throw new Error('usage: npm run index:notes -- [--profile <profileId>]');
+function readArguments(args: string[]): { profileId?: string; variantId?: string } {
+    if (args.length === 0) return {};
+    const values: { profileId?: string; variantId?: string } = {};
+    for (let index = 0; index < args.length; index += 2) {
+        const option = args[index];
+        const value = args[index + 1];
+        if (!value || (option !== '--profile' && option !== '--variant')) {
+            throw new Error('usage: npm run index:knowledge -- -- [--profile <profileId>] [--variant <variantId>]');
+        }
+        if (option === '--profile') values.profileId = value;
+        else values.variantId = value;
+    }
+    return values;
 }
 
 function createProgressReporter(startedAt: number) {

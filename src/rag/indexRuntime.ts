@@ -4,17 +4,21 @@ import { Embedder, EmbeddingIdentity, createEmbedder } from './embeddings.js';
 import {
     IndexPaths,
     RagIndexProfile,
+    RagIndexVariant,
     fingerprintProfile,
     getIndexPaths,
     loadRagIndexesConfig,
-    resolveRagIndexProfile
+    resolveRagIndexProfile,
+    resolveRagIndexVariant
 } from './indexProfiles.js';
 import { IndexedChunk, SearchResult } from './types.js';
 import { VectorSearchScoring, VectorStore, createVectorStore } from './vectorStore.js';
+import { getSourceConfigIdentity, SourceConfigIdentity } from '../evaluation/experiments.js';
 
 export type IndexManifest = {
-    version: 1;
+    version: 1 | 2 | 3;
     profileId: string;
+    variantId?: string;
     profileFingerprint: string;
     embedding: EmbeddingIdentity;
     store: string;
@@ -22,10 +26,14 @@ export type IndexManifest = {
     chunkSize: number;
     overlap: number;
     createdAt: string;
+    sourceConfig?: SourceConfigIdentity;
+    documentCount?: number;
+    chunkCount?: number;
 };
 
 export type IndexRuntime = Pick<VectorStore, 'findBySource'> & {
     readonly profile: RagIndexProfile;
+    readonly variant: RagIndexVariant;
     readonly manifest: IndexManifest;
     readonly store: VectorStore;
     readonly embedder: Embedder;
@@ -33,15 +41,17 @@ export type IndexRuntime = Pick<VectorStore, 'findBySource'> & {
     findRelated(source: string, topK?: number): Promise<SearchResult[]>;
 };
 
-export async function openActiveIndex(profileId?: string): Promise<IndexRuntime> {
+export async function openActiveIndex(profileId?: string, variantId?: string): Promise<IndexRuntime> {
     const config = await loadRagIndexesConfig();
     const profile = resolveRagIndexProfile(config, profileId);
-    return openIndexRuntime(profile, getIndexPaths(profile, config.indexDirectory));
+    const variant = resolveRagIndexVariant(profile, variantId ?? (profile.id === config.activeProfile ? config.activeVariant : profile.variants[0]!.id));
+    return openIndexRuntime(profile, variant, getIndexPaths(profile, variant, config.indexDirectory));
 }
 
-export async function openIndexRuntime(profile: RagIndexProfile, paths: IndexPaths): Promise<IndexRuntime> {
+export async function openIndexRuntime(profile: RagIndexProfile, variant: RagIndexVariant, paths: IndexPaths): Promise<IndexRuntime> {
     const manifest = await loadIndexManifest(paths.manifestPath);
-    validateManifest(manifest, profile, paths);
+    validateManifest(manifest, profile, variant, paths);
+    await validateSourceConfigIdentity(manifest, variant);
     const embedder = createEmbedder(profile.embedder);
     validateEmbeddingIdentity(manifest.embedding, embedder.identity);
     const store = createVectorStore(
@@ -52,6 +62,7 @@ export async function openIndexRuntime(profile: RagIndexProfile, paths: IndexPat
 
     return {
         profile,
+        variant,
         manifest,
         store,
         embedder,
@@ -74,17 +85,27 @@ function getSearchScoring(profile: RagIndexProfile): VectorSearchScoring {
     return { type: 'cosine' };
 }
 
-export async function writeIndexManifest(profile: RagIndexProfile, paths: IndexPaths, identity: EmbeddingIdentity): Promise<IndexManifest> {
+export async function writeIndexManifest(
+    profile: RagIndexProfile,
+    variant: RagIndexVariant,
+    paths: IndexPaths,
+    identity: EmbeddingIdentity,
+    details?: { sourceConfig?: SourceConfigIdentity; documentCount?: number; chunkCount?: number }
+): Promise<IndexManifest> {
     const manifest: IndexManifest = {
-        version: 1,
+        version: 3,
         profileId: profile.id,
+        variantId: variant.id,
         profileFingerprint: fingerprintProfile(profile),
         embedding: identity,
         store: profile.store,
         dataFile: path.basename(paths.dataPath),
         chunkSize: profile.chunkSize,
         overlap: profile.overlap,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        ...(details?.sourceConfig ? { sourceConfig: details.sourceConfig } : {}),
+        ...(details?.documentCount === undefined ? {} : { documentCount: details.documentCount }),
+        ...(details?.chunkCount === undefined ? {} : { chunkCount: details.chunkCount })
     };
     await fs.mkdir(paths.directory, { recursive: true });
     const temporaryPath = `${paths.manifestPath}.${process.pid}.tmp`;
@@ -105,12 +126,24 @@ export async function loadIndexManifest(manifestPath: string): Promise<IndexMani
     } catch (error: any) {
         throw new Error(`cannot open RAG index manifest "${manifestPath}": ${error.message}`);
     }
-    if (!isRecord(value) || value.version !== 1) throw new Error(`invalid RAG index manifest: ${manifestPath}`);
+    if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3)) throw new Error(`invalid RAG index manifest: ${manifestPath}`);
     return value as unknown as IndexManifest;
 }
 
-function validateManifest(manifest: IndexManifest, profile: RagIndexProfile, paths: IndexPaths): void {
+async function validateSourceConfigIdentity(manifest: IndexManifest, variant: RagIndexVariant): Promise<void> {
+    // v1 indices predate source identities and remain readable for backward compatibility.
+    if (!manifest.sourceConfig) return;
+    const active = await getSourceConfigIdentity(variant.sourceConfigPath);
+    if (active.fingerprint !== manifest.sourceConfig.fingerprint) {
+        throw new Error(`RAG index source configuration mismatch; rebuild with ${active.path} before querying`);
+    }
+}
+
+function validateManifest(manifest: IndexManifest, profile: RagIndexProfile, variant: RagIndexVariant, paths: IndexPaths): void {
     if (manifest.profileId !== profile.id) throw new Error(`RAG index manifest profile mismatch: expected ${profile.id}, got ${manifest.profileId}`);
+    if (manifest.version === 3 && manifest.variantId !== variant.id) {
+        throw new Error(`RAG index manifest variant mismatch: expected ${variant.id}, got ${manifest.variantId}`);
+    }
     if (manifest.profileFingerprint !== fingerprintProfile(profile)) {
         throw new Error(`RAG index profile changed since this index was built: ${profile.id}; rebuild it before querying`);
     }

@@ -6,7 +6,7 @@ import { StdioMcpClient } from '../../src/mcp/client.js';
  * MCP server 连通性检查入口。
  *
  * 用法：
- * - npm run mcp:check
+ * - npm run check:mcp
  *
  * 这个脚本会读取 MCP_CONFIG_PATH 指向的配置文件，只检查 enabled=true 的 server。
  * 每个 server 会执行 connect + listTools，用来验证外部 MCP 进程是否能启动、协议握手是否成功、

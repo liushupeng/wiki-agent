@@ -17,14 +17,16 @@ async function withKnowledgeIndex<T>(chunks: IndexedChunk[], run: (indexPath: st
     const config = {
         indexDirectory: dir,
         activeProfile: 'tf-v1',
-        profiles: [{ id: 'tf-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'tf' } }]
+        activeVariant: 'raw-wiki',
+        profiles: [{ id: 'tf-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'tf' }, variants: [{ id: 'raw-wiki', sourceConfigPath: 'config/knowledge.sources.jsonc' }] }]
     };
     await fs.writeFile(configPath, JSON.stringify(config), 'utf-8');
     process.env.RAG_INDEXES_CONFIG_PATH = configPath;
     const profile = resolveRagIndexProfile(parseRagIndexesConfig(config));
-    const paths = getIndexPaths(profile, config.indexDirectory);
+    const variant = profile.variants[0]!;
+    const paths = getIndexPaths(profile, variant, config.indexDirectory);
     await new JsonVectorStore(paths.dataPath).replaceChunks(toAsyncChunks(chunks), { chunkSize: 100, overlap: 10 });
-    await writeIndexManifest(profile, paths, new TfEmbedder().identity);
+    await writeIndexManifest(profile, variant, paths, new TfEmbedder().identity);
 
     try {
         return await run(paths.dataPath);
@@ -377,7 +379,8 @@ test('SearchNotesTool returns a helpful error when the index is missing', async 
     await fs.writeFile(configPath, JSON.stringify({
         indexDirectory: dir,
         activeProfile: 'tf-v1',
-        profiles: [{ id: 'tf-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'tf' } }]
+        activeVariant: 'raw-wiki',
+        profiles: [{ id: 'tf-v1', store: 'json', chunkSize: 100, overlap: 10, embedder: { type: 'tf' }, variants: [{ id: 'raw-wiki', sourceConfigPath: 'config/knowledge.sources.jsonc' }] }]
     }), 'utf-8');
     process.env.RAG_INDEXES_CONFIG_PATH = configPath;
 
@@ -386,7 +389,7 @@ test('SearchNotesTool returns a helpful error when the index is missing', async 
 
         assert.equal(result.status, 'error');
         assert.match(result.error ?? '', /cannot open RAG index manifest|ENOENT/i);
-        assert.match(String(result.metadata?.hint), /npm run index:notes/);
+        assert.match(String(result.metadata?.hint), /npm run index:knowledge/);
     } finally {
         if (previousConfigPath === undefined) {
             delete process.env.RAG_INDEXES_CONFIG_PATH;

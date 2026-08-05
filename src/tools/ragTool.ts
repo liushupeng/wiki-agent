@@ -19,8 +19,15 @@ const RELATED_NOTES_TOP_K_LIMIT = 12;
 const RELATED_NOTES_CANDIDATE_LIMIT = 80;
 const REGEX_HINT_PATTERN = /(^|[^\\])(\||\.\*|\.\+|\[[^\]]+\]|\([^)]*\|[^)]*\)|\\d|\\w|\\s|\{\d+(?:,\d*)?\})/;
 
-async function getSearchScopeDescription(): Promise<string> {
-    return (await getKnowledgeSourceRoots()).map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ');
+export type RagToolOptions = {
+    indexProfile?: string;
+    indexVariant?: string;
+    sourceConfigPath?: string;
+};
+
+async function getSearchScopeDescription(options: RagToolOptions = {}): Promise<string> {
+    return (await getKnowledgeSourceRoots(options.sourceConfigPath ? { KNOWLEDGE_SOURCES_CONFIG_PATH: options.sourceConfigPath } : undefined))
+        .map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ');
 }
 
 function formatChunk(match: SearchResult) {
@@ -130,6 +137,7 @@ function isRelatedNotesScope(value: unknown): value is RelatedNotesScope {
 export class SearchNotesTool extends BaseAgentTool {
     readonly name = 'search_notes';
     readonly permission = 'rag' as const;
+    constructor(private readonly options: RagToolOptions = {}) { super(); }
     readonly schema = {
         type: 'function' as const,
         function: {
@@ -165,22 +173,25 @@ export class SearchNotesTool extends BaseAgentTool {
             }
         });
         try {
-            const index = await openActiveIndex();
+            const index = await openActiveIndex(this.options.indexProfile, this.options.indexVariant);
             const candidateLimit = Math.min(topK * 4, 48);
             const matches = prioritizeWikiMatches(await index.search(args.query, candidateLimit), topK);
             await ragSpan?.end({
                 status: 'ok',
-                attributes: { 'wiki_agent.rag.match_count': matches.length }
+                attributes: {
+                    'wiki_agent.rag.match_count': matches.length,
+                    'wiki_agent.rag.sources': JSON.stringify(Array.from(new Set(matches.map(match => match.source))))
+                }
             });
 
             return this.ok({
                 query: args.query,
                 matches: matches.map(formatChunk)
-            }, { count: matches.length, indexProfile: index.profile.id, scope: await getSearchScopeDescription() });
+            }, { count: matches.length, indexProfile: index.profile.id, indexVariant: index.variant.id, scope: await getSearchScopeDescription(this.options) });
         } catch (error: any) {
             await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message, {
-                hint: '请先运行 npm run index:notes 生成 active RAG profile 的索引。'
+                hint: '请先运行 npm run index:knowledge 生成 active RAG profile 的索引。'
             });
         }
     }
@@ -189,6 +200,7 @@ export class SearchNotesTool extends BaseAgentTool {
 export class GrepNotesTool extends BaseAgentTool {
     readonly name = 'grep_notes';
     readonly permission = 'rag' as const;
+    constructor(private readonly options: RagToolOptions = {}) { super(); }
     readonly schema = {
         type: 'function' as const,
         function: {
@@ -230,7 +242,7 @@ export class GrepNotesTool extends BaseAgentTool {
         try {
             const contextLines = Math.min(args.contextLines ?? DEFAULT_GREP_CONTEXT_LINES, GREP_CONTEXT_LINES_LIMIT);
             const effectiveRegex = args.regex ?? shouldAutoUseRegex(args.query);
-            const sourceRoots = await getKnowledgeSourceRoots();
+            const sourceRoots = await getKnowledgeSourceRoots(this.options.sourceConfigPath ? { KNOWLEDGE_SOURCES_CONFIG_PATH: this.options.sourceConfigPath } : undefined);
             const matches = (await Promise.all(sourceRoots.map(async sourceRoot => {
                 const matchesForRoot = await grepNotes(path.resolve(sourceRoot.root), args.query, {
                     regex: effectiveRegex,
@@ -247,14 +259,17 @@ export class GrepNotesTool extends BaseAgentTool {
 
             await ragSpan?.end({
                 status: 'ok',
-                attributes: { 'wiki_agent.rag.match_count': matches.length }
+                attributes: {
+                    'wiki_agent.rag.match_count': matches.length,
+                    'wiki_agent.rag.sources': JSON.stringify(Array.from(new Set(matches.map(match => match.source))))
+                }
             });
 
             return this.ok({
                 query: args.query,
                 regex: effectiveRegex,
                 matches
-            }, { count: matches.length, scope: await getSearchScopeDescription(), maxResults, contextLines, autoRegex: args.regex === undefined && effectiveRegex });
+            }, { count: matches.length, scope: await getSearchScopeDescription(this.options), maxResults, contextLines, autoRegex: args.regex === undefined && effectiveRegex });
         } catch (error: any) {
             await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message, {
@@ -267,6 +282,7 @@ export class GrepNotesTool extends BaseAgentTool {
 export class ReadNoteTool extends BaseAgentTool {
     readonly name = 'read_note';
     readonly permission = 'rag' as const;
+    constructor(private readonly options: RagToolOptions = {}) { super(); }
     readonly schema = {
         type: 'function' as const,
         function: {
@@ -306,7 +322,7 @@ export class ReadNoteTool extends BaseAgentTool {
         });
         try {
             const maxChunks = Math.min(args.maxChunks ?? DEFAULT_READ_NOTE_MAX_CHUNKS, READ_NOTE_MAX_CHUNKS_LIMIT);
-            const allChunks = await (await openActiveIndex()).findBySource(args.notePath);
+            const allChunks = await (await openActiveIndex(this.options.indexProfile, this.options.indexVariant)).findBySource(args.notePath);
             const titleFilteredChunks = allChunks.filter(chunk => titlePathMatches(chunk, args.titlePath));
             const rankedChunks = rankNoteChunks(titleFilteredChunks, args.query);
             const chunks = rankedChunks.slice(0, maxChunks);
@@ -335,6 +351,7 @@ export class ReadNoteTool extends BaseAgentTool {
 export class RelatedNotesTool extends BaseAgentTool {
     readonly name = 'related_notes';
     readonly permission = 'rag' as const;
+    constructor(private readonly options: RagToolOptions = {}) { super(); }
     readonly schema = {
         type: 'function' as const,
         function: {
@@ -378,7 +395,7 @@ export class RelatedNotesTool extends BaseAgentTool {
         });
         try {
             const candidateLimit = scope === 'global' ? topK : Math.min(topK * 10, RELATED_NOTES_CANDIDATE_LIMIT);
-            const candidates = await (await openActiveIndex()).findRelated(args.notePath, candidateLimit);
+            const candidates = await (await openActiveIndex(this.options.indexProfile, this.options.indexVariant)).findRelated(args.notePath, candidateLimit);
             const matches = candidates
                 .filter(candidate => matchesRelatedScope(candidate, args.notePath, scope))
                 .slice(0, topK);

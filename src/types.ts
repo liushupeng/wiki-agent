@@ -17,6 +17,7 @@ export interface AgentConfig {
     otlpProtocol?: 'http' | 'grpc';
     capturePromptArtifacts?: boolean;
     traceArtifactDir?: string;
+    autoExportFileTrace?: boolean;
     approvalMode?: ApprovalMode;
     requestApproval?: (request: ApprovalRequest) => Promise<boolean>;
 }

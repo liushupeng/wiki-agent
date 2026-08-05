@@ -35,7 +35,7 @@ description: 当 Agent 失败、回答薄弱、检索遗漏、工具选择错误
 3. 如有可用的追踪记录，检查关键 span 与工具调用。
 4. 归类失败类型。
 5. 在 `evaluation/badcases/` 下创建 badcase Markdown 文件。
-6. 在 `evaluation/rag/questions.json` 或 `evaluation/wiki/questions.json` 中新增或建议新增检索评测题。
+6. 在 `evaluation/questions.json` 中新增或建议新增检索评测题。
 7. 建议最小、可持续的修复：schema、skill、prompt、工具说明、测试或评测。
 
 ## Badcase 模板

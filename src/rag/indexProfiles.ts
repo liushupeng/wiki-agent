@@ -31,11 +31,18 @@ export type RagIndexProfile = {
     chunkSize: number;
     overlap: number;
     embedder: EmbeddingProfile;
+    variants: RagIndexVariant[];
+};
+
+export type RagIndexVariant = {
+    id: string;
+    sourceConfigPath: string;
 };
 
 export type RagIndexesConfig = {
     indexDirectory: string;
     activeProfile: string;
+    activeVariant: string;
     profiles: RagIndexProfile[];
 };
 
@@ -59,6 +66,7 @@ export function parseRagIndexesConfig(value: unknown): RagIndexesConfig {
     }
     const indexDirectory = readNonEmptyString(value.indexDirectory, 'indexDirectory');
     const activeProfile = readId(value.activeProfile, 'activeProfile');
+    const activeVariant = readId(value.activeVariant, 'activeVariant');
     const profiles = value.profiles.map((item, index) => parseProfile(item, index));
     const ids = new Set<string>();
     for (const profile of profiles) {
@@ -66,7 +74,10 @@ export function parseRagIndexesConfig(value: unknown): RagIndexesConfig {
         ids.add(profile.id);
     }
     if (!ids.has(activeProfile)) throw new Error(`active RAG index profile does not exist: ${activeProfile}`);
-    return { indexDirectory, activeProfile, profiles };
+    if (!profiles.find(profile => profile.id === activeProfile)?.variants.some(variant => variant.id === activeVariant)) {
+        throw new Error(`active RAG index variant does not exist in profile ${activeProfile}: ${activeVariant}`);
+    }
+    return { indexDirectory, activeProfile, activeVariant, profiles };
 }
 
 export function resolveRagIndexProfile(config: RagIndexesConfig, profileId = config.activeProfile): RagIndexProfile {
@@ -75,8 +86,14 @@ export function resolveRagIndexProfile(config: RagIndexesConfig, profileId = con
     return profile;
 }
 
-export function getIndexPaths(profile: RagIndexProfile, baseDirectory: string): IndexPaths {
-    const directory = path.resolve(baseDirectory, profile.id);
+export function resolveRagIndexVariant(profile: RagIndexProfile, variantId: string): RagIndexVariant {
+    const variant = profile.variants.find(item => item.id === variantId);
+    if (!variant) throw new Error(`unknown RAG index variant for profile ${profile.id}: ${variantId}`);
+    return variant;
+}
+
+export function getIndexPaths(profile: RagIndexProfile, variant: RagIndexVariant, baseDirectory: string): IndexPaths {
+    const directory = path.resolve(baseDirectory, profile.id, variant.id);
     return {
         directory,
         dataPath: path.join(directory, 'index.json'),
@@ -95,7 +112,23 @@ function parseProfile(value: unknown, index: number): RagIndexProfile {
     const chunkSize = readPositiveInteger(value.chunkSize, `RAG index profile "${id}" chunkSize`);
     const overlap = readNonNegativeInteger(value.overlap, `RAG index profile "${id}" overlap`);
     if (overlap >= chunkSize) throw new Error(`RAG index profile "${id}" overlap must be smaller than chunkSize`);
-    return { id, store: 'json', chunkSize, overlap, embedder: parseEmbedderProfile(value.embedder, id) };
+    const variants = parseVariants(value.variants, id);
+    return { id, store: 'json', chunkSize, overlap, embedder: parseEmbedderProfile(value.embedder, id), variants };
+}
+
+function parseVariants(value: unknown, profileId: string): RagIndexVariant[] {
+    if (!Array.isArray(value) || value.length === 0) throw new Error(`RAG index profile "${profileId}" must contain a non-empty variants array`);
+    const ids = new Set<string>();
+    return value.map((item, index) => {
+        if (!isRecord(item)) throw new Error(`RAG index profile "${profileId}" variant at index ${index} must be an object`);
+        const id = readId(item.id, `RAG index profile "${profileId}" variant at index ${index} id`);
+        if (ids.has(id)) throw new Error(`duplicate RAG index variant for profile ${profileId}: ${id}`);
+        ids.add(id);
+        return {
+            id,
+            sourceConfigPath: readNonEmptyString(item.sourceConfigPath, `RAG index profile "${profileId}" variant "${id}" sourceConfigPath`)
+        };
+    });
 }
 
 function parseEmbedderProfile(value: unknown, profileId: string): EmbeddingProfile {

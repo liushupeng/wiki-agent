@@ -126,7 +126,9 @@ export class WikiAgent implements IAgent {
                 attributes: { 'wiki_agent.termination_reason': terminationReason }
             });
             await telemetry.shutdown();
-            await this.exportFileTrace(telemetry.filePath);
+            if (this.config.autoExportFileTrace !== false) {
+                await this.exportFileTrace(telemetry.filePath);
+            }
         }
         return finalOutput;
     }
