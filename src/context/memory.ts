@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { getActiveSpan } from '../trace/telemetry.js';
 import { IMemory } from '../types.js';
 import { estimateMessagesSize } from '../utils/tokenBudget.js';
-import { LongTermMemoryItem, LongTermMemoryKind, MemoryStore } from './memoryStore.js';
+import { LongTermMemoryItem, LongTermMemoryKind, MemoryStore, SessionListItem, SessionOverview } from './memoryStore.js';
 
 type FunctionToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
     type: 'function';
@@ -193,6 +193,14 @@ export class MemoryManager implements IMemory {
         }
         if (!this.store.forget(memoryId)) return false;
         return this.longTerm.remove(memoryId);
+    }
+
+    listSessions(limit = 20, previewChars = 120): SessionListItem[] {
+        return this.store?.listSessions(limit, previewChars) ?? [];
+    }
+
+    getSessionOverview(sessionId: string, previewChars = 1000): SessionOverview | undefined {
+        return this.store?.getSessionOverview(sessionId, previewChars);
     }
 
     close(): void {

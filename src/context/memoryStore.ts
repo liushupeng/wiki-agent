@@ -15,8 +15,29 @@ export type LongTermMemoryItem = {
     updatedAt: string;
 };
 
+export type SessionListItem = {
+    id: string;
+    createdAt: string;
+    updatedAt: string;
+    messageCount: number;
+    preview: string;
+};
+
+export type SessionOverview = SessionListItem & {
+    firstUserMessage?: string;
+    lastUserMessage?: string;
+    lastAssistantMessage?: string;
+};
+
 type PersistedMessageRow = {
     payload: string;
+};
+
+type SessionRow = {
+    id: string;
+    created_at: string;
+    updated_at: string;
+    message_count: number;
 };
 
 type LongTermMemoryRow = {
@@ -131,6 +152,61 @@ export class MemoryStore {
         this.database.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(this.timestamp(), sessionId);
     }
 
+    listSessions(limit = 20, previewChars = 120): SessionListItem[] {
+        const normalizedLimit = normalizePositiveInteger(limit, 20, 100);
+        const rows = this.database.prepare(`
+            SELECT sessions.id, sessions.created_at, sessions.updated_at, COUNT(session_messages.session_id) AS message_count
+            FROM sessions
+            LEFT JOIN session_messages ON session_messages.session_id = sessions.id
+            GROUP BY sessions.id
+            ORDER BY sessions.updated_at DESC
+            LIMIT ?
+        `).all(normalizedLimit) as SessionRow[];
+
+        return rows.map(row => {
+            const messages = this.loadSessionMessages(row.id);
+            return {
+                id: row.id,
+                createdAt: row.created_at,
+                updatedAt: row.updated_at,
+                messageCount: row.message_count,
+                preview: buildSessionPreview(messages, previewChars)
+            };
+        });
+    }
+
+    getSessionOverview(sessionId: string, previewChars = 1000): SessionOverview | undefined {
+        const row = this.database.prepare(`
+            SELECT sessions.id, sessions.created_at, sessions.updated_at, COUNT(session_messages.session_id) AS message_count
+            FROM sessions
+            LEFT JOIN session_messages ON session_messages.session_id = sessions.id
+            WHERE sessions.id = ?
+            GROUP BY sessions.id
+        `).get(sessionId) as SessionRow | undefined;
+        if (!row) return undefined;
+
+        const messages = this.loadSessionMessages(row.id);
+        const userMessages = messages
+            .filter(message => message.role === 'user')
+            .map(getTextContent)
+            .filter((content): content is string => Boolean(content));
+        const assistantMessages = messages
+            .filter(message => message.role === 'assistant')
+            .map(getTextContent)
+            .filter((content): content is string => Boolean(content));
+
+        return {
+            id: row.id,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            messageCount: row.message_count,
+            preview: buildSessionPreview(messages, previewChars),
+            firstUserMessage: userMessages[0],
+            lastUserMessage: userMessages.at(-1),
+            lastAssistantMessage: assistantMessages.at(-1)
+        };
+    }
+
     loadLongTermMemories(): LongTermMemoryItem[] {
         const now = this.timestamp();
         const rows = this.database.prepare(`
@@ -241,4 +317,31 @@ function isMemoryMessage(value: unknown): value is MemoryMessage {
     return typeof value === 'object'
         && value !== null
         && typeof (value as { role?: unknown }).role === 'string';
+}
+
+function buildSessionPreview(messages: MemoryMessage[], maxChars: number): string {
+    const preview = messages
+        .filter(message => message.role === 'user' || message.role === 'assistant')
+        .map(message => {
+            const content = getTextContent(message);
+            return content ? `${message.role === 'user' ? '用户' : '助手'}：${content}` : '';
+        })
+        .filter(Boolean)
+        .join('\n')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const limit = normalizePositiveInteger(maxChars, 120, 10000);
+    return preview.length > limit ? `${preview.slice(0, limit)}...` : preview;
+}
+
+function getTextContent(message: MemoryMessage): string | undefined {
+    return typeof message.content === 'string' && message.content.trim()
+        ? message.content.trim().replace(/\s+/g, ' ')
+        : undefined;
+}
+
+function normalizePositiveInteger(value: number, fallback: number, maximum: number): number {
+    return Number.isFinite(value) && value > 0
+        ? Math.min(Math.floor(value), maximum)
+        : fallback;
 }

@@ -12,6 +12,7 @@ import { buildSkillManifestPrompt, loadSkillManifests } from './skills.js';
 import { createDefaultTools, getLocalToolNamesCoveredByMcp } from './tools/defaultTools.js';
 import { ToolExposureController } from './tools/exposure.js';
 import { ToolRegistry } from './tools/registry.js';
+import { parsePositiveInteger } from './utils/number.js';
 
 async function main() {
     console.log("=================================================");
@@ -71,46 +72,14 @@ async function main() {
             return;
         }
 
-        console.log('进入多轮 REPL。输入 exit / quit 退出，输入 clear 清空会话历史，输入 remember <内容> 保存长期记忆，输入 memories / forget <ID> 查看或删除长期记忆。');
+        console.log('进入多轮 REPL。输入 exit / quit 退出，输入 clear 清空会话历史；输入 sessions [数量] [预览字符数] 列出会话，输入 session <ID> [预览字符数] 查看会话概览；输入 remember <内容> 保存长期记忆，输入 memories / forget <ID> 查看或删除长期记忆。');
 
         while (true) {
             const instruction = (await rl.question('\n你 > ')).trim();
             if (!instruction) continue;
             if (['exit', 'quit'].includes(instruction.toLowerCase())) break;
-            if (instruction.toLowerCase() === 'clear') {
-                memory.clear();
-                continue;
-            }
-            if (instruction.toLowerCase().startsWith('remember ')) {
-                const content = instruction.slice('remember '.length).trim();
-                if (!content) {
-                    console.log('请输入要保存的长期记忆，例如：remember 我偏好使用中文回答。');
-                    continue;
-                }
-                const item = memory.remember(content);
-                console.log(`💾 [长期记忆] 已保存 ${item.id}`);
-                continue;
-            }
-            if (instruction.toLowerCase() === 'memories') {
-                const items = memory.getLongTermMemories();
-                if (items.length === 0) {
-                    console.log('当前没有长期记忆。');
-                } else {
-                    for (const item of items) {
-                        console.log(`- ${item.id} [${item.kind}] ${item.content}`);
-                    }
-                }
-                continue;
-            }
-            if (instruction.toLowerCase().startsWith('forget ')) {
-                const memoryId = instruction.slice('forget '.length).trim();
-                if (!memoryId) {
-                    console.log('请输入要删除的长期记忆 ID；可先输入 memories 查看。');
-                    continue;
-                }
-                console.log(memory.forget(memoryId) ? '🗑️ [长期记忆] 已删除。' : '未找到对应的长期记忆 ID。');
-                continue;
-            }
+            if (handleSessionCommand(instruction, memory)) continue;
+            if (handleLongTermMemoryCommand(instruction, memory)) continue;
 
             toolExposureController.resetToCore();
             await agent.run(instruction, chunk => process.stdout.write(chunk));
@@ -142,5 +111,93 @@ function parseRuntimeArguments(args: string[]): { instruction: string; sessionId
     }
 
     return { instruction: instructionParts.join(' ').trim(), sessionId };
+}
+
+function handleSessionCommand(instruction: string, memory: MemoryManager): boolean {
+    const normalized = instruction.toLowerCase();
+    if (normalized === 'clear') {
+        memory.clear();
+        return true;
+    }
+    if (normalized === 'sessions' || normalized.startsWith('sessions ')) {
+        const [limitArgument, previewArgument] = instruction.slice('sessions'.length).trim().split(/\s+/);
+        const limit = resolveReplPositiveInteger(limitArgument, 20, 100, '数量');
+        const previewChars = resolveReplPositiveInteger(previewArgument, 120, 10000, '预览字符数');
+        const sessions = memory.listSessions(limit, previewChars);
+        if (sessions.length === 0) {
+            console.log('当前没有可恢复的会话。');
+        } else {
+            for (const session of sessions) {
+                console.log(`- ${session.id} | 创建：${session.createdAt} | 最后活动：${session.updatedAt} | 消息：${session.messageCount} | ${session.preview || '（无文本消息）'}`);
+            }
+        }
+        return true;
+    }
+    if (!normalized.startsWith('session ')) return false;
+
+    const [sessionId, previewArgument] = instruction.slice('session '.length).trim().split(/\s+/);
+    if (!sessionId) {
+        console.log('请输入 session ID，例如：session <ID>');
+        return true;
+    }
+    const previewChars = resolveReplPositiveInteger(previewArgument, 1000, 10000, '预览字符数');
+    const session = memory.getSessionOverview(sessionId, previewChars);
+    if (!session) {
+        console.log('未找到对应 session ID；可先输入 sessions 查看可恢复会话。');
+    } else {
+        console.log([
+            `会话：${session.id}`,
+            `创建：${session.createdAt}`,
+            `最后活动：${session.updatedAt}`,
+            `消息：${session.messageCount}`,
+            `首条用户消息：${session.firstUserMessage ?? '（无）'}`,
+            `最近用户消息：${session.lastUserMessage ?? '（无）'}`,
+            `最近助手回复：${session.lastAssistantMessage ?? '（无）'}`,
+            `会话预览：${session.preview || '（无文本消息）'}`
+        ].join('\n'));
+    }
+    return true;
+}
+
+function handleLongTermMemoryCommand(instruction: string, memory: MemoryManager): boolean {
+    const normalized = instruction.toLowerCase();
+    if (normalized.startsWith('remember ')) {
+        const content = instruction.slice('remember '.length).trim();
+        if (!content) {
+            console.log('请输入要保存的长期记忆，例如：remember 我偏好使用中文回答。');
+        } else {
+            const item = memory.remember(content);
+            console.log(`💾 [长期记忆] 已保存 ${item.id}`);
+        }
+        return true;
+    }
+    if (normalized === 'memories') {
+        const items = memory.getLongTermMemories();
+        if (items.length === 0) {
+            console.log('当前没有长期记忆。');
+        } else {
+            for (const item of items) {
+                console.log(`- ${item.id} [${item.kind}] ${item.content}`);
+            }
+        }
+        return true;
+    }
+    if (!normalized.startsWith('forget ')) return false;
+
+    const memoryId = instruction.slice('forget '.length).trim();
+    if (!memoryId) {
+        console.log('请输入要删除的长期记忆 ID；可先输入 memories 查看。');
+    } else {
+        console.log(memory.forget(memoryId) ? '🗑️ [长期记忆] 已删除。' : '未找到对应的长期记忆 ID。');
+    }
+    return true;
+}
+
+function resolveReplPositiveInteger(value: string | undefined, fallback: number, maximum: number, label: string): number {
+    if (!value) return fallback;
+    const parsed = parsePositiveInteger(value, maximum);
+    if (parsed !== undefined) return parsed;
+    console.log(`${label}必须是正整数；已使用默认值 ${fallback}。`);
+    return fallback;
 }
 

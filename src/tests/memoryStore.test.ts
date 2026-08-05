@@ -66,3 +66,44 @@ test('MemoryStore writes readable daily journals and prunes old sessions', async
     assert.match(journal, /old message/);
     store.close();
 });
+
+test('MemoryStore lists recent sessions with previews and returns deterministic overviews', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-memory-'));
+    let currentTime = new Date('2026-07-01T12:00:00.000Z');
+    const store = new MemoryStore(directory, () => currentTime);
+
+    store.appendSessionMessage('older', { role: 'user', content: '第一个会话的问题' });
+    store.appendSessionMessage('older', { role: 'assistant', content: '第一个会话的回答' });
+    currentTime = new Date('2026-07-02T12:00:00.000Z');
+    store.appendSessionMessage('recent', { role: 'user', content: '最近会话的问题' });
+    store.appendSessionMessage('recent', { role: 'assistant', content: '最近会话的回答' });
+
+    assert.deepEqual(store.listSessions(20, 9), [
+        {
+            id: 'recent',
+            createdAt: '2026-07-02T12:00:00.000Z',
+            updatedAt: '2026-07-02T12:00:00.000Z',
+            messageCount: 2,
+            preview: '用户：最近会话的问...'
+        },
+        {
+            id: 'older',
+            createdAt: '2026-07-01T12:00:00.000Z',
+            updatedAt: '2026-07-01T12:00:00.000Z',
+            messageCount: 2,
+            preview: '用户：第一个会话的...'
+        }
+    ]);
+    assert.deepEqual(store.getSessionOverview('recent', 100), {
+        id: 'recent',
+        createdAt: '2026-07-02T12:00:00.000Z',
+        updatedAt: '2026-07-02T12:00:00.000Z',
+        messageCount: 2,
+        preview: '用户：最近会话的问题 助手：最近会话的回答',
+        firstUserMessage: '最近会话的问题',
+        lastUserMessage: '最近会话的问题',
+        lastAssistantMessage: '最近会话的回答'
+    });
+    assert.equal(store.getSessionOverview('missing'), undefined);
+    store.close();
+});

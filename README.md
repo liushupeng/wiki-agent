@@ -727,7 +727,9 @@ KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
 RAG_INDEXES_CONFIG_PATH=config/rag.indexes.jsonc
 ```
 
-每次启动会创建并输出 `sessionId`。在 Windows 上使用 `npm run ask` 恢复会话时，需用 `npm run ask -- -- --session <sessionId> "问题"`；第二个 `--` 用于阻止 npm 将 `--session` 解析为自身配置。REPL 中输入 `remember <内容>` 才会保存长期记忆，使用 `memories` 查看、`forget <ID>` 删除。会话全文保存在 SQLite，按日 Markdown 摘要位于 `var/memory/journals/`；`clear` 只清空当前会话，不删除已明确保存的长期记忆。
+每次启动会创建并输出 `sessionId`。在 Windows 上使用 `npm run ask` 恢复会话时，需用 `npm run ask -- -- --session <sessionId> "问题"`；第二个 `--` 用于阻止 npm 将 `--session` 解析为自身配置。REPL 中输入 `remember <内容>` 才会保存长期记忆，使用 `memories` 查看、`forget <ID>` 删除。
+
+会话消息在每次用户输入、模型回复和工具结果产生后立即写入 SQLite，不必等待会话正常结束。输入 `sessions [数量] [预览字符数]` 可按最后活动时间列出会话 ID、时间、消息数与开头预览；输入 `session <ID> [预览字符数]` 可查看会话概览。会话全文保存在 SQLite，按日 Markdown 摘要位于 `var/memory/journals/`；`clear` 只清空当前会话消息，不删除已明确保存的长期记忆或既有日记。`MEMORY_SESSION_RETENTION_DAYS` 默认 30 天，超过期限的会话及其消息会硬删除。
 
 运行 `npm run check:config` 可校验 LLM 凭证、知识源、active RAG profile 和 MCP 配置是否可读取，不会发送模型请求。
 
