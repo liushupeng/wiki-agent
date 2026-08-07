@@ -20,28 +20,37 @@ export type RetrievalDecision = {
     elapsedMs: number;
 };
 
-export function retrievalStartTraceAttributes(decision: Omit<RetrievalDecision, 'candidates' | 'matches' | 'elapsedMs'>): TraceAttributes {
+export function retrievalSpanTraceAttributes(decision: Omit<RetrievalDecision, 'candidates' | 'matches' | 'elapsedMs'>): TraceAttributes {
     return {
         'gen_ai.operation.name': 'retrieval',
         'gen_ai.data_source.id': decision.profile && decision.variant
             ? `${decision.profile}/${decision.variant}`
             : 'wiki-agent',
-        'gen_ai.request.top_k': decision.topK,
-        'gen_ai.retrieval.query.text': decision.query,
         'wiki_agent.rag.mode': decision.mode,
-        'wiki_agent.rag.candidate_limit': decision.candidateLimit,
-        'wiki_agent.rag.wiki_first': decision.wikiFirst,
         ...(decision.profile ? { 'wiki_agent.rag.profile': decision.profile } : {}),
         ...(decision.variant ? { 'wiki_agent.rag.variant': decision.variant } : {})
     };
 }
 
-export function retrievalEndTraceAttributes(decision: RetrievalDecision): TraceAttributes {
+export function retrievalRequestTraceAttributes(decision: Omit<RetrievalDecision, 'candidates' | 'matches' | 'elapsedMs'>): TraceAttributes {
     return {
-        'wiki_agent.rag.candidate_documents': JSON.stringify(toTraceDocuments(decision.candidates)),
+        'gen_ai.retrieval.query.text': decision.query,
+        'gen_ai.request.top_k': decision.topK,
+        'wiki_agent.rag.candidate_limit': decision.candidateLimit,
+        'wiki_agent.rag.wiki_first': decision.wikiFirst
+    };
+}
+
+export function retrievalCandidatesTraceAttributes(decision: RetrievalDecision): TraceAttributes {
+    return {
+        'wiki_agent.rag.candidate_documents': JSON.stringify(toTraceDocuments(decision.candidates))
+    };
+}
+
+export function retrievalResultTraceAttributes(decision: RetrievalDecision): TraceAttributes {
+    return {
         'gen_ai.retrieval.documents': JSON.stringify(toTraceDocuments(decision.matches)),
         'wiki_agent.rag.match_count': decision.matches.length,
-        'wiki_agent.rag.sources': JSON.stringify(Array.from(new Set(decision.matches.map(match => match.source)))),
         'wiki_agent.rag.latency_ms': Math.round(decision.elapsedMs)
     };
 }

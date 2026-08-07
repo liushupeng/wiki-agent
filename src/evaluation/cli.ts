@@ -6,6 +6,7 @@ export type RecallEvalArgs = {
     variant: 'raw-only' | 'raw-wiki' | 'both';
     retriever: 'vector' | 'grep' | 'both';
     wikiFirst?: boolean;
+    probeCandidateLimit?: number;
 };
 
 export type AgentEvalArgs = {
@@ -46,6 +47,10 @@ export function parseRecallEvalArgs(args: string[]): RecallEvalArgs {
         }
         if (argument === '--wiki-first') {
             result.wikiFirst = parseBoolean(requireValue(args, ++index, '--wiki-first'), '--wiki-first');
+            continue;
+        }
+        if (argument === '--probe-candidate-limit') {
+            result.probeCandidateLimit = parsePositiveInteger(requireValue(args, ++index, '--probe-candidate-limit'), '--probe-candidate-limit');
             continue;
         }
         if (!argument?.startsWith('--') && !result.questionsFile) {
@@ -118,7 +123,7 @@ export function recallUsage(): string {
     return [
         'usage:',
         '  npm run eval:recall',
-        '  npm run eval:recall -- -- --profile <profileId> --variant raw-only|raw-wiki|both --retriever vector|grep|both [--wiki-first true|false] [questionsFile]',
+        '  npm run eval:recall -- -- --profile <profileId> --variant raw-only|raw-wiki|both --retriever vector|grep|both [--wiki-first true|false] [--probe-candidate-limit <n>] [questionsFile]',
         '',
         'Default profile: bm25-v1. Run without arguments prints this help and does not run an evaluation.'
     ].join('\n');

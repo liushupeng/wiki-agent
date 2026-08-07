@@ -15,6 +15,7 @@ test('exportTrace exports version 2 spans without network output by default', as
         assert.equal(report.inputPath, inputPath);
         assert.equal(report.mode, 'dry-run');
         assert.equal(report.runCount, 1);
+        assert.equal(report.rootSpanCount, 1);
         assert.equal(report.spanCount, 2);
         assert.equal(report.eventCount, 1);
         assert.equal(report.skippedEventCount, 0);

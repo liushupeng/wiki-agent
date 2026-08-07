@@ -29,6 +29,7 @@ export type TraceExportReport = {
     inputPath: string;
     mode: 'dry-run' | 'exported';
     runCount: number;
+    rootSpanCount: number;
     spanCount: number;
     eventCount: number;
     skippedEventCount: number;
@@ -58,6 +59,7 @@ export async function exportTrace(options: TraceExportOptions): Promise<TraceExp
         inputPath,
         mode: options.endpoint ? 'exported' : 'dry-run',
         runCount: 0,
+        rootSpanCount: 0,
         spanCount: 0,
         eventCount: 0,
         skippedEventCount: 0,
@@ -98,6 +100,7 @@ async function exportSpans(inputPath: string, tracer: Tracer, report: TraceExpor
             if (!report.traceIds.includes(record.traceId)) report.traceIds.push(record.traceId);
             spans.set(key, span);
             report.spanCount += 1;
+            if (!parentSpanId) report.rootSpanCount += 1;
             if (record.name === 'wiki_agent.run') report.runCount += 1;
             continue;
         }

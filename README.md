@@ -247,9 +247,10 @@ npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
 npm run eval:recall -- -- --variant both --retriever both
 npm run eval:recall -- -- --profile bm25-v1 --variant both --retriever vector
 npm run eval:recall -- -- --profile bm25-v1 --variant raw-wiki --retriever vector --wiki-first false
+npm run eval:recall -- -- --profile bm25-v1 --variant raw-only --retriever vector --probe-candidate-limit 100
 ```
 
-`--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。召回报告会记录每个变体的实际 Wiki 优先策略，并写入 `var/evals/recall/<timestamp>/report.json`。
+`--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。`--probe-candidate-limit <N>` 会仅对正常 Top-20 候选未命中的题追加深度探测，N 必须大于 20。召回报告会记录每个变体的实际 Wiki 优先策略和 probe 汇总，并写入 `var/evals/recall/<timestamp>/report.json`。
 
 每次 Recall 评测还会在同一输出目录写入一条 `eval.recall` JSONL Trace。其 `rag.search` 子 span 与在线检索使用相同的候选—重排诊断字段：query、profile、variant、candidate limit、Wiki 优先策略、Top-20 候选和最终 Top-5 结果；评测事件补充金标命中、rank、关键词覆盖率和失败类型。终端仅显示 Trace 路径，Trace 是诊断原始事实，报告是其汇总视图。
 
@@ -585,14 +586,15 @@ JSONL 只使用当前的 schema version 2。每条记录都是 `span_start`、`s
 
 文件名采用 `<UTC 时间戳>_<traceId>.jsonl`，例如 `2026-07-23T14-22-10-123Z_33547b96af3674b2a8b4fa69caca0f9a.jsonl`；前半部分便于排序，后半部分可直接对应 Jaeger Trace。
 
-如需将既有 JSONL trace 离线导入 OpenTelemetry 后端，可显式执行导出命令。无参或传入 `--help` 时仅显示帮助；未传 `--endpoint` 时仅进行本地 dry run，不会发生网络请求：
+如需将既有 JSONL trace 离线导入 OpenTelemetry 后端，可显式执行导出命令。无参或传入 `--help` 时仅显示帮助；端点优先级为 `--endpoint`、`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 和本机 Jaeger 默认值 `http://127.0.0.1:4318/v1/traces`。使用 `--dry-run` 仅校验和统计文件，不发生网络请求：
 
 ```powershell
 npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl
 npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoint http://localhost:4318/v1/traces
+npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl --dry-run
 ```
 
-该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；不会修改源 trace。未传 `--endpoint` 时使用内存 exporter 做 dry run，不发送网络请求。
+该脚本只读取 trace 文件，将运行、步骤、模型调用、工具执行和 RAG 搜索映射为 OTLP span；不会修改源 trace。`--dry-run` 时使用内存 exporter，不发送网络请求。
 
 默认 `TELEMETRY_BACKEND=file` 会在根 run span 已结束、JSONL 写入完成后，自动通过 OTLP HTTP 导出该次运行的确切 trace 文件到本机 Jaeger：`http://127.0.0.1:4318/v1/traces`。自动导出最多等待 3 秒；Jaeger 未启动或导出失败只会打印警告，本地 JSONL 不会删除，仍可稍后手动重放。
 

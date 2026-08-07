@@ -5,7 +5,12 @@ import { prioritizeWikiMatches } from '../rag/ranking.js';
 import { IndexedChunk, SearchResult } from '../rag/types.js';
 import { getKnowledgeSourceRoots, sourceWithPrefix } from '../rag/sourceRoots.js';
 import { openActiveIndex } from '../rag/indexRuntime.js';
-import { retrievalEndTraceAttributes, retrievalStartTraceAttributes } from '../rag/retrievalDiagnostics.js';
+import {
+    retrievalCandidatesTraceAttributes,
+    retrievalRequestTraceAttributes,
+    retrievalResultTraceAttributes,
+    retrievalSpanTraceAttributes
+} from '../rag/retrievalDiagnostics.js';
 import { getActiveSpan, type SpanHandle } from '../trace/telemetry.js';
 import { ToolResult } from '../types.js';
 
@@ -175,7 +180,7 @@ export class SearchNotesTool extends BaseAgentTool {
             ragSpan = await getActiveSpan()?.startChild('rag.search', {
                 kind: 'client',
                 startedAt,
-                attributes: retrievalStartTraceAttributes({
+                attributes: retrievalSpanTraceAttributes({
                     query: args.query,
                     mode: 'vector',
                     topK,
@@ -187,20 +192,23 @@ export class SearchNotesTool extends BaseAgentTool {
             });
             const candidates = await index.search(args.query, candidateLimit);
             const matches = prioritizeWikiMatches(candidates, topK);
+            const retrieval = {
+                query: args.query,
+                mode: 'vector' as const,
+                topK,
+                candidateLimit,
+                profile: index.profile.id,
+                variant: index.variant.id,
+                wikiFirst: true,
+                candidates,
+                matches,
+                elapsedMs: performance.now() - startedAtMs
+            };
+            await ragSpan?.addEvent('retrieval.request', retrievalRequestTraceAttributes(retrieval));
+            await ragSpan?.addEvent('retrieval.candidates', retrievalCandidatesTraceAttributes(retrieval));
+            await ragSpan?.addEvent('retrieval.result', retrievalResultTraceAttributes(retrieval));
             await ragSpan?.end({
-                status: 'ok',
-                attributes: retrievalEndTraceAttributes({
-                    query: args.query,
-                    mode: 'vector',
-                    topK,
-                    candidateLimit,
-                    profile: index.profile.id,
-                    variant: index.variant.id,
-                    wikiFirst: true,
-                    candidates,
-                    matches,
-                    elapsedMs: performance.now() - startedAtMs
-                })
+                status: 'ok'
             });
 
             return this.ok({
@@ -256,7 +264,7 @@ export class GrepNotesTool extends BaseAgentTool {
         const ragSpan = await getActiveSpan()?.startChild('rag.search', {
             kind: 'client',
             startedAt,
-            attributes: retrievalStartTraceAttributes({
+            attributes: retrievalSpanTraceAttributes({
                 query: args.query,
                 mode: 'grep',
                 topK: maxResults,
@@ -281,19 +289,22 @@ export class GrepNotesTool extends BaseAgentTool {
                     source: sourceWithPrefix(sourceRoot.prefix, match.source)
                 }));
             }))).flat().slice(0, maxResults);
+            const retrieval = {
+                query: args.query,
+                mode: 'grep' as const,
+                topK: maxResults,
+                candidateLimit: maxResults,
+                wikiFirst: false,
+                candidates: matches,
+                matches,
+                elapsedMs: performance.now() - startedAtMs
+            };
+            await ragSpan?.addEvent('retrieval.request', retrievalRequestTraceAttributes(retrieval));
+            await ragSpan?.addEvent('retrieval.candidates', retrievalCandidatesTraceAttributes(retrieval));
+            await ragSpan?.addEvent('retrieval.result', retrievalResultTraceAttributes(retrieval));
 
             await ragSpan?.end({
-                status: 'ok',
-                attributes: retrievalEndTraceAttributes({
-                    query: args.query,
-                    mode: 'grep',
-                    topK: maxResults,
-                    candidateLimit: maxResults,
-                    wikiFirst: false,
-                    candidates: matches,
-                    matches,
-                    elapsedMs: performance.now() - startedAtMs
-                })
+                status: 'ok'
             });
 
             return this.ok({

@@ -8,7 +8,9 @@ import {
     EvalSummary,
     createGrepEvalRetriever,
     createVectorEvalRetriever,
-    evaluateRetriever
+    evaluateRetriever,
+    normalizeEvalQuestion,
+    scoreQuestion
 } from '../../src/rag/evaluation.js';
 import { openActiveIndex } from '../../src/rag/indexRuntime.js';
 import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
@@ -16,7 +18,12 @@ import { getEvaluationExperiment, parseEvaluationMode } from '../../src/evaluati
 import { parseRecallEvalCommand, recallUsage } from '../../src/evaluation/cli.js';
 import { createCliProgressReporter } from '../../src/evaluation/cliProgress.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } from '../../src/rag/indexProfiles.js';
-import { retrievalEndTraceAttributes, retrievalStartTraceAttributes } from '../../src/rag/retrievalDiagnostics.js';
+import {
+    retrievalCandidatesTraceAttributes,
+    retrievalRequestTraceAttributes,
+    retrievalResultTraceAttributes,
+    retrievalSpanTraceAttributes
+} from '../../src/rag/retrievalDiagnostics.js';
 import { createTelemetry, SpanHandle, Telemetry } from '../../src/trace/telemetry.js';
 
 /**
@@ -40,9 +47,13 @@ async function main() {
     }
     const startedAt = performance.now();
     const arguments_ = command.args;
+    if (arguments_.probeCandidateLimit !== undefined && arguments_.probeCandidateLimit <= 20) {
+        throw new Error('--probe-candidate-limit must be greater than the normal candidate limit (20)');
+    }
     const questionsFile = path.resolve(arguments_.questionsFile ?? 'evaluation/questions.json');
     const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
     const results: Record<string, EvalSummary | EvalComparisonSummary> = {};
+    const probes: Record<string, Record<string, ProbeSummary>> = {};
     const wikiFirstByVariant: Record<string, boolean> = {};
     const indexesConfig = await loadRagIndexesConfig();
     const experimentModes = parseEvaluationMode(arguments_.variant);
@@ -83,7 +94,12 @@ async function main() {
                 questions,
                 vectorRetriever,
                 grepRetriever,
-                { telemetry, evalSpan, profile: profile.id, variant: variant.id, wikiFirst: options.wikiFirst }
+                { telemetry, evalSpan, profile: profile.id, variant: variant.id, wikiFirst: options.wikiFirst },
+                arguments_.probeCandidateLimit,
+                (retrieverName, probe) => {
+                    probes[experimentMode] ??= {};
+                    probes[experimentMode][retrieverName] = probe;
+                }
             );
         }
         const report = {
@@ -94,6 +110,7 @@ async function main() {
             retriever: arguments_.retriever,
             variant: arguments_.variant,
             wikiFirst: wikiFirstByVariant,
+            ...(arguments_.probeCandidateLimit === undefined ? {} : { probeCandidateLimit: arguments_.probeCandidateLimit, probes }),
             traceFile: telemetry.filePath,
             experiments: results
         };
@@ -105,7 +122,7 @@ async function main() {
                 'wiki_agent.eval.summary': JSON.stringify(summarizeForTrace(results))
             }
         });
-        printSummary(arguments_.profile, results, outputDirectory, performance.now() - startedAt, telemetry.filePath);
+        printSummary(arguments_.profile, results, outputDirectory, performance.now() - startedAt, telemetry.filePath, probes);
     } catch (error) {
         await evalSpan.end({ status: 'error', attributes: { 'error.message': error instanceof Error ? error.message : String(error) } });
         throw error;
@@ -120,16 +137,18 @@ async function evaluate(
     questions: EvalQuestion[],
     vector: ReturnType<typeof createVectorEvalRetriever>,
     grep: ReturnType<typeof createGrepEvalRetriever>,
-    trace: RetrievalTraceContext
+    trace: RetrievalTraceContext,
+    probeCandidateLimit: number | undefined,
+    onProbe: (retrieverName: string, probe: ProbeSummary) => void
 ): Promise<EvalSummary | EvalComparisonSummary> {
-    if (retriever === 'vector') return evaluateWithProgress(experimentMode, questions, vector, trace);
-    if (retriever === 'grep') return evaluateWithProgress(experimentMode, questions, grep, trace);
+    if (retriever === 'vector') return evaluateWithProgress(experimentMode, questions, vector, trace, probeCandidateLimit, onProbe);
+    if (retriever === 'grep') return evaluateWithProgress(experimentMode, questions, grep, trace, probeCandidateLimit, onProbe);
     if (retriever === 'both') {
         const comparison: EvalComparisonSummary = {
             status: 'success',
             mode: 'both',
-            vector: await evaluateWithProgress(experimentMode, questions, vector, trace),
-            grep: await evaluateWithProgress(experimentMode, questions, grep, trace)
+            vector: await evaluateWithProgress(experimentMode, questions, vector, trace, probeCandidateLimit, onProbe),
+            grep: await evaluateWithProgress(experimentMode, questions, grep, trace, probeCandidateLimit, onProbe)
         };
         return comparison;
     }
@@ -140,7 +159,9 @@ async function evaluateWithProgress(
     experimentMode: string,
     questions: EvalQuestion[],
     retriever: ReturnType<typeof createVectorEvalRetriever> | ReturnType<typeof createGrepEvalRetriever>,
-    trace: RetrievalTraceContext
+    trace: RetrievalTraceContext,
+    probeCandidateLimit: number | undefined,
+    onProbe: (retrieverName: string, probe: ProbeSummary) => void
 ) {
     const startedAt = performance.now();
     const progress = createCliProgressReporter();
@@ -151,6 +172,11 @@ async function evaluateWithProgress(
     }, decision => writeRetrievalTrace(trace, decision));
     progress.stop();
     console.log(`[recall] [${experimentMode}/${retriever.name}] 完成：${summary.passed}/${summary.total} 通过，耗时 ${Math.round(performance.now() - startedAt)} ms。`);
+    if (probeCandidateLimit !== undefined) {
+        const probe = await probeCandidateMisses(questions, summary, retriever, trace, probeCandidateLimit);
+        onProbe(retriever.name, probe);
+        console.log(`[recall] [${experimentMode}/${retriever.name}] 深度探测：${probe.total} 个 candidate miss，恢复 ${probe.recovered}，仍未命中 ${probe.stillMissing}（candidateLimit=${probe.candidateLimit}）。`);
+    }
     return summary;
 }
 
@@ -162,12 +188,66 @@ type RetrievalTraceContext = {
     wikiFirst: boolean;
 };
 
-async function writeRetrievalTrace(context: RetrievalTraceContext, decision: EvalRetrievalDecision): Promise<void> {
+type ProbeSummary = {
+    candidateLimit: number;
+    total: number;
+    recovered: number;
+    stillMissing: number;
+};
+
+async function probeCandidateMisses(
+    questions: EvalQuestion[],
+    summary: EvalSummary,
+    retriever: ReturnType<typeof createVectorEvalRetriever> | ReturnType<typeof createGrepEvalRetriever>,
+    trace: RetrievalTraceContext,
+    candidateLimit: number
+): Promise<ProbeSummary> {
+    const misses = summary.results
+        .map((result, index) => ({ result, index }))
+        .filter(({ result }) => result.candidateSourceHit === false);
+    let recovered = 0;
+
+    for (const { index } of misses) {
+        const question = normalizeEvalQuestion(questions[index]!, index);
+        const startedAt = new Date();
+        const startedAtMs = performance.now();
+        const candidates = retriever.candidateSearch
+            ? await retriever.candidateSearch(question, candidateLimit)
+            : await retriever.search(question, candidateLimit);
+        const matches = retriever.rerank ? retriever.rerank(candidates, 5) : candidates.slice(0, 5);
+        const result = scoreQuestion(question, matches, candidates);
+        if (result.candidateSourceHit) recovered += 1;
+        await writeRetrievalTrace(trace, {
+            question,
+            retriever: retriever.name,
+            topK: 5,
+            candidateLimit,
+            candidates,
+            matches,
+            result,
+            startedAt,
+            elapsedMs: performance.now() - startedAtMs
+        }, { reason: 'candidate_miss' });
+    }
+
+    return {
+        candidateLimit,
+        total: misses.length,
+        recovered,
+        stillMissing: misses.length - recovered
+    };
+}
+
+async function writeRetrievalTrace(
+    context: RetrievalTraceContext,
+    decision: EvalRetrievalDecision,
+    probe?: { reason: 'candidate_miss' }
+): Promise<void> {
     const span = await context.evalSpan.startChild('rag.search', {
         kind: 'client',
         startedAt: decision.startedAt,
         attributes: {
-            ...retrievalStartTraceAttributes({
+            ...retrievalSpanTraceAttributes({
                 query: decision.question.question,
                 mode: decision.retriever as 'vector' | 'grep',
                 topK: decision.topK,
@@ -177,9 +257,25 @@ async function writeRetrievalTrace(context: RetrievalTraceContext, decision: Eva
                 wikiFirst: context.wikiFirst
             }),
             'wiki_agent.eval.question_id': decision.question.id,
-            'wiki_agent.eval.experiment_mode': context.variant
+            'wiki_agent.eval.experiment_mode': context.variant,
+            ...(probe ? { 'wiki_agent.rag.probe': true, 'wiki_agent.rag.probe_reason': probe.reason } : {})
         }
     });
+    const retrieval = {
+        query: decision.question.question,
+        mode: decision.retriever as 'vector' | 'grep',
+        topK: decision.topK,
+        candidateLimit: decision.candidateLimit,
+        profile: context.profile,
+        variant: context.variant,
+        wikiFirst: context.wikiFirst,
+        candidates: decision.candidates,
+        matches: decision.matches,
+        elapsedMs: decision.elapsedMs
+    };
+    await span.addEvent('retrieval.request', retrievalRequestTraceAttributes(retrieval));
+    await span.addEvent('retrieval.candidates', retrievalCandidatesTraceAttributes(retrieval));
+    await span.addEvent('retrieval.result', retrievalResultTraceAttributes(retrieval));
     const expectedSources = decision.result.expectedSources ?? (decision.question.expectedSource ? [decision.question.expectedSource] : []);
     const candidateRank = rankOfExpectedSource(decision.candidates, expectedSources);
     const finalRank = rankOfExpectedSource(decision.matches, expectedSources);
@@ -203,19 +299,7 @@ async function writeRetrievalTrace(context: RetrievalTraceContext, decision: Eva
         'wiki_agent.eval.failure_type': failureType
     });
     await span.end({
-        status: 'ok',
-        attributes: retrievalEndTraceAttributes({
-            query: decision.question.question,
-            mode: decision.retriever as 'vector' | 'grep',
-            topK: decision.topK,
-            candidateLimit: decision.candidateLimit,
-            profile: context.profile,
-            variant: context.variant,
-            wikiFirst: context.wikiFirst,
-            candidates: decision.candidates,
-            matches: decision.matches,
-            elapsedMs: decision.elapsedMs
-        })
+        status: 'ok'
     });
 }
 
@@ -238,7 +322,8 @@ function printSummary(
     results: Record<string, EvalSummary | EvalComparisonSummary>,
     outputDirectory: string,
     elapsedMs: number,
-    traceFile?: string
+    traceFile?: string,
+    probes: Record<string, Record<string, ProbeSummary>> = {}
 ): void {
     console.log('[recall] 汇总：');
     console.log('[recall] 指标口径：Recall@20 为重排前候选池；Hit@5、Hit@1、MRR@5 为最终 Top-5 排序结果。');
@@ -256,6 +341,11 @@ function printSummary(
                 `Hit@1 ${formatRatio(metrics?.hitAt1)}`,
                 `MRR@5 ${formatRatio(metrics?.mrr)}`
             ].join(' | '));
+        }
+    }
+    for (const [variant, retrievers] of Object.entries(probes)) {
+        for (const [retriever, probe] of Object.entries(retrievers)) {
+            console.log(`  ${profile}/${variant}/${retriever} probe@${probe.candidateLimit} | candidate miss ${probe.total} | 恢复 ${probe.recovered} | 仍未命中 ${probe.stillMissing}`);
         }
     }
     console.log(`[recall] 总耗时：${formatElapsed(elapsedMs)}`);

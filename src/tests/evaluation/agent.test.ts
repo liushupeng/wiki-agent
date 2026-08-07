@@ -9,9 +9,13 @@ test('collectAgentTraceMetrics reads JSONL v2 evidence, latency, tool metrics, a
         start('run', 'wiki_agent.run', '2026-01-01T00:00:00.000Z'),
         start('step', 'wiki_agent.step.1', '2026-01-01T00:00:01.000Z'),
         start('search', 'rag.search', '2026-01-01T00:00:02.000Z'),
-        end('search', 'ok', '2026-01-01T00:00:03.000Z', {
-            'wiki_agent.rag.sources': JSON.stringify(['raw/expected.md', 'raw/other.md'])
+        event('search', 'retrieval.result', '2026-01-01T00:00:03.000Z', {
+            'gen_ai.retrieval.documents': JSON.stringify([
+                { rank: 1, source: 'raw/expected.md', score: 0.9 },
+                { rank: 2, source: 'raw/other.md', score: 0.8 }
+            ])
         }),
+        end('search', 'ok', '2026-01-01T00:00:03.100Z'),
         start('read', 'rag.read_note', '2026-01-01T00:00:03.000Z', {
             'wiki_agent.rag.note_path': 'raw/read.md'
         }),
@@ -127,6 +131,18 @@ function end(spanId: string, status: string, at: string, attributes: Record<stri
         spanId,
         status,
         endedAt: at,
+        attributes,
+        at
+    };
+}
+
+function event(spanId: string, name: string, at: string, attributes: Record<string, unknown> = {}) {
+    return {
+        type: 'span_event' as const,
+        schemaVersion: 2 as const,
+        traceId,
+        spanId,
+        name,
         attributes,
         at
     };

@@ -154,11 +154,17 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
             continue;
         }
 
+        if (record.type === 'span_event') {
+            const start = starts.get(record.spanId);
+            if (start?.name === 'rag.search' && record.name === 'retrieval.result') {
+                addRetrievedDocumentSources(evidenceSources, stringAttribute(record, 'gen_ai.retrieval.documents'));
+            }
+            continue;
+        }
         if (record.type !== 'span_end') continue;
         const start = starts.get(record.spanId);
         if (start?.name === 'wiki_agent.run') runEnd = record;
         if (start?.name === 'rag.read_note') addSource(evidenceSources, stringAttribute(start, 'wiki_agent.rag.note_path'));
-        if (start?.name === 'rag.search') addSources(evidenceSources, stringAttribute(record, 'wiki_agent.rag.sources'));
         if (start?.name === 'tool.execute' && record.status !== 'ok') {
             toolFailures.push({
                 name: stringAttribute(start, 'tool.name') || 'unknown',
@@ -234,14 +240,18 @@ function isRagTool(name: string): boolean {
     return RAG_TOOL_NAMES.has(name) || name.endsWith('_search_notes') || name.endsWith('_grep_notes') || name.endsWith('_read_note') || name.endsWith('_related_notes');
 }
 
-function addSources(target: Set<string>, serialized: string): void {
+function addRetrievedDocumentSources(target: Set<string>, serialized: string): void {
     if (!serialized) return;
     try {
         const values = JSON.parse(serialized);
-        if (Array.isArray(values)) values.forEach(value => addSource(target, typeof value === 'string' ? value : ''));
-        return;
+        if (!Array.isArray(values)) return;
+        values.forEach(value => {
+            if (!value || typeof value !== 'object') return;
+            const source = (value as { source?: unknown }).source;
+            if (typeof source === 'string') addSource(target, source);
+        });
     } catch {
-        serialized.split(/\n|;/).forEach(value => addSource(target, value));
+        return;
     }
 }
 
