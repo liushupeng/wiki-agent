@@ -1,7 +1,7 @@
 {
   "$schema": "./rag.indexes.schema.json",
   "indexDirectory": "var/indexes",
-  "activeProfile": "tf-v1",
+  "activeProfile": "bm25-v1",
   "activeVariant": "raw-wiki",
   "profiles": [
     {

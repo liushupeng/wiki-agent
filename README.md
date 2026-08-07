@@ -230,24 +230,28 @@ npm test
 
 实验组严格分开：
 
-- `raw-only`：仅 `notes/`，使用 `tf-v1/raw-only`。
-- `raw-wiki`：`notes/ + wiki/`，重排时 Wiki 优先，使用 `tf-v1/raw-wiki`。
+- `raw-only`：仅 `notes/`，使用 `bm25-v1/raw-only`。
+- `raw-wiki`：`notes/ + wiki/`，重排时 Wiki 优先，使用 `bm25-v1/raw-wiki`。
 
-`tf-v1` 的 variants 在配置中显式绑定 source config。三个资源消耗型命令在无参数时只输出帮助（exit code 0），不会构建索引、运行评测或调用 LLM。实际构建索引必须显式指定 profile；省略 `--variant` 时构建该 profile 的全部 variants。manifest 会记录 profile、variant、数据源配置指纹、文档数和 chunk 数，运行时若任一身份不匹配会拒绝混用：
+`bm25-v1` 的 variants 在配置中显式绑定 source config。三个资源消耗型命令在无参数时只输出帮助（exit code 0），不会构建索引、运行评测或调用 LLM。实际构建索引必须显式指定 profile；省略 `--variant` 时构建该 profile 的全部 variants。manifest 会记录 profile、variant、数据源配置指纹、文档数和 chunk 数，运行时若任一身份不匹配会拒绝混用：
 
 ```powershell
 npm run index:knowledge
-npm run index:knowledge -- -- --profile tf-v1 --variant raw-only
-npm run index:knowledge -- -- --profile tf-v1 --variant raw-wiki
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
 ```
 
-检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。提供题目文件、`--variant` 或 `--retriever` 中任一参数才会实际运行：
+检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。提供题目文件、`--profile`、`--variant` 或 `--retriever` 中任一参数才会实际运行：
 
 ```powershell
 npm run eval:recall -- -- --variant both --retriever both
+npm run eval:recall -- -- --profile bm25-v1 --variant both --retriever vector
+npm run eval:recall -- -- --profile bm25-v1 --variant raw-wiki --retriever vector --wiki-first false
 ```
 
-`--variant` 选择索引实验组（默认 `both`），而 `--retriever` 选择检索实现（默认 `vector`）。召回报告写入 `var/evals/recall/<timestamp>/report.json`。
+`--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。召回报告会记录每个变体的实际 Wiki 优先策略，并写入 `var/evals/recall/<timestamp>/report.json`。
+
+每次 Recall 评测还会在同一输出目录写入一条 `eval.recall` JSONL Trace。其 `rag.search` 子 span 与在线检索使用相同的候选—重排诊断字段：query、profile、variant、candidate limit、Wiki 优先策略、Top-20 候选和最终 Top-5 结果；评测事件补充金标命中、rank、关键词覆盖率和失败类型。终端仅显示 Trace 路径，Trace 是诊断原始事实，报告是其汇总视图。
 
 Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，必须通过显式 CLI 参数选择可复现样本、指定题目，或用 `--all` 明确允许全量运行；无参数只显示帮助且绝不调用 LLM：
 
@@ -255,9 +259,11 @@ Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，必须�
 npm run eval:agent -- -- --variant both --random-count 5 --seed baseline-1
 
 npm run eval:agent -- -- --variant raw-only --question-ids investment-pillars,raft-components
+
+npm run eval:agent -- -- --profile bm25-v1 --variant both --random-count 3 --seed bm25-baseline-1
 ```
 
-`--all`、`--random-count` 与 `--question-ids` 互斥；`--seed` 仅可与 `--random-count` 一起使用。全量 Agent 评测必须明确传入 `--all`。`--help` 可显示三条命令的完整用法；非法参数会同时输出错误和 usage。旧的 `RAG_EVAL_MODE`、`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 和 `AGENT_EVAL_QUESTION_IDS` 环境变量不再作为评测入口读取。
+`--profile` 选择索引 profile（默认 `bm25-v1`）。`--all`、`--random-count` 与 `--question-ids` 互斥；`--seed` 仅可与 `--random-count` 一起使用。全量 Agent 评测必须明确传入 `--all`。`--help` 可显示三条命令的完整用法；非法参数会同时输出错误和 usage。旧的 `RAG_EVAL_MODE`、`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 和 `AGENT_EVAL_QUESTION_IDS` 环境变量不再作为评测入口读取。
 
 双组 Agent 输出写入 `var/evals/agent/<time>/`：`report.json` 含 Git/题库 SHA、模型和 source/profile/variant identity、总体与分类汇总及 raw/wiki lift；`review/` 含匿名 A/B 的 `review.jsonl`、CSV、HTML 与 `annotation-template.csv`。盲测映射只保存在 `blind-mapping.internal.json`，勿交给标注者。`npm run build` 与 `node --test` 均不调用 LLM。
 
@@ -349,7 +355,7 @@ npm run index:knowledge
 实际构建必须显式指定 profile：
 
 ```bash
-npm run index:knowledge -- -- --profile tf-v1
+npm run index:knowledge -- -- --profile bm25-v1
 ```
 
 索引 profile 在 `config/rag.indexes.jsonc` 中声明多个 variant；每个 variant 显式绑定一个 knowledge sources 配置。日常 `ask` 固定使用 active profile 的 `raw-wiki` variant。该配置文件支持注释，并通过同目录的 JSON Schema 提供字段说明、校验和自动补全。
@@ -383,17 +389,17 @@ npm run index:knowledge -- -- --profile tf-v1
 ```
 
 ```bash
-npm run index:knowledge -- -- --profile tf-v1
-npm run index:knowledge -- -- --profile tf-v1 --variant raw-only
+npm run index:knowledge -- -- --profile bm25-v1
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
 ```
 
 每个 profile/variant 写入独立目录：
 
 ```text
-var/indexes/tf-v1/raw-only/index.json
-var/indexes/tf-v1/raw-only/manifest.json
-var/indexes/tf-v1/raw-wiki/index.json
-var/indexes/tf-v1/raw-wiki/manifest.json
+var/indexes/bm25-v1/raw-only/index.json
+var/indexes/bm25-v1/raw-only/manifest.json
+var/indexes/bm25-v1/raw-wiki/index.json
+var/indexes/bm25-v1/raw-wiki/manifest.json
 ```
 
 索引数据流采用惰性读取和流式写入。每次只读取一个文件，逐个生成 chunk
@@ -406,7 +412,7 @@ iterateSourceDocuments / iterateSourceDocumentsFromRoots
 -> VectorStore.replaceChunks
 ```
 
-默认 profile `tf-v1` 使用本地词频向量与 JSON 后端；`bm25-v1` 是零模型、零 API 成本的本地关键词检索基线。profile 定义于
+默认 profile `bm25-v1` 使用本地中文 bigram BM25 与 JSON 后端；`tf-v1` 保留为词频余弦对照实验。profile 定义于
 `config/rag.indexes.jsonc`：它固定 embedding、chunk 参数、向量后端；variant 固定语料 source config 与索引目录名。
 `manifest.json` 记录 profile、variant、source config、文档数和 chunk 数；查询端会验证这些身份及 embedding，不一致时拒绝查询并要求重建。
 
@@ -428,16 +434,16 @@ iterateSourceDocuments / iterateSourceDocumentsFromRoots
 - `src/rag/vectorStore.ts`：`VectorStore`
 - `src/rag/indexPipeline.ts`：索引编排
 
-构建 BM25 基线：
+重建默认 BM25 索引：
 
 ```bash
 npm run index:knowledge -- -- --profile bm25-v1
 ```
 
-在不切换日常 `tf-v1/raw-wiki` 的情况下构建另一个 profile/variant：
+构建 TF 对照索引：
 
 ```powershell
-npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
+npm run index:knowledge -- -- --profile tf-v1 --variant raw-wiki
 ```
 
 要测试新的 embedding，新增一个 profile 及其 variants，构建对应的独立索引；确认收益后再将 `activeProfile` / `activeVariant` 切换到目标组合。OpenAI 兼容服务使用 profile 中声明的环境变量保存 endpoint 与 API key，不会写入 manifest。
@@ -787,7 +793,7 @@ dist/src/tests/**/*.test.js
 - skill manifest 懒加载
 - Agent policy contract：检索路由、局部读笔记、关联范围及高风险工具加载顺序；这类测试不请求 LLM，只防止 system prompt 的关键行为约束被意外删除。
 
-`npm run eval:recall` 无参数时仅显示帮助。带参数运行时默认读取 `evaluation/questions.json`，默认比较两个索引实验组并仅评估 vector 检索；可通过第一个命令行参数指定评测问题文件。参数为 `--variant raw-only|raw-wiki|both` 和 `--retriever vector|grep|both`，报告写入 `var/evals/recall/<timestamp>/`。
+`npm run eval:recall` 无参数时仅显示帮助。带参数运行时默认读取 `evaluation/questions.json`，默认使用 `bm25-v1`、比较两个索引实验组并仅评估 vector 检索；可通过第一个命令行参数指定评测问题文件。参数为 `--profile <profileId>`、`--variant raw-only|raw-wiki|both` 和 `--retriever vector|grep|both`，报告写入 `var/evals/recall/<timestamp>/`。
 
 `npm run eval:agent` 无参数时仅显示帮助，绝不创建 Agent 或调用 LLM。实际运行会串行调用真实 Agent，因此会消耗模型 token 和本地检索时间；必须通过 `--random-count`、`--question-ids` 或明确的 `--all` 选择题目，并默认运行两个索引实验组。支持通过 CLI 的随机或指定题目 ID 控制成本：
 
@@ -806,6 +812,12 @@ RAG eval 支持对比向量检索和 grep 检索：
 # 默认：两个索引实验组，且只评估向量检索 search_notes
 npm run eval:recall -- -- --variant both
 
+# 使用已构建的 BM25 索引
+npm run eval:recall -- -- --profile bm25-v1 --variant both --retriever vector
+
+# 仅测 Wiki 语料扩展，不启用 Wiki 优先重排
+npm run eval:recall -- -- --profile bm25-v1 --variant raw-wiki --retriever vector --wiki-first false
+
 # 只评估 grep 检索 grep_notes
 npm run eval:recall -- -- --retriever grep
 
@@ -813,7 +825,7 @@ npm run eval:recall -- -- --retriever grep
 npm run eval:recall -- -- --variant both --retriever both
 ```
 
-评测问题可以提供 `grepTerms`，让 grep 分别检索多个词项、按同一行命中的词项数排序。`question` 始终用于向量检索。
+评测问题可以提供 `grepTerms`，让 grep 分别检索多个词项、按同一行命中的词项数排序。`question` 始终用于向量检索。`expectedSource` 保持兼容；后续可使用 `expectedSources` 指定任意一个可接受的 raw/Wiki 证据来源。
 
 实际运行 Agent 时，可以用 trace 看 grep 是否有帮助：
 

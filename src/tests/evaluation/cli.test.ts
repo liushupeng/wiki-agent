@@ -20,38 +20,43 @@ test('CLI command parsers require explicit execution intent', () => {
     );
     assert.deepEqual(
         parseRecallEvalCommand(['--variant', 'both', '--retriever', 'grep']),
-        { action: 'run', args: { variant: 'both', retriever: 'grep' } }
+        { action: 'run', args: { profile: 'bm25-v1', variant: 'both', retriever: 'grep' } }
     );
     assert.deepEqual(
         parseAgentEvalCommand(['--variant', 'both', '--random-count', '3', '--seed', '20260805']),
-        { action: 'run', args: { variant: 'both', randomCount: 3, seed: '20260805' } }
+        { action: 'run', args: { profile: 'bm25-v1', variant: 'both', randomCount: 3, seed: '20260805' } }
     );
     assert.throws(() => parseIndexKnowledgeCommand(['--variant', 'raw-only']), /--profile is required/);
     assert.throws(() => parseAgentEvalCommand(['--variant', 'both']), /choose --all/);
     assert.deepEqual(
         parseAgentEvalCommand(['--all']),
-        { action: 'run', args: { variant: 'both' } }
+        { action: 'run', args: { profile: 'bm25-v1', variant: 'both' } }
     );
 });
 
 test('parseRecallEvalArgs defaults and separates variant from retriever', () => {
-    assert.deepEqual(parseRecallEvalArgs([]), { variant: 'both', retriever: 'vector' });
+    assert.deepEqual(parseRecallEvalArgs([]), { profile: 'bm25-v1', variant: 'both', retriever: 'vector' });
     assert.deepEqual(
-        parseRecallEvalArgs(['--', 'custom-questions.json', '--variant', 'raw-wiki', '--retriever', 'grep']),
-        { questionsFile: 'custom-questions.json', variant: 'raw-wiki', retriever: 'grep' }
+        parseRecallEvalArgs(['--', 'custom-questions.json', '--profile', 'bm25-v1', '--variant', 'raw-wiki', '--retriever', 'grep']),
+        { questionsFile: 'custom-questions.json', profile: 'bm25-v1', variant: 'raw-wiki', retriever: 'grep' }
+    );
+    assert.deepEqual(
+        parseRecallEvalArgs(['--wiki-first', 'false']),
+        { profile: 'bm25-v1', variant: 'both', retriever: 'vector', wikiFirst: false }
     );
     assert.throws(() => parseRecallEvalArgs(['--mode', 'both']), /usage:/);
     assert.throws(() => parseRecallEvalArgs(['--retriever', 'invalid']), /unsupported retriever/);
+    assert.throws(() => parseRecallEvalArgs(['--wiki-first', 'sometimes']), /must be true or false/);
 });
 
 test('parseAgentEvalArgs supports deterministic samples or explicit IDs', () => {
     assert.deepEqual(
-        parseAgentEvalArgs(['questions.json', '--variant', 'raw-only', '--random-count', '3', '--seed', 'baseline-1']),
-        { questionsFile: 'questions.json', variant: 'raw-only', randomCount: 3, seed: 'baseline-1' }
+        parseAgentEvalArgs(['questions.json', '--profile', 'bm25-v1', '--variant', 'raw-only', '--random-count', '3', '--seed', 'baseline-1']),
+        { questionsFile: 'questions.json', profile: 'bm25-v1', variant: 'raw-only', randomCount: 3, seed: 'baseline-1' }
     );
     assert.deepEqual(
         parseAgentEvalArgs(['--question-ids', 'investment-pillars, raft-components']),
-        { variant: 'both', questionIds: ['investment-pillars', 'raft-components'] }
+        { profile: 'bm25-v1', variant: 'both', questionIds: ['investment-pillars', 'raft-components'] }
     );
 });
 

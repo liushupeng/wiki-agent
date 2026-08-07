@@ -14,12 +14,12 @@ export type EvaluationExperiment = {
 
 const EXPERIMENTS: Record<EvaluationMode, Omit<EvaluationExperiment, 'mode'>> = {
     'raw-only': {
-        indexProfile: 'tf-v1',
+        indexProfile: 'bm25-v1',
         indexVariant: 'raw-only',
         wikiFirst: false
     },
     'raw-wiki': {
-        indexProfile: 'tf-v1',
+        indexProfile: 'bm25-v1',
         indexVariant: 'raw-wiki',
         wikiFirst: true
     }

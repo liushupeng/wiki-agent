@@ -2,12 +2,15 @@ import { parseEvaluationMode } from './experiments.js';
 
 export type RecallEvalArgs = {
     questionsFile?: string;
+    profile: string;
     variant: 'raw-only' | 'raw-wiki' | 'both';
     retriever: 'vector' | 'grep' | 'both';
+    wikiFirst?: boolean;
 };
 
 export type AgentEvalArgs = {
     questionsFile?: string;
+    profile: string;
     variant: 'raw-only' | 'raw-wiki' | 'both';
     randomCount?: number;
     seed?: string;
@@ -25,16 +28,24 @@ export function parseRecallEvalCommand(args: string[]): EvaluationCommand<Recall
 }
 
 export function parseRecallEvalArgs(args: string[]): RecallEvalArgs {
-    const result: RecallEvalArgs = { variant: 'both', retriever: 'vector' };
+    const result: RecallEvalArgs = { profile: 'bm25-v1', variant: 'both', retriever: 'vector' };
     for (let index = 0; index < args.length; index += 1) {
         const argument = args[index];
         if (argument === '--') continue;
+        if (argument === '--profile') {
+            result.profile = requireValue(args, ++index, '--profile');
+            continue;
+        }
         if (argument === '--variant') {
             result.variant = parseVariant(requireValue(args, ++index, '--variant'));
             continue;
         }
         if (argument === '--retriever') {
             result.retriever = parseRetriever(requireValue(args, ++index, '--retriever'));
+            continue;
+        }
+        if (argument === '--wiki-first') {
+            result.wikiFirst = parseBoolean(requireValue(args, ++index, '--wiki-first'), '--wiki-first');
             continue;
         }
         if (!argument?.startsWith('--') && !result.questionsFile) {
@@ -53,11 +64,15 @@ export function parseAgentEvalCommand(args: string[]): EvaluationCommand<AgentEv
 }
 
 export function parseAgentEvalArgs(args: string[]): AgentEvalArgs {
-    const result: AgentEvalArgs = { variant: 'both' };
+    const result: AgentEvalArgs = { profile: 'bm25-v1', variant: 'both' };
     let runAll = false;
     for (let index = 0; index < args.length; index += 1) {
         const argument = args[index];
         if (argument === '--') continue;
+        if (argument === '--profile') {
+            result.profile = requireValue(args, ++index, '--profile');
+            continue;
+        }
         if (argument === '--variant') {
             result.variant = parseVariant(requireValue(args, ++index, '--variant'));
             continue;
@@ -103,9 +118,9 @@ export function recallUsage(): string {
     return [
         'usage:',
         '  npm run eval:recall',
-        '  npm run eval:recall -- -- --variant raw-only|raw-wiki|both --retriever vector|grep|both [questionsFile]',
+        '  npm run eval:recall -- -- --profile <profileId> --variant raw-only|raw-wiki|both --retriever vector|grep|both [--wiki-first true|false] [questionsFile]',
         '',
-        'Run without arguments prints this help and does not run an evaluation.'
+        'Default profile: bm25-v1. Run without arguments prints this help and does not run an evaluation.'
     ].join('\n');
 }
 
@@ -113,9 +128,9 @@ export function agentUsage(): string {
     return [
         'usage:',
         '  npm run eval:agent',
-        '  npm run eval:agent -- -- --variant raw-only|raw-wiki|both (--all | --random-count <n> [--seed <seed>] | --question-ids <id1,id2,...>) [questionsFile]',
+        '  npm run eval:agent -- -- --profile <profileId> --variant raw-only|raw-wiki|both (--all | --random-count <n> [--seed <seed>] | --question-ids <id1,id2,...>) [questionsFile]',
         '',
-        'Run without arguments prints this help and never calls an LLM. --all explicitly permits the full evaluation.'
+        'Default profile: bm25-v1. Run without arguments prints this help and never calls an LLM. --all explicitly permits the full evaluation.'
     ].join('\n');
 }
 
@@ -133,6 +148,12 @@ function parseVariant(value: string): RecallEvalArgs['variant'] {
 function parseRetriever(value: string): RecallEvalArgs['retriever'] {
     if (value === 'vector' || value === 'grep' || value === 'both') return value;
     throw new Error(`unsupported retriever "${value}"; expected vector, grep, or both`);
+}
+
+function parseBoolean(value: string, option: string): boolean {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    throw new Error(`${option} must be true or false`);
 }
 
 function parsePositiveInteger(value: string, option: string): number {

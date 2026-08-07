@@ -44,6 +44,7 @@ async function main(): Promise<void> {
         console.log(agentUsage());
         return;
     }
+    const startedAt = performance.now();
     const arguments_ = command.args;
     const questionsFile = path.resolve(arguments_.questionsFile ?? 'evaluation/questions.json');
     const questions = validateQuestions(JSON.parse(await fs.readFile(questionsFile, 'utf-8')));
@@ -56,6 +57,7 @@ async function main(): Promise<void> {
     const experimentModes = parseEvaluationMode(arguments_.variant);
     console.log([
         `[agent] 已选 ${selectedQuestions.length}/${questions.length} 道题；变体：${experimentModes.join(', ')}。`,
+        `[agent] Profile：${arguments_.profile}。`,
         `[agent] 模型：${process.env.MODEL_NAME ?? 'deepseek-v4-pro'}；最大步骤：${process.env.MAX_LOOP_STEPS ?? 20}。`,
         `[agent] 输出目录：${outputDirectory}`
     ].join('\n'));
@@ -68,7 +70,7 @@ async function main(): Promise<void> {
     const pairs = new Map<string, { question: AgentEvalQuestion; rawOnly?: ReturnType<typeof scoreAgentAnswer>; rawWiki?: ReturnType<typeof scoreAgentAnswer>; traceFile?: string; traceId?: string }>();
         for (const mode of experimentModes) {
             const experiment = getEvaluationExperiment(mode);
-            const profile = resolveRagIndexProfile(indexesConfig, experiment.indexProfile);
+            const profile = resolveRagIndexProfile(indexesConfig, arguments_.profile);
             const variant = resolveRagIndexVariant(profile, experiment.indexVariant);
             const modeStartedAt = performance.now();
             console.log(`[agent] [${mode}] 正在初始化 ${profile.id}/${variant.id}（MCP、工具与索引）…`);
@@ -145,11 +147,12 @@ async function main(): Promise<void> {
             status: 'success', questionsFile, outputDirectory,
             metadata: {
                 gitCommit: await readGitCommit(), questionSetSha256: await sha256File(questionsFile),
+                profile: arguments_.profile,
                 model: process.env.MODEL_NAME ?? 'deepseek-v4-pro', temperature: 0.1, maxSteps: Number(process.env.MAX_LOOP_STEPS ?? 20),
                 selectedQuestionIds: selectedQuestions.map(question => question.id), executedAt: new Date().toISOString(),
                 experiments: await Promise.all(Object.keys(runs).map(async mode => {
                     const experiment = getEvaluationExperiment(mode as 'raw-only' | 'raw-wiki');
-                    const profile = resolveRagIndexProfile(indexesConfig, experiment.indexProfile);
+                    const profile = resolveRagIndexProfile(indexesConfig, arguments_.profile);
                     const variant = resolveRagIndexVariant(profile, experiment.indexVariant);
                     return { mode, indexProfile: profile.id, indexVariant: variant.id, sourceConfig: await getSourceConfigIdentity(variant.sourceConfigPath) };
                 }))
@@ -163,7 +166,7 @@ async function main(): Promise<void> {
             reviewArtifacts: artifacts
         };
         await fs.writeFile(path.join(outputDirectory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
-        printSummary(runs, comparisons, artifacts, outputDirectory);
+        printSummary(runs, comparisons, artifacts, outputDirectory, performance.now() - startedAt);
 }
 
 async function readOnlyTrace(traceDir: string): Promise<string> {
@@ -192,6 +195,7 @@ function validateQuestions(value: unknown): AgentEvalQuestion[] {
             ...(question.primaryStage ? { primaryStage: question.primaryStage } : {}),
             ...(question.difficulty ? { difficulty: question.difficulty } : {}),
             ...(question.expectedSource ? { expectedSource: question.expectedSource } : {}),
+            ...(question.expectedSources ? { expectedSources: question.expectedSources } : {}),
             ...(question.expectedTerms ? { expectedTerms: question.expectedTerms } : {})
         };
     });
@@ -217,7 +221,8 @@ function printSummary(
     runs: Record<string, AgentEvalRun>,
     comparisons: Array<{ id: string; outcome: string }>,
     artifacts: Awaited<ReturnType<FileReviewArtifactWriter['write']>>,
-    outputDirectory: string
+    outputDirectory: string,
+    elapsedMs: number
 ): void {
     console.log('[agent] 汇总：');
     for (const [mode, run] of Object.entries(runs)) {
@@ -235,6 +240,7 @@ function printSummary(
         const count = (outcome: string) => comparisons.filter(comparison => comparison.outcome === outcome).length;
         console.log(`  raw-wiki 对比 raw-only：改善 ${count('improved')} | 退化 ${count('regressed')} | 不变 ${count('unchanged')}`);
     }
+    console.log(`[agent] 总耗时：${formatElapsed(elapsedMs)}`);
     console.log(`[agent] 详细报告：${path.join(outputDirectory, 'report.json')}`);
     console.log(`[agent] 人工复核：${artifacts.reviewJsonlPath} | ${artifacts.reviewCsvPath} | ${artifacts.reviewHtmlPath}`);
 }
@@ -245,6 +251,10 @@ function formatPercent(value: number): string {
 
 function formatDuration(value: number): string {
     return `${Math.round(value)} ms`;
+}
+
+function formatElapsed(value: number): string {
+    return value < 1_000 ? `${Math.round(value)} ms` : `${(value / 1_000).toFixed(1)} s`;
 }
 
 main().catch(error => {

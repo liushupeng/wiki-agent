@@ -4,6 +4,7 @@ import '../../src/env.js';
 import {
     EvalComparisonSummary,
     EvalQuestion,
+    EvalRetrievalDecision,
     EvalSummary,
     createGrepEvalRetriever,
     createVectorEvalRetriever,
@@ -15,6 +16,8 @@ import { getEvaluationExperiment, parseEvaluationMode } from '../../src/evaluati
 import { parseRecallEvalCommand, recallUsage } from '../../src/evaluation/cli.js';
 import { createCliProgressReporter } from '../../src/evaluation/cliProgress.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } from '../../src/rag/indexProfiles.js';
+import { retrievalEndTraceAttributes, retrievalStartTraceAttributes } from '../../src/rag/retrievalDiagnostics.js';
+import { createTelemetry, SpanHandle, Telemetry } from '../../src/trace/telemetry.js';
 
 /**
  * RAG 检索评测入口。
@@ -35,31 +38,80 @@ async function main() {
         console.log(recallUsage());
         return;
     }
+    const startedAt = performance.now();
     const arguments_ = command.args;
     const questionsFile = path.resolve(arguments_.questionsFile ?? 'evaluation/questions.json');
     const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
     const results: Record<string, EvalSummary | EvalComparisonSummary> = {};
+    const wikiFirstByVariant: Record<string, boolean> = {};
     const indexesConfig = await loadRagIndexesConfig();
     const experimentModes = parseEvaluationMode(arguments_.variant);
-    console.log(`[recall] 已加载 ${questions.length} 道题；变体：${experimentModes.join(', ')}；检索器：${arguments_.retriever}`);
-
-    for (const experimentMode of experimentModes) {
-        const experiment = getEvaluationExperiment(experimentMode);
-        const profile = resolveRagIndexProfile(indexesConfig, experiment.indexProfile);
-        const variant = resolveRagIndexVariant(profile, experiment.indexVariant);
-        console.log(`[recall] [${experimentMode}] 正在加载索引 ${profile.id}/${variant.id}…`);
-        const sourceRoots = await getKnowledgeSourceRoots({ KNOWLEDGE_SOURCES_CONFIG_PATH: variant.sourceConfigPath });
-        const vectorStore = await openActiveIndex(profile.id, variant.id);
-        const options = { wikiFirst: experiment.wikiFirst };
-        const vectorRetriever = createVectorEvalRetriever(vectorStore, options);
-        const grepRetriever = createGrepEvalRetriever(sourceRoots, options);
-        results[experimentMode] = await evaluate(experimentMode, arguments_.retriever, questions, vectorRetriever, grepRetriever);
-    }
-    const report = { status: 'success', questionsFile, createdAt: new Date().toISOString(), retriever: arguments_.retriever, variant: arguments_.variant, experiments: results };
     const outputDirectory = path.resolve('var/evals/recall', new Date().toISOString().replace(/[:.]/g, '-'));
     await fs.mkdir(outputDirectory, { recursive: true });
-    await fs.writeFile(path.join(outputDirectory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-    printSummary(results, outputDirectory);
+    const telemetry = createTelemetry({
+        backend: 'file',
+        traceDir: path.join(outputDirectory, 'traces'),
+        serviceName: 'wiki-agent-eval'
+    });
+    const evalSpan = await telemetry.startSpan('eval.recall', {
+        attributes: {
+            'gen_ai.operation.name': 'evaluation',
+            'wiki_agent.eval.questions_file': questionsFile,
+            'wiki_agent.eval.question_count': questions.length,
+            'wiki_agent.rag.profile': arguments_.profile,
+            'wiki_agent.eval.variant': arguments_.variant,
+            'wiki_agent.eval.retriever': arguments_.retriever
+        }
+    });
+    console.log(`[recall] 已加载 ${questions.length} 道题；Profile：${arguments_.profile}；变体：${experimentModes.join(', ')}；检索器：${arguments_.retriever}；Wiki 优先：${arguments_.wikiFirst === undefined ? '按变体默认值' : arguments_.wikiFirst}`);
+
+    try {
+        for (const experimentMode of experimentModes) {
+            const experiment = getEvaluationExperiment(experimentMode);
+            const profile = resolveRagIndexProfile(indexesConfig, arguments_.profile);
+            const variant = resolveRagIndexVariant(profile, experiment.indexVariant);
+            const options = { wikiFirst: arguments_.wikiFirst ?? experiment.wikiFirst };
+            wikiFirstByVariant[experimentMode] = options.wikiFirst;
+            console.log(`[recall] [${experimentMode}] 正在加载索引 ${profile.id}/${variant.id}（Wiki 优先：${options.wikiFirst}）…`);
+            const sourceRoots = await getKnowledgeSourceRoots({ KNOWLEDGE_SOURCES_CONFIG_PATH: variant.sourceConfigPath });
+            const vectorStore = await openActiveIndex(profile.id, variant.id);
+            const vectorRetriever = createVectorEvalRetriever(vectorStore, options);
+            const grepRetriever = createGrepEvalRetriever(sourceRoots, options);
+            results[experimentMode] = await evaluate(
+                experimentMode,
+                arguments_.retriever,
+                questions,
+                vectorRetriever,
+                grepRetriever,
+                { telemetry, evalSpan, profile: profile.id, variant: variant.id, wikiFirst: options.wikiFirst }
+            );
+        }
+        const report = {
+            status: 'success',
+            questionsFile,
+            createdAt: new Date().toISOString(),
+            profile: arguments_.profile,
+            retriever: arguments_.retriever,
+            variant: arguments_.variant,
+            wikiFirst: wikiFirstByVariant,
+            traceFile: telemetry.filePath,
+            experiments: results
+        };
+        await fs.writeFile(path.join(outputDirectory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+        await evalSpan.end({
+            status: 'ok',
+            attributes: {
+                'wiki_agent.eval.total_elapsed_ms': Math.round(performance.now() - startedAt),
+                'wiki_agent.eval.summary': JSON.stringify(summarizeForTrace(results))
+            }
+        });
+        printSummary(arguments_.profile, results, outputDirectory, performance.now() - startedAt, telemetry.filePath);
+    } catch (error) {
+        await evalSpan.end({ status: 'error', attributes: { 'error.message': error instanceof Error ? error.message : String(error) } });
+        throw error;
+    } finally {
+        await telemetry.shutdown();
+    }
 }
 
 async function evaluate(
@@ -67,16 +119,17 @@ async function evaluate(
     retriever: 'vector' | 'grep' | 'both',
     questions: EvalQuestion[],
     vector: ReturnType<typeof createVectorEvalRetriever>,
-    grep: ReturnType<typeof createGrepEvalRetriever>
+    grep: ReturnType<typeof createGrepEvalRetriever>,
+    trace: RetrievalTraceContext
 ): Promise<EvalSummary | EvalComparisonSummary> {
-    if (retriever === 'vector') return evaluateWithProgress(experimentMode, questions, vector);
-    if (retriever === 'grep') return evaluateWithProgress(experimentMode, questions, grep);
+    if (retriever === 'vector') return evaluateWithProgress(experimentMode, questions, vector, trace);
+    if (retriever === 'grep') return evaluateWithProgress(experimentMode, questions, grep, trace);
     if (retriever === 'both') {
         const comparison: EvalComparisonSummary = {
             status: 'success',
             mode: 'both',
-            vector: await evaluateWithProgress(experimentMode, questions, vector),
-            grep: await evaluateWithProgress(experimentMode, questions, grep)
+            vector: await evaluateWithProgress(experimentMode, questions, vector, trace),
+            grep: await evaluateWithProgress(experimentMode, questions, grep, trace)
         };
         return comparison;
     }
@@ -86,7 +139,8 @@ async function evaluate(
 async function evaluateWithProgress(
     experimentMode: string,
     questions: EvalQuestion[],
-    retriever: ReturnType<typeof createVectorEvalRetriever> | ReturnType<typeof createGrepEvalRetriever>
+    retriever: ReturnType<typeof createVectorEvalRetriever> | ReturnType<typeof createGrepEvalRetriever>,
+    trace: RetrievalTraceContext
 ) {
     const startedAt = performance.now();
     const progress = createCliProgressReporter();
@@ -94,14 +148,100 @@ async function evaluateWithProgress(
         const message = `[recall] [${experimentMode}/${retriever.name}] [${completed}/${total}]: ${question.id}`;
         if (completed === 1) progress.start(message);
         else progress.update(message);
-    });
+    }, decision => writeRetrievalTrace(trace, decision));
     progress.stop();
     console.log(`[recall] [${experimentMode}/${retriever.name}] 完成：${summary.passed}/${summary.total} 通过，耗时 ${Math.round(performance.now() - startedAt)} ms。`);
     return summary;
 }
 
-function printSummary(results: Record<string, EvalSummary | EvalComparisonSummary>, outputDirectory: string): void {
+type RetrievalTraceContext = {
+    telemetry: Telemetry;
+    evalSpan: SpanHandle;
+    profile: string;
+    variant: string;
+    wikiFirst: boolean;
+};
+
+async function writeRetrievalTrace(context: RetrievalTraceContext, decision: EvalRetrievalDecision): Promise<void> {
+    const span = await context.evalSpan.startChild('rag.search', {
+        kind: 'client',
+        startedAt: decision.startedAt,
+        attributes: {
+            ...retrievalStartTraceAttributes({
+                query: decision.question.question,
+                mode: decision.retriever as 'vector' | 'grep',
+                topK: decision.topK,
+                candidateLimit: decision.candidateLimit,
+                profile: context.profile,
+                variant: context.variant,
+                wikiFirst: context.wikiFirst
+            }),
+            'wiki_agent.eval.question_id': decision.question.id,
+            'wiki_agent.eval.experiment_mode': context.variant
+        }
+    });
+    const expectedSources = decision.result.expectedSources ?? (decision.question.expectedSource ? [decision.question.expectedSource] : []);
+    const candidateRank = rankOfExpectedSource(decision.candidates, expectedSources);
+    const finalRank = rankOfExpectedSource(decision.matches, expectedSources);
+    const failureType = !expectedSources.length
+        ? 'unlabeled'
+        : candidateRank === undefined
+            ? 'candidate_miss'
+            : finalRank === undefined
+                ? 'final_rank_miss'
+                : decision.result.passed
+                    ? 'pass'
+                    : 'term_coverage_miss';
+    await span.addEvent('gen_ai.evaluation.result', {
+        'gen_ai.evaluation.name': 'retrieval_evidence',
+        'gen_ai.evaluation.score.value': decision.result.passed ? 1 : 0,
+        'gen_ai.evaluation.score.label': decision.result.passed ? 'pass' : 'fail',
+        'wiki_agent.eval.expected_sources': JSON.stringify(expectedSources),
+        'wiki_agent.eval.candidate_rank': candidateRank ?? -1,
+        'wiki_agent.eval.final_rank': finalRank ?? -1,
+        'wiki_agent.eval.term_coverage': decision.result.termScore,
+        'wiki_agent.eval.failure_type': failureType
+    });
+    await span.end({
+        status: 'ok',
+        attributes: retrievalEndTraceAttributes({
+            query: decision.question.question,
+            mode: decision.retriever as 'vector' | 'grep',
+            topK: decision.topK,
+            candidateLimit: decision.candidateLimit,
+            profile: context.profile,
+            variant: context.variant,
+            wikiFirst: context.wikiFirst,
+            candidates: decision.candidates,
+            matches: decision.matches,
+            elapsedMs: decision.elapsedMs
+        })
+    });
+}
+
+function rankOfExpectedSource(matches: Array<{ source: string }>, expectedSources: string[]): number | undefined {
+    const rank = matches.findIndex(match => expectedSources.some(expected => match.source.toLowerCase().includes(expected.toLowerCase())));
+    return rank < 0 ? undefined : rank + 1;
+}
+
+function summarizeForTrace(results: Record<string, EvalSummary | EvalComparisonSummary>): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(results).map(([variant, result]) => [
+        variant,
+        isComparisonSummary(result)
+            ? { vector: result.vector.metrics, grep: result.grep.metrics }
+            : result.metrics
+    ]));
+}
+
+function printSummary(
+    profile: string,
+    results: Record<string, EvalSummary | EvalComparisonSummary>,
+    outputDirectory: string,
+    elapsedMs: number,
+    traceFile?: string
+): void {
     console.log('[recall] 汇总：');
+    console.log('[recall] 指标口径：Recall@20 为重排前候选池；Hit@5、Hit@1、MRR@5 为最终 Top-5 排序结果。');
     for (const [variant, result] of Object.entries(results)) {
         const summaries: EvalSummary[] = isComparisonSummary(result)
             ? [result.vector, result.grep]
@@ -109,15 +249,17 @@ function printSummary(results: Record<string, EvalSummary | EvalComparisonSummar
         for (const summary of summaries) {
             const metrics = summary.metrics;
             console.log([
-                `  ${variant}/${summary.retriever}`,
+                `  ${profile}/${variant}/${summary.retriever}`,
                 `通过 ${summary.passed}/${summary.total}`,
-                `Recall@5 ${formatRatio(metrics?.recallAtK)}`,
-                `Candidate Recall@20 ${formatRatio(metrics?.candidateRecallAtK)}`,
+                `Recall@20 ${formatRatio(metrics?.candidateRecallAtK)}`,
+                `Hit@5 ${formatRatio(metrics?.recallAtK)}`,
                 `Hit@1 ${formatRatio(metrics?.hitAt1)}`,
-                `MRR ${formatRatio(metrics?.mrr)}`
+                `MRR@5 ${formatRatio(metrics?.mrr)}`
             ].join(' | '));
         }
     }
+    console.log(`[recall] 总耗时：${formatElapsed(elapsedMs)}`);
+    if (traceFile) console.log(`[recall] Trace：${traceFile}`);
     console.log(`[recall] 详细报告：${path.join(outputDirectory, 'report.json')}`);
 }
 
@@ -127,6 +269,10 @@ function isComparisonSummary(value: EvalSummary | EvalComparisonSummary): value 
 
 function formatRatio(value: number | undefined): string {
     return value === undefined ? 'n/a' : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatElapsed(value: number): string {
+    return value < 1_000 ? `${Math.round(value)} ms` : `${(value / 1_000).toFixed(1)} s`;
 }
 
 main().catch(error => {

@@ -48,6 +48,18 @@ test('scoreQuestion fails when term coverage is below the threshold', () => {
     assert.equal(result.termScore, 0.5);
 });
 
+test('scoreQuestion accepts any configured evidence source', () => {
+    const result = scoreQuestion({
+        question: 'why use rag tools?',
+        expectedSources: ['raw/agent.md', 'wiki/rag-overview.md'],
+        expectedTerms: ['Agent', 'retrieval']
+    }, [{ ...matches[0], source: 'wiki/rag-overview.md' }]);
+
+    assert.equal(result.sourceHit, true);
+    assert.equal(result.passed, true);
+    assert.deepEqual(result.expectedSources, ['raw/agent.md', 'wiki/rag-overview.md']);
+});
+
 test('evaluateRetriever searches vector queries and summarizes accuracy', async () => {
     const searchedQueries: string[] = [];
     const progress: string[] = [];

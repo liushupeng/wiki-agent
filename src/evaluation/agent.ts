@@ -6,6 +6,7 @@ export type AgentEvalQuestion = {
     difficulty?: 'easy' | 'medium' | 'hard';
     question: string;
     expectedSource?: string;
+    expectedSources?: string[];
     expectedTerms?: string[];
 };
 
@@ -106,6 +107,7 @@ export type AgentEvalResult = {
     matchedTerms: string[];
     termCoverage: number;
     expectedSource?: string;
+    expectedSources?: string[];
     sourceHit: boolean;
     sourceEvidence: string[];
     passed: boolean;
@@ -185,10 +187,11 @@ export function scoreAgentAnswer(question: AgentEvalQuestion, answer: string, tr
     const normalizedAnswer = answer.toLowerCase();
     const matchedTerms = expectedTerms.filter(term => normalizedAnswer.includes(term.toLowerCase()));
     const termCoverage = expectedTerms.length === 0 ? 1 : round(matchedTerms.length / expectedTerms.length);
-    const sourceEvidence = question.expectedSource
-        ? trace.evidenceSources.filter(source => source.toLowerCase().includes(question.expectedSource!.toLowerCase()))
+    const expectedSources = resolveExpectedSources(question);
+    const sourceEvidence = expectedSources.length
+        ? trace.evidenceSources.filter(source => sourceMatches(source, expectedSources))
         : trace.evidenceSources;
-    const sourceHit = question.expectedSource ? sourceEvidence.length > 0 : true;
+    const sourceHit = expectedSources.length ? sourceEvidence.length > 0 : true;
 
     return {
         id: question.id,
@@ -199,11 +202,22 @@ export function scoreAgentAnswer(question: AgentEvalQuestion, answer: string, tr
         matchedTerms,
         termCoverage,
         ...(question.expectedSource ? { expectedSource: question.expectedSource } : {}),
+        ...(expectedSources.length ? { expectedSources } : {}),
         sourceHit,
         sourceEvidence,
         passed: sourceHit && termCoverage >= 0.6,
         trace
     };
+}
+
+function resolveExpectedSources(question: AgentEvalQuestion): string[] {
+    const values = question.expectedSources ?? (question.expectedSource ? [question.expectedSource] : []);
+    return Array.from(new Set(values.map(value => value.trim()).filter(Boolean)));
+}
+
+function sourceMatches(source: string, expectedSources: string[]): boolean {
+    const normalizedSource = source.toLowerCase();
+    return expectedSources.some(expectedSource => normalizedSource.includes(expectedSource.toLowerCase()));
 }
 
 function isJsonlV2Record(value: unknown): value is JsonlV2Record {

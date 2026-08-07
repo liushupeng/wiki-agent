@@ -62,6 +62,26 @@ test('scoreAgentAnswer requires source evidence and 60 percent term coverage', (
     assert.equal(result.passed, true);
 });
 
+test('scoreAgentAnswer accepts any configured evidence source', () => {
+    const result = scoreAgentAnswer({
+        id: 'example',
+        question: 'example question',
+        expectedSources: ['raw/expected.md', 'wiki/expected.md'],
+        expectedTerms: ['value']
+    }, 'Value.', {
+        stepCount: 1,
+        totalToolCallCount: 1,
+        ragToolCallCount: 1,
+        ragToolUsageRate: 1,
+        toolFailures: [],
+        evidenceSources: ['wiki/expected.md']
+    });
+
+    assert.equal(result.sourceHit, true);
+    assert.deepEqual(result.sourceEvidence, ['wiki/expected.md']);
+    assert.equal(result.passed, true);
+});
+
 test('parseJsonlV2 rejects invalid records', () => {
     assert.throws(() => parseJsonlV2('{"schemaVersion":1}\n'), /unsupported trace schema at line 1/);
     assert.throws(() => parseJsonlV2('not-json\n'), /invalid JSONL at line 1/);

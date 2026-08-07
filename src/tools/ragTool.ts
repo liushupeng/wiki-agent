@@ -5,7 +5,8 @@ import { prioritizeWikiMatches } from '../rag/ranking.js';
 import { IndexedChunk, SearchResult } from '../rag/types.js';
 import { getKnowledgeSourceRoots, sourceWithPrefix } from '../rag/sourceRoots.js';
 import { openActiveIndex } from '../rag/indexRuntime.js';
-import { getActiveSpan } from '../trace/telemetry.js';
+import { retrievalEndTraceAttributes, retrievalStartTraceAttributes } from '../rag/retrievalDiagnostics.js';
+import { getActiveSpan, type SpanHandle } from '../trace/telemetry.js';
 import { ToolResult } from '../types.js';
 
 const DEFAULT_GREP_MAX_RESULTS = 10;
@@ -165,23 +166,41 @@ export class SearchNotesTool extends BaseAgentTool {
 
     async execute(args: { query: string; topK?: number }): Promise<ToolResult> {
         const topK = Math.min(args.topK ?? 5, 12);
-        const ragSpan = await getActiveSpan()?.startChild('rag.search', {
-            attributes: {
-                'wiki_agent.rag.query': args.query,
-                'wiki_agent.rag.top_k': topK,
-                'wiki_agent.rag.mode': 'vector'
-            }
-        });
+        let ragSpan: SpanHandle | undefined;
         try {
             const index = await openActiveIndex(this.options.indexProfile, this.options.indexVariant);
             const candidateLimit = Math.min(topK * 4, 48);
-            const matches = prioritizeWikiMatches(await index.search(args.query, candidateLimit), topK);
+            const startedAt = new Date();
+            const startedAtMs = performance.now();
+            ragSpan = await getActiveSpan()?.startChild('rag.search', {
+                kind: 'client',
+                startedAt,
+                attributes: retrievalStartTraceAttributes({
+                    query: args.query,
+                    mode: 'vector',
+                    topK,
+                    candidateLimit,
+                    profile: index.profile.id,
+                    variant: index.variant.id,
+                    wikiFirst: true
+                })
+            });
+            const candidates = await index.search(args.query, candidateLimit);
+            const matches = prioritizeWikiMatches(candidates, topK);
             await ragSpan?.end({
                 status: 'ok',
-                attributes: {
-                    'wiki_agent.rag.match_count': matches.length,
-                    'wiki_agent.rag.sources': JSON.stringify(Array.from(new Set(matches.map(match => match.source))))
-                }
+                attributes: retrievalEndTraceAttributes({
+                    query: args.query,
+                    mode: 'vector',
+                    topK,
+                    candidateLimit,
+                    profile: index.profile.id,
+                    variant: index.variant.id,
+                    wikiFirst: true,
+                    candidates,
+                    matches,
+                    elapsedMs: performance.now() - startedAtMs
+                })
             });
 
             return this.ok({
@@ -232,12 +251,18 @@ export class GrepNotesTool extends BaseAgentTool {
 
     async execute(args: { query: string; regex?: boolean; maxResults?: number; contextLines?: number }): Promise<ToolResult> {
         const maxResults = Math.min(args.maxResults ?? DEFAULT_GREP_MAX_RESULTS, GREP_MAX_RESULTS_LIMIT);
+        const startedAt = new Date();
+        const startedAtMs = performance.now();
         const ragSpan = await getActiveSpan()?.startChild('rag.search', {
-            attributes: {
-                'wiki_agent.rag.query': args.query,
-                'wiki_agent.rag.top_k': maxResults,
-                'wiki_agent.rag.mode': 'grep'
-            }
+            kind: 'client',
+            startedAt,
+            attributes: retrievalStartTraceAttributes({
+                query: args.query,
+                mode: 'grep',
+                topK: maxResults,
+                candidateLimit: maxResults,
+                wikiFirst: false
+            })
         });
         try {
             const contextLines = Math.min(args.contextLines ?? DEFAULT_GREP_CONTEXT_LINES, GREP_CONTEXT_LINES_LIMIT);
@@ -259,10 +284,16 @@ export class GrepNotesTool extends BaseAgentTool {
 
             await ragSpan?.end({
                 status: 'ok',
-                attributes: {
-                    'wiki_agent.rag.match_count': matches.length,
-                    'wiki_agent.rag.sources': JSON.stringify(Array.from(new Set(matches.map(match => match.source))))
-                }
+                attributes: retrievalEndTraceAttributes({
+                    query: args.query,
+                    mode: 'grep',
+                    topK: maxResults,
+                    candidateLimit: maxResults,
+                    wikiFirst: false,
+                    candidates: matches,
+                    matches,
+                    elapsedMs: performance.now() - startedAtMs
+                })
             });
 
             return this.ok({

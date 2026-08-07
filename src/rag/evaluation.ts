@@ -14,6 +14,7 @@ export type EvalQuestion = {
     question: string;
     grepTerms?: string[];
     expectedSource?: string;
+    expectedSources?: string[];
     expectedTerms?: string[];
 };
 
@@ -23,6 +24,7 @@ export type EvalQuestionResult = {
     question: string;
     passed: boolean;
     sourceHit: boolean;
+    expectedSources?: string[];
     termScore: number;
     topSources: Array<{ source: string; score: number }>;
     candidateSourceHit?: boolean;
@@ -58,6 +60,18 @@ export type EvalProgress = {
     completed: number;
     total: number;
     question: Required<Pick<EvalQuestion, 'id' | 'category' | 'queryType' | 'primaryStage' | 'difficulty'>> & EvalQuestion;
+};
+
+export type EvalRetrievalDecision = {
+    question: Required<Pick<EvalQuestion, 'id' | 'category' | 'queryType' | 'primaryStage' | 'difficulty'>> & EvalQuestion;
+    retriever: string;
+    topK: number;
+    candidateLimit: number;
+    candidates: SearchResult[];
+    matches: SearchResult[];
+    result: EvalQuestionResult;
+    startedAt: Date;
+    elapsedMs: number;
 };
 
 export type EvalRetrieverOptions = {
@@ -158,7 +172,8 @@ export async function evaluateRetriever(
     questions: EvalQuestion[],
     retriever: EvalRetriever,
     topK = 5,
-    onProgress?: (progress: EvalProgress) => void
+    onProgress?: (progress: EvalProgress) => void,
+    onDecision?: (decision: EvalRetrievalDecision) => Promise<void> | void
 ): Promise<EvalSummary> {
     const results: EvalQuestionResult[] = [];
 
@@ -166,11 +181,25 @@ export async function evaluateRetriever(
         const item = normalizeEvalQuestion(sourceQuestion, index);
         onProgress?.({ completed: index + 1, total: questions.length, question: item });
         const candidateK = Math.max(topK * 4, topK);
+        const startedAt = new Date();
+        const startedAtMs = performance.now();
         const candidates = retriever.candidateSearch
             ? await retriever.candidateSearch(item, candidateK)
             : await retriever.search(item, candidateK);
         const matches = retriever.rerank ? retriever.rerank(candidates, topK) : candidates.slice(0, topK);
-        results.push(scoreQuestion(item, matches, candidates));
+        const result = scoreQuestion(item, matches, candidates);
+        results.push(result);
+        await onDecision?.({
+            question: item,
+            retriever: retriever.name,
+            topK,
+            candidateLimit: candidateK,
+            candidates,
+            matches,
+            result,
+            startedAt,
+            elapsedMs: performance.now() - startedAtMs
+        });
     }
 
     const passedCount = results.filter(result => result.passed).length;
@@ -223,12 +252,12 @@ export function scoreQuestion(item: EvalQuestion, matches: SearchResult[], candi
 
     // expectedSource 评估“是否召回正确文档”；expectedTerms 评估“召回片段是否覆盖关键概念”。
     // 这里使用 60% 关键词命中率作为轻量阈值，避免单个同义词或切分差异导致评测过于脆弱。
-    const sourceHit = item.expectedSource ? matches.some(match => match.source.includes(item.expectedSource!)) : true;
+    const expectedSources = resolveExpectedSources(item);
+    const sourceHit = expectedSources.length ? matches.some(match => sourceMatches(match.source, expectedSources)) : true;
     const termHits = item.expectedTerms?.filter(term => combinedText.includes(term.toLowerCase())).length ?? 0;
     const termScore = item.expectedTerms?.length ? termHits / item.expectedTerms.length : 1;
     const passed = sourceHit && termScore >= 0.6;
-    const expectedSource = item.expectedSource?.toLowerCase();
-    const rank = expectedSource ? matches.findIndex(match => match.source.toLowerCase().includes(expectedSource)) + 1 : 1;
+    const rank = expectedSources.length ? matches.findIndex(match => sourceMatches(match.source, expectedSources)) + 1 : 1;
 
     return {
         ...(item.id ? { id: item.id } : {}),
@@ -236,12 +265,23 @@ export function scoreQuestion(item: EvalQuestion, matches: SearchResult[], candi
         question: item.question,
         passed,
         sourceHit,
+        ...(expectedSources.length ? { expectedSources } : {}),
         termScore: Number(termScore.toFixed(2)),
         topSources: matches.map(match => ({ source: match.source, score: Number(match.score.toFixed(4)) })),
-        candidateSourceHit: expectedSource ? candidates.some(match => match.source.toLowerCase().includes(expectedSource)) : true,
+        candidateSourceHit: expectedSources.length ? candidates.some(match => sourceMatches(match.source, expectedSources)) : true,
         hitAt1: rank === 1,
         reciprocalRank: rank > 0 ? Number((1 / rank).toFixed(4)) : 0
     };
+}
+
+function resolveExpectedSources(item: EvalQuestion): string[] {
+    const values = item.expectedSources ?? (item.expectedSource ? [item.expectedSource] : []);
+    return Array.from(new Set(values.map(value => value.trim()).filter(Boolean)));
+}
+
+function sourceMatches(source: string, expectedSources: string[]): boolean {
+    const normalizedSource = source.toLowerCase();
+    return expectedSources.some(expectedSource => normalizedSource.includes(expectedSource.toLowerCase()));
 }
 
 export type RetrievalMetrics = {
