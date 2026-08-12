@@ -1,4 +1,5 @@
 import path from 'path';
+import { createHash } from 'node:crypto';
 import { chunkDocument } from './chunker.js';
 import { iterateSourceDocuments } from './documentLoader.js';
 import { Embedder } from './embeddings.js';
@@ -12,6 +13,7 @@ export type IndexPipelineConfig = {
     vectorStore: VectorStore;
     embedder: Embedder;
     documents?: AsyncIterable<SourceDocument>;
+    batchSize?: number;
     onProgress?: (progress: IndexPipelineProgress) => void;
 };
 
@@ -29,6 +31,7 @@ export type IndexPipelineStats = {
     overlap: number;
     embedder: string;
     store: string;
+    chunkFingerprint: string;
 };
 
 /**
@@ -44,17 +47,40 @@ export async function runIndexPipeline(config: IndexPipelineConfig): Promise<Ind
     const documents = config.documents ?? iterateSourceDocuments(sourceDir);
     let documentCount = 0;
     let chunkCount = 0;
+    const chunkFingerprint = createHash('sha256');
 
     async function* generateIndexedChunks(): AsyncGenerator<IndexedChunk> {
+        const pending: ReturnType<typeof chunkDocument> = [];
+        const batchSize = config.batchSize ?? 16;
+
+        async function* flush(): AsyncGenerator<IndexedChunk> {
+            if (pending.length === 0) return;
+            const chunks = pending.splice(0, pending.length);
+            const vectors = embedder.embedBatch
+                ? await embedder.embedBatch(chunks.map(chunk => chunk.text))
+                : await Promise.all(chunks.map(chunk => embedder.embed(chunk.text)));
+            if (vectors.length !== chunks.length) {
+                throw new Error(`embedder returned ${vectors.length} vectors for ${chunks.length} chunks`);
+            }
+            for (let index = 0; index < chunks.length; index += 1) {
+                yield { ...chunks[index]!, vector: vectors[index]! };
+            }
+        }
+
         for await (const document of documents) {
             documentCount += 1;
             const chunks = chunkDocument(document, config.chunkSize, config.overlap);
             for (const chunk of chunks) {
                 chunkCount += 1;
-                yield {
-                    ...chunk,
-                    vector: await embedder.embed(chunk.text)
-                };
+                chunkFingerprint.update(JSON.stringify([
+                    chunk.id,
+                    chunk.source,
+                    chunk.start,
+                    chunk.end,
+                    chunk.text
+                ]));
+                pending.push(chunk);
+                if (pending.length >= batchSize) yield* flush();
             }
             config.onProgress?.({
                 documentCount,
@@ -62,6 +88,7 @@ export async function runIndexPipeline(config: IndexPipelineConfig): Promise<Ind
                 currentSource: document.source
             });
         }
+        yield* flush();
     }
 
     await config.vectorStore.replaceChunks(generateIndexedChunks(), {
@@ -76,6 +103,7 @@ export async function runIndexPipeline(config: IndexPipelineConfig): Promise<Ind
         chunkSize: config.chunkSize,
         overlap: config.overlap,
         embedder: embedder.name,
-        store: config.vectorStore.name
+        store: config.vectorStore.name,
+        chunkFingerprint: chunkFingerprint.digest('hex')
     };
 }

@@ -39,14 +39,15 @@
           "pattern": "^[a-z0-9][a-z0-9-]*$",
           "description": "稳定 profile ID，同时作为 indexDirectory 下的索引目录名。"
         },
-        "store": { "type": "string", "enum": ["json"] },
+        "store": { "type": "string", "enum": ["json", "lancedb"] },
         "chunkSize": { "type": "integer", "minimum": 1 },
         "overlap": { "type": "integer", "minimum": 0 },
         "embedder": {
           "oneOf": [
             { "$ref": "#/$defs/tfEmbedder" },
             { "$ref": "#/$defs/bm25Embedder" },
-            { "$ref": "#/$defs/openAiCompatibleEmbedder" }
+            { "$ref": "#/$defs/openAiCompatibleEmbedder" },
+            { "$ref": "#/$defs/transformersJsEmbedder" }
           ]
         },
         "variants": {
@@ -112,6 +113,23 @@
         "apiKeyEnv": { "type": "string", "minLength": 1 },
         "model": { "type": "string", "minLength": 1 },
         "dimensions": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "transformersJsEmbedder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "model", "dimensions"],
+      "properties": {
+        "type": { "const": "transformers-js" },
+        "model": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "dtype": { "type": "string", "minLength": 1 },
+        "device": { "type": "string", "enum": ["cpu", "webgpu"] },
+        "dimensions": { "type": "integer", "minimum": 1 },
+        "pooling": { "type": "string", "enum": ["cls", "mean"], "default": "cls" },
+        "maxLength": { "type": "integer", "minimum": 1, "default": 512 },
+        "batchSize": { "type": "integer", "minimum": 1, "default": 8 },
+        "cacheDir": { "type": "string", "minLength": 1 }
       }
     }
   }

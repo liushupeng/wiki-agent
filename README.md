@@ -19,6 +19,8 @@
 
 ## 架构图
 
+### 业务流程
+
 ```mermaid
 flowchart TD
     userInput["User Input"] --> agentLoop["WikiAgent Loop"]
@@ -46,6 +48,34 @@ flowchart TD
     evalLoop --> skills["Skills and Wiki Schema"]
     skills --> agentLoop
 ```
+
+### 技术栈
+
+```mermaid
+flowchart LR
+    client["CLI / User"] --> app["WikiAgent"]
+    app --> llm["OpenAI-compatible LLM"]
+    app --> tools["Tool System + MCP"]
+    app --> rag["Hybrid RAG"]
+    app --> memory["Memory"]
+    app --> telemetry["OpenTelemetry"]
+    
+    rag <--> reranker["BGE Reranker"]
+    reranker <--> fusion["RRF Fusion"]
+    fusion <--> bm25["BM25"]
+    fusion <--> bge["BGE-M3"]
+    bm25 <--> bm25db["SQLite<br/>BM25 Inverted Index"]
+    bge <--> lancedb["LanceDB<br/>Vector Index"]
+
+    tools --> mcp["MCP Servers"]
+    memory --> memorydb["SQLite<br/>Memory Store"]
+    telemetry --> jaeger["Jaeger"]
+```
+
+- **应用层**：Node.js、TypeScript、OpenAI-compatible API。
+- **检索层**：BM25 + SQLite 倒排索引、BGE-M3、BGE reranker、LanceDB。
+- **本地推理**：Transformers.js、ONNX Runtime。
+- **集成与可观测性**：MCP、SQLite、OpenTelemetry、Jaeger。
 
 项目适合学习和实验：
 
@@ -240,6 +270,23 @@ npm run index:knowledge
 npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
 npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
 ```
+
+本地混合检索将物理索引和查询策略分开配置：`rag.indexes.jsonc` 中的
+`bm25-v1`、`bge-m3-v1` 负责构建索引，`rag.retrieval.jsonc` 中的
+`dense-bge-m3-v1`、`hybrid-bge-m3-v1`、`hybrid-bge-m3-rerank-v1`
+分别启用纯向量、RRF 融合和两级 cross-encoder 精排。首次运行会下载较大的
+ONNX 模型，先做本机可行性检查，再从同一语料快照重建两个索引：
+
+```powershell
+npm run check:rag-models
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
+npm run index:knowledge -- -- --profile bge-m3-v1 --variant raw-only
+npm run eval:recall -- -- --retrieval-profile dense-bge-m3-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant raw-only --retriever vector
+```
+
+稠密 embedding 使用按模型配置和 chunk 文本寻址的磁盘缓存；索引失败后重跑会复用已经完成的向量。混合检索会校验两个索引 manifest 中的 chunk 指纹，避免融合不同语料快照。在线 Agent 可设置 `RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-rerank-v1`，并用 `RAG_INDEX_VARIANT` 选择 variant。
 
 检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。提供题目文件、`--profile`、`--variant` 或 `--retriever` 中任一参数才会实际运行：
 

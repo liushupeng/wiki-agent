@@ -23,11 +23,28 @@ export type OpenAiCompatibleEmbeddingProfile = {
     dimensions: number;
 };
 
-export type EmbeddingProfile = TfEmbeddingProfile | Bm25EmbeddingProfile | OpenAiCompatibleEmbeddingProfile;
+export type TransformersJsEmbeddingProfile = {
+    type: 'transformers-js';
+    model: string;
+    revision?: string;
+    dtype?: string;
+    device?: 'cpu' | 'webgpu';
+    dimensions: number;
+    pooling?: 'cls' | 'mean';
+    maxLength?: number;
+    batchSize?: number;
+    cacheDir?: string;
+};
+
+export type EmbeddingProfile =
+    | TfEmbeddingProfile
+    | Bm25EmbeddingProfile
+    | OpenAiCompatibleEmbeddingProfile
+    | TransformersJsEmbeddingProfile;
 
 export type RagIndexProfile = {
     id: string;
-    store: 'json';
+    store: 'json' | 'lancedb';
     chunkSize: number;
     overlap: number;
     embedder: EmbeddingProfile;
@@ -96,7 +113,7 @@ export function getIndexPaths(profile: RagIndexProfile, variant: RagIndexVariant
     const directory = path.resolve(baseDirectory, profile.id, variant.id);
     return {
         directory,
-        dataPath: path.join(directory, 'index.json'),
+        dataPath: path.join(directory, profile.store === 'lancedb' ? 'index.lance' : 'index.json'),
         manifestPath: path.join(directory, 'manifest.json')
     };
 }
@@ -108,12 +125,14 @@ export function fingerprintProfile(profile: RagIndexProfile): string {
 function parseProfile(value: unknown, index: number): RagIndexProfile {
     if (!isRecord(value)) throw new Error(`RAG index profile at index ${index} must be an object`);
     const id = readId(value.id, `RAG index profile at index ${index} id`);
-    if (value.store !== 'json') throw new Error(`RAG index profile "${id}" store must be "json"`);
+    if (value.store !== 'json' && value.store !== 'lancedb') {
+        throw new Error(`RAG index profile "${id}" store must be "json" or "lancedb"`);
+    }
     const chunkSize = readPositiveInteger(value.chunkSize, `RAG index profile "${id}" chunkSize`);
     const overlap = readNonNegativeInteger(value.overlap, `RAG index profile "${id}" overlap`);
     if (overlap >= chunkSize) throw new Error(`RAG index profile "${id}" overlap must be smaller than chunkSize`);
     const variants = parseVariants(value.variants, id);
-    return { id, store: 'json', chunkSize, overlap, embedder: parseEmbedderProfile(value.embedder, id), variants };
+    return { id, store: value.store, chunkSize, overlap, embedder: parseEmbedderProfile(value.embedder, id), variants };
 }
 
 function parseVariants(value: unknown, profileId: string): RagIndexVariant[] {
@@ -154,7 +173,34 @@ function parseEmbedderProfile(value: unknown, profileId: string): EmbeddingProfi
             dimensions: readPositiveInteger(value.dimensions, `RAG index profile "${profileId}" embedder dimensions`)
         };
     }
+    if (value.type === 'transformers-js') {
+        const device = value.device === undefined
+            ? undefined
+            : readEnum(value.device, ['cpu', 'webgpu'] as const, `RAG index profile "${profileId}" embedder device`);
+        const pooling = value.pooling === undefined
+            ? undefined
+            : readEnum(value.pooling, ['cls', 'mean'] as const, `RAG index profile "${profileId}" embedder pooling`);
+        return {
+            type: 'transformers-js',
+            model: readNonEmptyString(value.model, `RAG index profile "${profileId}" embedder model`),
+            dimensions: readPositiveInteger(value.dimensions, `RAG index profile "${profileId}" embedder dimensions`),
+            ...(value.revision === undefined ? {} : { revision: readNonEmptyString(value.revision, `RAG index profile "${profileId}" embedder revision`) }),
+            ...(value.dtype === undefined ? {} : { dtype: readNonEmptyString(value.dtype, `RAG index profile "${profileId}" embedder dtype`) }),
+            ...(device === undefined ? {} : { device }),
+            ...(pooling === undefined ? {} : { pooling }),
+            ...(value.maxLength === undefined ? {} : { maxLength: readPositiveInteger(value.maxLength, `RAG index profile "${profileId}" embedder maxLength`) }),
+            ...(value.batchSize === undefined ? {} : { batchSize: readPositiveInteger(value.batchSize, `RAG index profile "${profileId}" embedder batchSize`) }),
+            ...(value.cacheDir === undefined ? {} : { cacheDir: readNonEmptyString(value.cacheDir, `RAG index profile "${profileId}" embedder cacheDir`) })
+        };
+    }
     throw new Error(`unsupported embedding type for RAG index profile "${profileId}": ${value.type}`);
+}
+
+function readEnum<T extends string>(value: unknown, values: readonly T[], label: string): T {
+    if (typeof value !== 'string' || !values.includes(value as T)) {
+        throw new Error(`${label} must be one of ${values.join(', ')}`);
+    }
+    return value as T;
 }
 
 function readId(value: unknown, label: string): string {

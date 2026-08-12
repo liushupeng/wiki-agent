@@ -1,8 +1,10 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { clearLine, cursorTo } from 'node:readline';
 import '../../src/env.js';
 import { iterateSourceDocumentsFromRoots } from '../../src/rag/documentLoader.js';
 import { createEmbedder } from '../../src/rag/embeddings.js';
+import { CachedEmbedder } from '../../src/rag/embeddingCache.js';
 import { runIndexPipeline, type IndexPipelineProgress } from '../../src/rag/indexPipeline.js';
 import { getIndexPaths, loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } from '../../src/rag/indexProfiles.js';
 import { writeIndexManifest } from '../../src/rag/indexRuntime.js';
@@ -52,7 +54,10 @@ async function buildVariant(
     const documents = iterateSourceDocumentsFromRoots(sourceRoots);
     const sourceLabel = sourceRoots.map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ');
     const progress = createProgressReporter(startedAt);
-    const embedder = createEmbedder(profile.embedder);
+    const baseEmbedder = createEmbedder(profile.embedder);
+    const embedder = profile.embedder.type === 'transformers-js'
+        ? new CachedEmbedder(baseEmbedder, path.resolve('var/cache/embeddings', profile.id))
+        : baseEmbedder;
 
     progress.start();
     let stats: Awaited<ReturnType<typeof runIndexPipeline>>;
@@ -64,19 +69,21 @@ async function buildVariant(
             overlap: profile.overlap,
             embedder,
             vectorStore: createVectorStore(profile.store, paths.dataPath),
+            batchSize: profile.embedder.type === 'transformers-js' ? profile.embedder.batchSize : undefined,
             onProgress: progress.update
         });
         await writeIndexManifest(profile, variant, paths, embedder.identity, {
             sourceConfig,
             documentCount: stats.documentCount,
-            chunkCount: stats.chunkCount
+            chunkCount: stats.chunkCount,
+            chunkFingerprint: stats.chunkFingerprint
         });
     } finally {
         progress.stop();
     }
 
     const elapsedSeconds = (performance.now() - startedAt) / 1000;
-    const indexBytes = (await fs.stat(paths.dataPath)).size;
+    const indexBytes = await pathSize(paths.dataPath);
     const peakMemoryBytes = process.resourceUsage().maxRSS * 1024;
     const chunksPerSecond = elapsedSeconds > 0 ? stats.chunkCount / elapsedSeconds : 0;
 
@@ -100,6 +107,14 @@ async function buildVariant(
         `  Throughput:    ${chunksPerSecond.toFixed(1)} chunks/s`,
         `  Peak memory:   ${formatBytes(peakMemoryBytes)}`
     ].join('\n'));
+}
+
+async function pathSize(target: string): Promise<number> {
+    const stat = await fs.stat(target);
+    if (!stat.isDirectory()) return stat.size;
+    const entries = await fs.readdir(target, { withFileTypes: true });
+    return (await Promise.all(entries.map(entry => pathSize(`${target}/${entry.name}`))))
+        .reduce((sum, value) => sum + value, 0);
 }
 
 function createProgressReporter(startedAt: number) {

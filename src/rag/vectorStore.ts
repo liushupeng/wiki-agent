@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
+import * as lancedb from '@lancedb/lancedb';
 import { IndexedChunk, KnowledgeIndex, SearchResult, Vector } from './types.js';
 
 export type VectorSearchScoring = {
@@ -42,6 +43,7 @@ export interface VectorStore {
  */
 export class JsonVectorStore implements VectorStore {
     readonly name = 'json';
+    private loadedIndex?: Promise<KnowledgeIndex>;
 
     constructor(
         readonly filePath: string,
@@ -77,6 +79,7 @@ export class JsonVectorStore implements VectorStore {
             await handle.close();
             handle = undefined;
             await fs.rename(temporaryPath, this.filePath);
+            this.loadedIndex = undefined;
         } catch (error) {
             await handle?.close().catch(() => undefined);
             await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
@@ -85,7 +88,7 @@ export class JsonVectorStore implements VectorStore {
     }
 
     async search(vector: Vector, topK = 5): Promise<SearchResult[]> {
-        const index = await loadKnowledgeIndex(this.filePath);
+        const index = await this.loadIndex();
 
         const scores = this.scoring.type === 'bm25'
             ? bm25Scores(index.chunks, vector, this.scoring)
@@ -98,16 +101,166 @@ export class JsonVectorStore implements VectorStore {
     }
 
     async findBySource(source: string): Promise<IndexedChunk[]> {
-        const index = await loadKnowledgeIndex(this.filePath);
+        const index = await this.loadIndex();
         const normalized = normalizeSource(source);
         return index.chunks.filter(chunk => normalizeSource(chunk.source) === normalized);
     }
 
+    private loadIndex(): Promise<KnowledgeIndex> {
+        this.loadedIndex ??= loadKnowledgeIndex(this.filePath).catch(error => {
+            this.loadedIndex = undefined;
+            throw error;
+        });
+        return this.loadedIndex;
+    }
+
+}
+
+type LanceChunkRow = {
+    id: string;
+    source: string;
+    text: string;
+    start: number;
+    end: number;
+    titlePath: string;
+    tags: string;
+    links: string;
+    frontmatter: string;
+    vector: number[];
+};
+
+export class LanceDbVectorStore implements VectorStore {
+    readonly name = 'lancedb';
+    private readonly tableName = 'chunks';
+
+    constructor(readonly databasePath: string) {}
+
+    async replaceChunks(chunks: AsyncIterable<IndexedChunk>, _metadata: IndexMetadata): Promise<void> {
+        await fs.mkdir(path.dirname(this.databasePath), { recursive: true });
+        const stagingPath = `${this.databasePath}.staging-${randomUUID()}`;
+        const backupPath = `${this.databasePath}.backup-${randomUUID()}`;
+        const connection = await lancedb.connect(stagingPath);
+        let table: lancedb.Table | undefined;
+        let batch: LanceChunkRow[] = [];
+        try {
+            for await (const chunk of chunks) {
+                if (!Array.isArray(chunk.vector)) throw new Error('LanceDB requires dense vectors');
+                batch.push(toLanceRow(chunk));
+                if (batch.length >= 256) {
+                    if (!table) table = await connection.createTable(this.tableName, batch);
+                    else await table.add(batch);
+                    batch = [];
+                }
+            }
+            if (batch.length > 0) {
+                if (!table) table = await connection.createTable(this.tableName, batch);
+                else await table.add(batch);
+            }
+            if (!table) throw new Error('cannot create an empty LanceDB knowledge index');
+            connection.close();
+            const currentExists = await fs.stat(this.databasePath).then(() => true, () => false);
+            if (currentExists) await fs.rename(this.databasePath, backupPath);
+            try {
+                await fs.rename(stagingPath, this.databasePath);
+                if (currentExists) await fs.rm(backupPath, { recursive: true, force: true });
+            } catch (error) {
+                if (currentExists) await fs.rename(backupPath, this.databasePath).catch(() => undefined);
+                throw error;
+            }
+        } catch (error) {
+            connection.close();
+            await fs.rm(stagingPath, { recursive: true, force: true }).catch(() => undefined);
+            throw error;
+        }
+    }
+
+    async search(vector: Vector, topK = 5): Promise<SearchResult[]> {
+        if (!Array.isArray(vector)) throw new Error('LanceDB requires dense query vectors');
+        const connection = await lancedb.connect(this.databasePath);
+        try {
+            const table = await connection.openTable(this.tableName);
+            const rows = await table
+                .vectorSearch(vector)
+                .distanceType('cosine')
+                .select(['id', 'source', 'text', 'start', 'end', 'titlePath', 'tags', 'links', 'frontmatter'])
+                .limit(topK)
+                .toArray();
+            return rows.map(row => fromLanceRow(row, 1 - Number(row._distance ?? 1)));
+        } finally {
+            connection.close();
+        }
+    }
+
+    async findBySource(source: string): Promise<IndexedChunk[]> {
+        const connection = await lancedb.connect(this.databasePath);
+        try {
+            const table = await connection.openTable(this.tableName);
+            const escaped = source.replaceAll("'", "''");
+            const rows = await table
+                .query()
+                .where(`source = '${escaped}'`)
+                .select(['id', 'source', 'text', 'start', 'end', 'titlePath', 'tags', 'links', 'frontmatter'])
+                .toArray();
+            return rows.map(row => {
+                const result = fromLanceRow(row, 0);
+                const { score: _score, ...chunk } = result;
+                return chunk;
+            });
+        } finally {
+            connection.close();
+        }
+    }
 }
 
 export function createVectorStore(name: string, dataPath: string, scoring: VectorSearchScoring = { type: 'cosine' }): VectorStore {
     if (name === 'json') return new JsonVectorStore(path.resolve(dataPath), scoring);
+    if (name === 'lancedb') return new LanceDbVectorStore(path.resolve(dataPath));
     throw new Error(`unsupported RAG store: ${name}`);
+}
+
+function toLanceRow(chunk: IndexedChunk): LanceChunkRow {
+    return {
+        id: chunk.id,
+        source: chunk.source,
+        text: chunk.text,
+        start: chunk.start,
+        end: chunk.end,
+        titlePath: JSON.stringify(chunk.titlePath ?? []),
+        tags: JSON.stringify(chunk.tags ?? []),
+        links: JSON.stringify(chunk.links ?? []),
+        frontmatter: JSON.stringify(chunk.frontmatter ?? {}),
+        vector: chunk.vector as number[]
+    };
+}
+
+function fromLanceRow(row: Record<string, unknown>, score: number): SearchResult {
+    return {
+        id: String(row.id),
+        source: String(row.source),
+        text: String(row.text),
+        start: Number(row.start),
+        end: Number(row.end),
+        titlePath: parseStringArray(row.titlePath),
+        tags: parseStringArray(row.tags),
+        links: parseStringArray(row.links),
+        frontmatter: parseRecord(row.frontmatter),
+        vector: [],
+        score
+    };
+}
+
+function parseStringArray(value: unknown): string[] {
+    if (typeof value !== 'string') return [];
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : [];
+}
+
+function parseRecord(value: unknown): Record<string, string | string[]> {
+    if (typeof value !== 'string') return {};
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? parsed as Record<string, string | string[]>
+        : {};
 }
 
 function bm25Scores(chunks: IndexedChunk[], query: Vector, options: Extract<VectorSearchScoring, { type: 'bm25' }>): SearchResult[] {

@@ -55,7 +55,13 @@ async function main() {
     const localToolNamesCoveredByMcp = getLocalToolNamesCoveredByMcp(mcpRegistration.tools);
     for (const tool of await createDefaultTools({
         skipToolNames: localToolNamesCoveredByMcp,
-        exposureController: toolExposureController
+        exposureController: toolExposureController,
+        rag: process.env.RAG_RETRIEVAL_PROFILE
+            ? {
+                retrievalProfile: process.env.RAG_RETRIEVAL_PROFILE,
+                indexVariant: process.env.RAG_INDEX_VARIANT
+            }
+            : undefined
     })) {
         registry.register(tool);
     }

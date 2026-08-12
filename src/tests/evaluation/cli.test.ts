@@ -48,6 +48,15 @@ test('parseRecallEvalArgs defaults and separates variant from retriever', () => 
         parseRecallEvalArgs(['--probe-candidate-limit', '100']),
         { profile: 'bm25-v1', variant: 'both', retriever: 'vector', probeCandidateLimit: 100 }
     );
+    assert.deepEqual(
+        parseRecallEvalArgs(['--retrieval-profile', 'hybrid-bge-m3-rerank-v1', '--variant', 'raw-only']),
+        {
+            profile: 'bm25-v1',
+            retrievalProfile: 'hybrid-bge-m3-rerank-v1',
+            variant: 'raw-only',
+            retriever: 'vector'
+        }
+    );
     assert.throws(() => parseRecallEvalArgs(['--mode', 'both']), /usage:/);
     assert.throws(() => parseRecallEvalArgs(['--retriever', 'invalid']), /unsupported retriever/);
     assert.throws(() => parseRecallEvalArgs(['--wiki-first', 'sometimes']), /must be true or false/);

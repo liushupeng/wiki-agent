@@ -5,14 +5,17 @@ import {
     EvalComparisonSummary,
     EvalQuestion,
     EvalRetrievalDecision,
+    EvalRetriever,
     EvalSummary,
     createGrepEvalRetriever,
+    createPipelineEvalRetriever,
     createVectorEvalRetriever,
     evaluateRetriever,
     normalizeEvalQuestion,
     scoreQuestion
 } from '../../src/rag/evaluation.js';
 import { openActiveIndex } from '../../src/rag/indexRuntime.js';
+import { openRetriever } from '../../src/rag/retrievalPipeline.js';
 import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
 import { getEvaluationExperiment, parseEvaluationMode } from '../../src/evaluation/experiments.js';
 import { parseRecallEvalCommand, recallUsage } from '../../src/evaluation/cli.js';
@@ -69,12 +72,12 @@ async function main() {
             'gen_ai.operation.name': 'evaluation',
             'wiki_agent.eval.questions_file': questionsFile,
             'wiki_agent.eval.question_count': questions.length,
-            'wiki_agent.rag.profile': arguments_.profile,
+            'wiki_agent.rag.profile': arguments_.retrievalProfile ?? arguments_.profile,
             'wiki_agent.eval.variant': arguments_.variant,
             'wiki_agent.eval.retriever': arguments_.retriever
         }
     });
-    console.log(`[recall] 已加载 ${questions.length} 道题；Profile：${arguments_.profile}；变体：${experimentModes.join(', ')}；检索器：${arguments_.retriever}；Wiki 优先：${arguments_.wikiFirst === undefined ? '按变体默认值' : arguments_.wikiFirst}`);
+    console.log(`[recall] 已加载 ${questions.length} 道题；Profile：${arguments_.retrievalProfile ?? arguments_.profile}；变体：${experimentModes.join(', ')}；检索器：${arguments_.retriever}；Wiki 优先：${arguments_.wikiFirst === undefined ? '按变体默认值' : arguments_.wikiFirst}`);
 
     try {
         for (const experimentMode of experimentModes) {
@@ -85,8 +88,9 @@ async function main() {
             wikiFirstByVariant[experimentMode] = options.wikiFirst;
             console.log(`[recall] [${experimentMode}] 正在加载索引 ${profile.id}/${variant.id}（Wiki 优先：${options.wikiFirst}）…`);
             const sourceRoots = await getKnowledgeSourceRoots({ KNOWLEDGE_SOURCES_CONFIG_PATH: variant.sourceConfigPath });
-            const vectorStore = await openActiveIndex(profile.id, variant.id);
-            const vectorRetriever = createVectorEvalRetriever(vectorStore, options);
+            const vectorRetriever = arguments_.retrievalProfile
+                ? createPipelineEvalRetriever(await openRetriever(arguments_.retrievalProfile, variant.id))
+                : createVectorEvalRetriever(await openActiveIndex(profile.id, variant.id), options);
             const grepRetriever = createGrepEvalRetriever(sourceRoots, options);
             results[experimentMode] = await evaluate(
                 experimentMode,
@@ -94,7 +98,7 @@ async function main() {
                 questions,
                 vectorRetriever,
                 grepRetriever,
-                { telemetry, evalSpan, profile: profile.id, variant: variant.id, wikiFirst: options.wikiFirst },
+                { telemetry, evalSpan, profile: arguments_.retrievalProfile ?? profile.id, variant: variant.id, wikiFirst: options.wikiFirst },
                 arguments_.probeCandidateLimit,
                 (retrieverName, probe) => {
                     probes[experimentMode] ??= {};
@@ -107,6 +111,7 @@ async function main() {
             questionsFile,
             createdAt: new Date().toISOString(),
             profile: arguments_.profile,
+            ...(arguments_.retrievalProfile ? { retrievalProfile: arguments_.retrievalProfile } : {}),
             retriever: arguments_.retriever,
             variant: arguments_.variant,
             wikiFirst: wikiFirstByVariant,
@@ -122,7 +127,7 @@ async function main() {
                 'wiki_agent.eval.summary': JSON.stringify(summarizeForTrace(results))
             }
         });
-        printSummary(arguments_.profile, results, outputDirectory, performance.now() - startedAt, telemetry.filePath, probes);
+        printSummary(arguments_.retrievalProfile ?? arguments_.profile, results, outputDirectory, performance.now() - startedAt, telemetry.filePath, probes);
     } catch (error) {
         await evalSpan.end({ status: 'error', attributes: { 'error.message': error instanceof Error ? error.message : String(error) } });
         throw error;
@@ -135,7 +140,7 @@ async function evaluate(
     experimentMode: string,
     retriever: 'vector' | 'grep' | 'both',
     questions: EvalQuestion[],
-    vector: ReturnType<typeof createVectorEvalRetriever>,
+    vector: EvalRetriever,
     grep: ReturnType<typeof createGrepEvalRetriever>,
     trace: RetrievalTraceContext,
     probeCandidateLimit: number | undefined,
@@ -158,7 +163,7 @@ async function evaluate(
 async function evaluateWithProgress(
     experimentMode: string,
     questions: EvalQuestion[],
-    retriever: ReturnType<typeof createVectorEvalRetriever> | ReturnType<typeof createGrepEvalRetriever>,
+    retriever: EvalRetriever,
     trace: RetrievalTraceContext,
     probeCandidateLimit: number | undefined,
     onProbe: (retrieverName: string, probe: ProbeSummary) => void
@@ -198,7 +203,7 @@ type ProbeSummary = {
 async function probeCandidateMisses(
     questions: EvalQuestion[],
     summary: EvalSummary,
-    retriever: ReturnType<typeof createVectorEvalRetriever> | ReturnType<typeof createGrepEvalRetriever>,
+    retriever: EvalRetriever,
     trace: RetrievalTraceContext,
     candidateLimit: number
 ): Promise<ProbeSummary> {

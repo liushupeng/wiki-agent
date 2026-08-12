@@ -3,6 +3,7 @@ import { parseEvaluationMode } from './experiments.js';
 export type RecallEvalArgs = {
     questionsFile?: string;
     profile: string;
+    retrievalProfile?: string;
     variant: 'raw-only' | 'raw-wiki' | 'both';
     retriever: 'vector' | 'grep' | 'both';
     wikiFirst?: boolean;
@@ -35,6 +36,10 @@ export function parseRecallEvalArgs(args: string[]): RecallEvalArgs {
         if (argument === '--') continue;
         if (argument === '--profile') {
             result.profile = requireValue(args, ++index, '--profile');
+            continue;
+        }
+        if (argument === '--retrieval-profile') {
+            result.retrievalProfile = requireValue(args, ++index, '--retrieval-profile');
             continue;
         }
         if (argument === '--variant') {
@@ -123,7 +128,7 @@ export function recallUsage(): string {
     return [
         'usage:',
         '  npm run eval:recall',
-        '  npm run eval:recall -- -- --profile <profileId> --variant raw-only|raw-wiki|both --retriever vector|grep|both [--wiki-first true|false] [--probe-candidate-limit <n>] [questionsFile]',
+        '  npm run eval:recall -- -- (--profile <indexProfileId> | --retrieval-profile <retrievalProfileId>) --variant raw-only|raw-wiki|both --retriever vector|grep|both [--wiki-first true|false] [--probe-candidate-limit <n>] [questionsFile]',
         '',
         'Default profile: bm25-v1. Run without arguments prints this help and does not run an evaluation.'
     ].join('\n');

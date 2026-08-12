@@ -13,6 +13,10 @@ export type EmbeddingIdentity = {
     type: EmbeddingProfile['type'];
     provider: string;
     model: string;
+    revision?: string;
+    dtype?: string;
+    pooling?: string;
+    maxLength?: number;
     dimensions?: number;
     normalization: 'l2' | 'none';
 };
@@ -168,8 +172,96 @@ export class OpenAiCompatibleEmbedder implements Embedder {
     }
 }
 
+type FeatureExtractionPipeline = (
+    texts: string | string[],
+    options: Record<string, unknown>
+) => Promise<{ tolist(): unknown }>;
+
+const localPipelineCache = new Map<string, Promise<FeatureExtractionPipeline>>();
+
+export class TransformersJsEmbedder implements Embedder {
+    readonly name: string;
+    readonly identity: EmbeddingIdentity;
+
+    constructor(private readonly profile: Extract<EmbeddingProfile, { type: 'transformers-js' }>) {
+        this.name = `transformers-js:${profile.model}`;
+        this.identity = {
+            type: 'transformers-js',
+            provider: 'transformers-js',
+            model: profile.model,
+            ...(profile.revision ? { revision: profile.revision } : {}),
+            ...(profile.dtype ? { dtype: profile.dtype } : {}),
+            pooling: profile.pooling ?? 'cls',
+            maxLength: profile.maxLength ?? 512,
+            dimensions: profile.dimensions,
+            normalization: 'l2'
+        };
+    }
+
+    async embed(text: string): Promise<Vector> {
+        return (await this.embedBatch([text]))[0]!;
+    }
+
+    async embedBatch(texts: string[]): Promise<Vector[]> {
+        if (texts.length === 0) return [];
+        const pipeline = await this.getPipeline();
+        const batchSize = this.profile.batchSize ?? 8;
+        const vectors: number[][] = [];
+        for (let offset = 0; offset < texts.length; offset += batchSize) {
+            const batch = texts.slice(offset, offset + batchSize);
+            const tensor = await pipeline(batch, {
+                pooling: this.profile.pooling ?? 'cls',
+                normalize: true,
+                truncation: true,
+                max_length: this.profile.maxLength ?? 512
+            });
+            const values = tensor.tolist();
+            if (!Array.isArray(values)) throw new Error('Transformers.js embedding output is not an array');
+            const rows = values as number[][];
+            if (rows.length !== batch.length || rows.some(row => !Array.isArray(row) || row.length !== this.profile.dimensions)) {
+                throw new Error(`Transformers.js embedding output must contain ${batch.length} vectors of ${this.profile.dimensions} dimensions`);
+            }
+            if (rows.some(row => row.some(value => !Number.isFinite(value)))) {
+                throw new Error('Transformers.js embedding output contains NaN or Infinity');
+            }
+            vectors.push(...rows);
+        }
+        return vectors;
+    }
+
+    private async getPipeline(): Promise<FeatureExtractionPipeline> {
+        const key = JSON.stringify({
+            model: this.profile.model,
+            revision: this.profile.revision,
+            dtype: this.profile.dtype,
+            device: this.profile.device,
+            cacheDir: this.profile.cacheDir
+        });
+        let loading = localPipelineCache.get(key);
+        if (!loading) {
+            loading = (async () => {
+                const transformers = await import('@huggingface/transformers');
+                if (this.profile.cacheDir) transformers.env.cacheDir = this.profile.cacheDir;
+                return await transformers.pipeline('feature-extraction', this.profile.model, {
+                    ...(this.profile.revision ? { revision: this.profile.revision } : {}),
+                    ...(this.profile.dtype ? { dtype: this.profile.dtype as any } : {}),
+                    ...(this.profile.device ? { device: this.profile.device as any } : {})
+                }) as unknown as FeatureExtractionPipeline;
+            })();
+            localPipelineCache.set(key, loading);
+        }
+        try {
+            return await loading;
+        } catch (error) {
+            localPipelineCache.delete(key);
+            throw error;
+        }
+    }
+}
+
 export function createEmbedder(profile: EmbeddingProfile): Embedder {
     if (profile.type === 'tf') return new TfEmbedder();
     if (profile.type === 'bm25') return new Bm25Embedder(profile);
-    return new OpenAiCompatibleEmbedder(profile);
+    if (profile.type === 'openai-compatible') return new OpenAiCompatibleEmbedder(profile);
+    return new TransformersJsEmbedder(profile);
 }

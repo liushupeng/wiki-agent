@@ -43,6 +43,34 @@
           "sourceConfigPath": "config/evaluation/raw-wiki.sources.jsonc"
         }
       ]
+    },
+    {
+      "id": "bge-m3-v1",
+      "store": "lancedb",
+      "chunkSize": 900,
+      "overlap": 120,
+      "embedder": {
+        "type": "transformers-js",
+        "model": "Xenova/bge-m3",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "dimensions": 1024,
+        "pooling": "cls",
+        "maxLength": 512,
+        "batchSize": 16,
+        "cacheDir": "models"
+      },
+      "variants": [
+        {
+          "id": "raw-only",
+          "sourceConfigPath": "config/evaluation/raw-only.sources.jsonc"
+        },
+        {
+          "id": "raw-wiki",
+          "sourceConfigPath": "config/evaluation/raw-wiki.sources.jsonc"
+        }
+      ]
     }
   ]
 }

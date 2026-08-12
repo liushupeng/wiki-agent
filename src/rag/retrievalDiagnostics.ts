@@ -5,6 +5,13 @@ export type RetrievalTraceDocument = {
     id?: string;
     line?: number;
     score?: number;
+    sparseRank?: number;
+    sparseScore?: number;
+    denseRank?: number;
+    denseScore?: number;
+    fusionScore?: number;
+    chunkRerankScore?: number;
+    evidenceRerankScore?: number;
 };
 
 export type RetrievalDecision = {
@@ -55,6 +62,24 @@ export function retrievalResultTraceAttributes(decision: RetrievalDecision): Tra
     };
 }
 
+export function retrievalStageTraceAttributes(matches: RetrievalTraceDocument[]): TraceAttributes {
+    return {
+        'gen_ai.retrieval.documents': JSON.stringify(matches.map((match, index) => ({
+            rank: index + 1,
+            id: match.id ?? `${match.source}:${match.line ?? index + 1}`,
+            source: match.source,
+            ...(match.score === undefined ? {} : { score: rounded(match.score) }),
+            ...(match.sparseRank === undefined ? {} : { sparseRank: match.sparseRank }),
+            ...(match.sparseScore === undefined ? {} : { sparseScore: rounded(match.sparseScore) }),
+            ...(match.denseRank === undefined ? {} : { denseRank: match.denseRank }),
+            ...(match.denseScore === undefined ? {} : { denseScore: rounded(match.denseScore) }),
+            ...(match.fusionScore === undefined ? {} : { fusionScore: rounded(match.fusionScore) }),
+            ...(match.chunkRerankScore === undefined ? {} : { chunkRerankScore: rounded(match.chunkRerankScore) }),
+            ...(match.evidenceRerankScore === undefined ? {} : { evidenceRerankScore: rounded(match.evidenceRerankScore) })
+        })))
+    };
+}
+
 function toTraceDocuments(matches: RetrievalTraceDocument[]): Array<{ rank: number; id: string; source: string; score: number }> {
     return matches.map((match, index) => ({
         rank: index + 1,
@@ -62,4 +87,8 @@ function toTraceDocuments(matches: RetrievalTraceDocument[]): Array<{ rank: numb
         source: match.source,
         score: Number((match.score ?? 0).toFixed(6))
     }));
+}
+
+function rounded(value: number): number {
+    return Number(value.toFixed(6));
 }

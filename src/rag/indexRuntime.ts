@@ -29,6 +29,7 @@ export type IndexManifest = {
     sourceConfig?: SourceConfigIdentity;
     documentCount?: number;
     chunkCount?: number;
+    chunkFingerprint?: string;
 };
 
 export type IndexRuntime = Pick<VectorStore, 'findBySource'> & {
@@ -90,7 +91,12 @@ export async function writeIndexManifest(
     variant: RagIndexVariant,
     paths: IndexPaths,
     identity: EmbeddingIdentity,
-    details?: { sourceConfig?: SourceConfigIdentity; documentCount?: number; chunkCount?: number }
+    details?: {
+        sourceConfig?: SourceConfigIdentity;
+        documentCount?: number;
+        chunkCount?: number;
+        chunkFingerprint?: string;
+    }
 ): Promise<IndexManifest> {
     const manifest: IndexManifest = {
         version: 3,
@@ -105,7 +111,8 @@ export async function writeIndexManifest(
         createdAt: new Date().toISOString(),
         ...(details?.sourceConfig ? { sourceConfig: details.sourceConfig } : {}),
         ...(details?.documentCount === undefined ? {} : { documentCount: details.documentCount }),
-        ...(details?.chunkCount === undefined ? {} : { chunkCount: details.chunkCount })
+        ...(details?.chunkCount === undefined ? {} : { chunkCount: details.chunkCount }),
+        ...(details?.chunkFingerprint === undefined ? {} : { chunkFingerprint: details.chunkFingerprint })
     };
     await fs.mkdir(paths.directory, { recursive: true });
     const temporaryPath = `${paths.manifestPath}.${process.pid}.tmp`;

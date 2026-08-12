@@ -4,6 +4,7 @@ import { prioritizeWikiMatches } from './ranking.js';
 import { KnowledgeSourceRoot, sourceWithPrefix } from './sourceRoots.js';
 import { SearchResult } from './types.js';
 import { IndexRuntime } from './indexRuntime.js';
+import { Retriever } from './retrievalPipeline.js';
 
 export type EvalQuestion = {
     id?: string;
@@ -54,6 +55,10 @@ export type EvalRetriever = {
     search(question: EvalQuestion, topK: number): Promise<SearchResult[]>;
     candidateSearch?(question: EvalQuestion, candidateK: number): Promise<SearchResult[]>;
     rerank?(candidates: SearchResult[], topK: number): SearchResult[];
+    evaluate?(question: EvalQuestion, candidateK: number, topK: number): Promise<{
+        candidates: SearchResult[];
+        matches: SearchResult[];
+    }>;
 };
 
 export type EvalProgress = {
@@ -116,6 +121,38 @@ export function createVectorEvalRetriever(
             const candidateLimit = getCandidateLimit(topK, options);
             const matches = await vectorStore.search(item.question, candidateLimit);
             return options.wikiFirst ? prioritizeWikiMatches(matches, topK) : matches;
+        }
+    };
+}
+
+export function createPipelineEvalRetriever(retriever: Retriever): EvalRetriever {
+    const toCandidates = (run: Awaited<ReturnType<Retriever['retrieve']>>, candidateK: number): SearchResult[] =>
+        run.fusedCandidates.slice(0, candidateK).map(candidate => ({
+            ...candidate,
+            vector: [],
+            score: candidate.fusionScore
+        }));
+    const toMatches = (run: Awaited<ReturnType<Retriever['retrieve']>>): SearchResult[] =>
+        run.evidences.map(evidence => ({
+            ...evidence,
+            vector: [],
+            score: evidence.evidenceRerankScore
+                ?? evidence.chunkRerankScore
+                ?? evidence.fusionScore
+        }));
+    return {
+        name: retriever.profile.id,
+        candidateSearch: async (item, candidateK) => {
+            const run = await retriever.retrieve(item.question, { topK: candidateK });
+            return toCandidates(run, candidateK);
+        },
+        async search(item, topK) {
+            const run = await retriever.retrieve(item.question, { topK });
+            return toMatches(run);
+        },
+        async evaluate(item, candidateK, topK) {
+            const run = await retriever.retrieve(item.question, { topK });
+            return { candidates: toCandidates(run, candidateK), matches: toMatches(run) };
         }
     };
 }
@@ -183,10 +220,14 @@ export async function evaluateRetriever(
         const candidateK = Math.max(topK * 4, topK);
         const startedAt = new Date();
         const startedAtMs = performance.now();
-        const candidates = retriever.candidateSearch
+        const evaluated = retriever.evaluate
+            ? await retriever.evaluate(item, candidateK, topK)
+            : undefined;
+        const candidates = evaluated?.candidates ?? (retriever.candidateSearch
             ? await retriever.candidateSearch(item, candidateK)
-            : await retriever.search(item, candidateK);
-        const matches = retriever.rerank ? retriever.rerank(candidates, topK) : candidates.slice(0, topK);
+            : await retriever.search(item, candidateK));
+        const matches = evaluated?.matches
+            ?? (retriever.rerank ? retriever.rerank(candidates, topK) : candidates.slice(0, topK));
         const result = scoreQuestion(item, matches, candidates);
         results.push(result);
         await onDecision?.({

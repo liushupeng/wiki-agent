@@ -5,10 +5,12 @@ import { prioritizeWikiMatches } from '../rag/ranking.js';
 import { IndexedChunk, SearchResult } from '../rag/types.js';
 import { getKnowledgeSourceRoots, sourceWithPrefix } from '../rag/sourceRoots.js';
 import { openActiveIndex } from '../rag/indexRuntime.js';
+import { openRetriever } from '../rag/retrievalPipeline.js';
 import {
     retrievalCandidatesTraceAttributes,
     retrievalRequestTraceAttributes,
     retrievalResultTraceAttributes,
+    retrievalStageTraceAttributes,
     retrievalSpanTraceAttributes
 } from '../rag/retrievalDiagnostics.js';
 import { getActiveSpan, type SpanHandle } from '../trace/telemetry.js';
@@ -27,6 +29,7 @@ const REGEX_HINT_PATTERN = /(^|[^\\])(\||\.\*|\.\+|\[[^\]]+\]|\([^)]*\|[^)]*\)|\
 
 export type RagToolOptions = {
     indexProfile?: string;
+    retrievalProfile?: string;
     indexVariant?: string;
     sourceConfigPath?: string;
 };
@@ -173,6 +176,64 @@ export class SearchNotesTool extends BaseAgentTool {
         const topK = Math.min(args.topK ?? 5, 12);
         let ragSpan: SpanHandle | undefined;
         try {
+            if (this.options.retrievalProfile) {
+                const retriever = await openRetriever(this.options.retrievalProfile, this.options.indexVariant);
+                const candidateLimit = retriever.profile.mode === 'hybrid'
+                    ? retriever.profile.candidateLimitPerRetriever
+                    : retriever.profile.candidateLimit;
+                const startedAt = new Date();
+                const startedAtMs = performance.now();
+                ragSpan = await getActiveSpan()?.startChild('rag.search', {
+                    kind: 'client',
+                    startedAt,
+                    attributes: retrievalSpanTraceAttributes({
+                        query: args.query,
+                        mode: 'vector',
+                        topK,
+                        candidateLimit,
+                        profile: retriever.profile.id,
+                        variant: this.options.indexVariant,
+                        wikiFirst: false
+                    })
+                });
+                const run = await retriever.retrieve(args.query, { topK });
+                await ragSpan?.addEvent('retrieval.request', retrievalRequestTraceAttributes({
+                    query: args.query,
+                    mode: 'vector',
+                    topK,
+                    candidateLimit,
+                    profile: run.profile,
+                    variant: this.options.indexVariant,
+                    wikiFirst: false
+                }));
+                if (run.sparseCandidates.length) {
+                    await ragSpan?.addEvent('retrieval.sparse_candidates', retrievalStageTraceAttributes(run.sparseCandidates));
+                }
+                if (run.denseCandidates.length) {
+                    await ragSpan?.addEvent('retrieval.dense_candidates', retrievalStageTraceAttributes(run.denseCandidates));
+                }
+                await ragSpan?.addEvent('retrieval.fused_candidates', retrievalStageTraceAttributes(run.fusedCandidates));
+                await ragSpan?.addEvent('retrieval.reranked_candidates', retrievalStageTraceAttributes(run.rerankedCandidates));
+                await ragSpan?.addEvent('retrieval.result', retrievalStageTraceAttributes(run.evidences));
+                await ragSpan?.end({ status: 'ok' });
+                const matches: SearchResult[] = run.evidences.map(evidence => ({
+                    ...evidence,
+                    vector: [],
+                    score: evidence.evidenceRerankScore
+                        ?? evidence.chunkRerankScore
+                        ?? evidence.fusionScore
+                }));
+                return this.ok({
+                    query: args.query,
+                    matches: matches.map(formatChunk),
+                    stages: run.elapsedMs
+                }, {
+                    count: matches.length,
+                    retrievalProfile: run.profile,
+                    scope: await getSearchScopeDescription(this.options),
+                    elapsedMs: performance.now() - startedAtMs
+                });
+            }
             const index = await openActiveIndex(this.options.indexProfile, this.options.indexVariant);
             const candidateLimit = Math.min(topK * 4, 48);
             const startedAt = new Date();
