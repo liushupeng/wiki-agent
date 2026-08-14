@@ -19,6 +19,7 @@ export type SingleRetrievalProfile = {
     mode: 'single';
     indexProfile: string;
     candidateLimit: number;
+    reranker?: RerankerProfile;
 };
 
 export type HybridRetrievalProfile = {
@@ -78,11 +79,13 @@ function parseProfile(value: unknown, index: number): RetrievalProfile {
     const id = readId(value.id, `retrieval profile at index ${index} id`);
     const mode = readString(value.mode, `retrieval profile "${id}" mode`);
     if (mode === 'single') {
+        const reranker = value.reranker === undefined ? undefined : parseReranker(value.reranker, id);
         return {
             id,
             mode,
             indexProfile: readId(value.indexProfile, `retrieval profile "${id}" indexProfile`),
-            candidateLimit: readPositiveInteger(value.candidateLimit, `retrieval profile "${id}" candidateLimit`)
+            candidateLimit: readPositiveInteger(value.candidateLimit, `retrieval profile "${id}" candidateLimit`),
+            ...(reranker ? { reranker } : {})
         };
     }
     if (mode !== 'hybrid') throw new Error(`retrieval profile "${id}" mode must be single or hybrid`);

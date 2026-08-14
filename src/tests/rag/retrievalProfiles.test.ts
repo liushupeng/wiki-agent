@@ -43,3 +43,27 @@ test('retrieval profiles reject missing active profile', () => {
         }]
     }), /active retrieval profile does not exist/);
 });
+
+test('single retrieval profile supports reranking', () => {
+    const config = parseRetrievalProfilesConfig({
+        activeRetrievalProfile: 'bm25-rerank-v1',
+        profiles: [{
+            id: 'bm25-rerank-v1',
+            mode: 'single',
+            indexProfile: 'bm25-v1',
+            candidateLimit: 100,
+            reranker: {
+                model: 'reranker',
+                maxLength: 512,
+                batchSize: 8
+            }
+        }]
+    });
+
+    const profile = resolveRetrievalProfile(config);
+    assert.equal(profile.mode, 'single');
+    if (profile.mode === 'single') {
+        assert.equal(profile.candidateLimit, 100);
+        assert.equal(profile.reranker?.model, 'reranker');
+    }
+});

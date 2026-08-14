@@ -286,6 +286,17 @@ npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-v1 --variant raw-onl
 npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant raw-only --retriever vector
 ```
 
+`check:rag-models` 默认只做快速 smoke check。显式传入 `--benchmark` 时，会从真实
+chunk 中固定抽样，并让每组 dtype、device 和 batch size 在独立进程中运行，输出稳态
+吞吐、batch p50/p95、峰值内存和全量索引预计耗时：
+
+```powershell
+npm run check:rag-models -- -- --benchmark --samples 64 --batches 4,8,16 --dtypes q4 --devices cpu
+```
+
+只有本地已准备 `model_int8.onnx` 且 Node.js Runtime 支持 WebGPU 时，才加入
+`--dtypes q4,int8 --devices cpu,webgpu`；失败的组合会保留错误摘要，并继续测试其他组合。
+
 稠密 embedding 使用按模型配置和 chunk 文本寻址的磁盘缓存；索引失败后重跑会复用已经完成的向量。混合检索会校验两个索引 manifest 中的 chunk 指纹，避免融合不同语料快照。在线 Agent 可设置 `RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-rerank-v1`，并用 `RAG_INDEX_VARIANT` 选择 variant。
 
 检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。提供题目文件、`--profile`、`--variant` 或 `--retriever` 中任一参数才会实际运行：

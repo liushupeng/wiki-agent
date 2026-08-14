@@ -57,7 +57,8 @@ export async function openRetriever(
     const profile = resolveRetrievalProfile(config, retrievalProfileId);
     if (profile.mode === 'single') {
         const index = await openActiveIndex(profile.indexProfile, variantId);
-        return createSingleRetriever(profile, index);
+        const reranker = dependencies.reranker ?? (profile.reranker ? new TransformersJsReranker(profile.reranker) : undefined);
+        return createSingleRetriever(profile, index, reranker);
     }
     const [sparse, dense] = await Promise.all([
         openActiveIndex(profile.sparseProfile, variantId),
@@ -114,7 +115,11 @@ export function limitPerSource<T extends { source: string }>(items: T[], maxPerS
     return selected;
 }
 
-function createSingleRetriever(profile: RetrievalProfile & { mode: 'single' }, index: IndexRuntime): Retriever {
+function createSingleRetriever(
+    profile: RetrievalProfile & { mode: 'single' },
+    index: IndexRuntime,
+    reranker?: Reranker
+): Retriever {
     return {
         profile,
         async retrieve(query, options = {}) {
@@ -130,6 +135,15 @@ function createSingleRetriever(profile: RetrievalProfile & { mode: 'single' }, i
                 fusionScore: item.score
             }));
             const elapsed = performance.now() - started;
+            const rerankStarted = performance.now();
+            let rerankedCandidates = candidates;
+            if (reranker) {
+                const scores = await reranker.score(query, candidates.map(item => item.text));
+                rerankedCandidates = candidates
+                    .map((item, rank) => ({ ...item, chunkRerankScore: scores[rank]! }))
+                    .sort((left, right) => right.chunkRerankScore! - left.chunkRerankScore! || right.fusionScore - left.fusionScore);
+            }
+            const rerankElapsed = performance.now() - rerankStarted;
             const topK = options.topK ?? 5;
             return {
                 profile: profile.id,
@@ -137,13 +151,13 @@ function createSingleRetriever(profile: RetrievalProfile & { mode: 'single' }, i
                 sparseCandidates: index.profile.embedder.type === 'bm25' ? candidates : [],
                 denseCandidates: index.profile.embedder.type === 'bm25' ? [] : candidates,
                 fusedCandidates: candidates,
-                rerankedCandidates: candidates,
-                evidences: candidates.slice(0, topK).map(candidateToEvidence),
+                rerankedCandidates,
+                evidences: rerankedCandidates.slice(0, topK).map(candidateToEvidence),
                 elapsedMs: {
                     sparse: index.profile.embedder.type === 'bm25' ? elapsed : 0,
                     dense: index.profile.embedder.type === 'bm25' ? 0 : elapsed,
                     fusion: 0,
-                    chunkRerank: 0,
+                    chunkRerank: rerankElapsed,
                     evidenceRerank: 0,
                     total: performance.now() - totalStarted
                 }

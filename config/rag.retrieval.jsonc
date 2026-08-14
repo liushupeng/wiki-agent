@@ -8,6 +8,21 @@
       "candidateLimit": 20
     },
     {
+      "id": "bm25-rerank-v1",
+      "mode": "single",
+      "indexProfile": "bm25-v1",
+      "candidateLimit": 100,
+      "reranker": {
+        "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "maxLength": 512,
+        "batchSize": 8,
+        "cacheDir": "models"
+      }
+    },
+    {
       "id": "dense-bge-m3-v1",
       "mode": "single",
       "indexProfile": "bge-m3-v1",

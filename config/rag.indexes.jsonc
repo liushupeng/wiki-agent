@@ -53,12 +53,12 @@
         "type": "transformers-js",
         "model": "Xenova/bge-m3",
         "revision": "main",
-        "dtype": "q4",
+        "dtype": "q8",
         "device": "cpu",
         "dimensions": 1024,
         "pooling": "cls",
         "maxLength": 512,
-        "batchSize": 16,
+        "batchSize": 4,
         "cacheDir": "models"
       },
       "variants": [
