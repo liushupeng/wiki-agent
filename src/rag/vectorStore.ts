@@ -182,7 +182,7 @@ export class LanceDbVectorStore implements VectorStore {
             const rows = await table
                 .vectorSearch(vector)
                 .distanceType('cosine')
-                .select(['id', 'source', 'text', 'start', 'end', 'titlePath', 'tags', 'links', 'frontmatter'])
+                .select(['id', 'source', 'text', 'start', 'end', 'titlePath', 'tags', 'links', 'frontmatter', '_distance'])
                 .limit(topK)
                 .toArray();
             return rows.map(row => fromLanceRow(row, 1 - Number(row._distance ?? 1)));

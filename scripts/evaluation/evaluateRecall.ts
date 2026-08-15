@@ -86,7 +86,7 @@ async function main() {
             const variant = resolveRagIndexVariant(profile, experiment.indexVariant);
             const options = { wikiFirst: arguments_.wikiFirst ?? experiment.wikiFirst };
             wikiFirstByVariant[experimentMode] = options.wikiFirst;
-            console.log(`[recall] [${experimentMode}] 正在加载索引 ${profile.id}/${variant.id}（Wiki 优先：${options.wikiFirst}）…`);
+            console.log(`[recall] [${experimentMode}] 正在加载检索 ${arguments_.retrievalProfile ?? profile.id}/${variant.id}（Wiki 优先：${options.wikiFirst}）…`);
             const sourceRoots = await getKnowledgeSourceRoots({ KNOWLEDGE_SOURCES_CONFIG_PATH: variant.sourceConfigPath });
             const vectorRetriever = arguments_.retrievalProfile
                 ? createPipelineEvalRetriever(await openRetriever(arguments_.retrievalProfile, variant.id))

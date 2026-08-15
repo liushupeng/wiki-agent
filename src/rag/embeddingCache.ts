@@ -22,13 +22,18 @@ export class CachedEmbedder implements Embedder {
 
     async embedBatch(texts: string[]): Promise<Vector[]> {
         const results: Array<Vector | undefined> = new Array(texts.length);
-        const misses: Array<{ index: number; text: string; file: string }> = [];
+        const missesByFile = new Map<string, { indexes: number[]; text: string; file: string }>();
         await Promise.all(texts.map(async (text, index) => {
             const file = this.cachePath(text);
             const cached = await readDenseVector(file, this.identity.dimensions);
             if (cached) results[index] = cached;
-            else misses.push({ index, text, file });
+            else {
+                const miss = missesByFile.get(file);
+                if (miss) miss.indexes.push(index);
+                else missesByFile.set(file, { indexes: [index], text, file });
+            }
         }));
+        const misses = [...missesByFile.values()];
         if (misses.length > 0) {
             const generated = this.inner.embedBatch
                 ? await this.inner.embedBatch(misses.map(item => item.text))
@@ -38,7 +43,7 @@ export class CachedEmbedder implements Embedder {
             }
             await Promise.all(misses.map(async (miss, index) => {
                 const vector = generated[index]!;
-                results[miss.index] = vector;
+                for (const resultIndex of miss.indexes) results[resultIndex] = vector;
                 if (Array.isArray(vector)) await writeDenseVector(miss.file, vector);
             }));
         }
@@ -74,9 +79,29 @@ async function writeDenseVector(file: string, vector: number[]): Promise<void> {
     const values = Float32Array.from(vector);
     try {
         await fs.writeFile(temporary, Buffer.from(values.buffer, values.byteOffset, values.byteLength), { flag: 'wx' });
-        await fs.rename(temporary, file);
-    } catch (error: any) {
+        await commitTemporaryVector(temporary, file, vector.length);
+    } finally {
         await fs.rm(temporary, { force: true }).catch(() => undefined);
-        if (error?.code !== 'EEXIST') throw error;
     }
+}
+
+async function commitTemporaryVector(temporary: string, file: string, dimensions: number): Promise<void> {
+    const retryDelaysMs = [0, 25, 100, 250];
+    let lastError: unknown;
+    for (const delayMs of retryDelaysMs) {
+        if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+        try {
+            await fs.rename(temporary, file);
+            return;
+        } catch (error: any) {
+            lastError = error;
+            if (!['EEXIST', 'EPERM', 'EACCES'].includes(error?.code)) throw error;
+            try {
+                if (await readDenseVector(file, dimensions)) return;
+            } catch (readError: any) {
+                if (!['EPERM', 'EACCES'].includes(readError?.code)) throw readError;
+            }
+        }
+    }
+    throw lastError;
 }

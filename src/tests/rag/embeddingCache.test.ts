@@ -32,3 +32,28 @@ test('CachedEmbedder reuses content-addressed dense vectors', async () => {
         await fs.rm(directory, { recursive: true, force: true });
     }
 });
+
+test('CachedEmbedder deduplicates repeated misses within one batch', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-embedding-cache-'));
+    let embeddedTexts = 0;
+    const inner: Embedder = {
+        name: 'fake-dense',
+        identity: { type: 'transformers-js', provider: 'fake', model: 'fake-v1', dimensions: 2, normalization: 'l2' },
+        async embed(text: string) {
+            embeddedTexts += 1;
+            return [text.length, 1];
+        },
+        async embedBatch(texts: string[]) {
+            embeddedTexts += texts.length;
+            return texts.map(text => [text.length, 1]);
+        }
+    };
+
+    try {
+        const vectors = await new CachedEmbedder(inner, directory).embedBatch(['same', 'same']);
+        assert.deepEqual(vectors, [[4, 1], [4, 1]]);
+        assert.equal(embeddedTexts, 1);
+    } finally {
+        await fs.rm(directory, { recursive: true, force: true });
+    }
+});
