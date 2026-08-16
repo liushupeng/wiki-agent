@@ -11,7 +11,9 @@ export type RetrievalTraceDocument = {
     denseScore?: number;
     fusionScore?: number;
     chunkRerankScore?: number;
+    chunkRankingScore?: number;
     evidenceRerankScore?: number;
+    evidenceRankingScore?: number;
 };
 
 export type RetrievalDecision = {
@@ -75,7 +77,9 @@ export function retrievalStageTraceAttributes(matches: RetrievalTraceDocument[])
             ...(match.denseScore === undefined ? {} : { denseScore: rounded(match.denseScore) }),
             ...(match.fusionScore === undefined ? {} : { fusionScore: rounded(match.fusionScore) }),
             ...(match.chunkRerankScore === undefined ? {} : { chunkRerankScore: rounded(match.chunkRerankScore) }),
-            ...(match.evidenceRerankScore === undefined ? {} : { evidenceRerankScore: rounded(match.evidenceRerankScore) })
+            ...(match.chunkRankingScore === undefined ? {} : { chunkRankingScore: rounded(match.chunkRankingScore) }),
+            ...(match.evidenceRerankScore === undefined ? {} : { evidenceRerankScore: rounded(match.evidenceRerankScore) }),
+            ...(match.evidenceRankingScore === undefined ? {} : { evidenceRankingScore: rounded(match.evidenceRankingScore) })
         })))
     };
 }

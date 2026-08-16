@@ -214,12 +214,18 @@ export class SearchNotesTool extends BaseAgentTool {
                 }
                 await ragSpan?.addEvent('retrieval.fused_candidates', retrievalStageTraceAttributes(run.fusedCandidates));
                 await ragSpan?.addEvent('retrieval.reranked_candidates', retrievalStageTraceAttributes(run.rerankedCandidates));
+                if (run.sourceLocalCandidates.length) {
+                    await ragSpan?.addEvent('retrieval.source_local_candidates', retrievalStageTraceAttributes(run.sourceLocalCandidates));
+                    await ragSpan?.addEvent('retrieval.anchor_candidates', retrievalStageTraceAttributes(run.anchorCandidates));
+                }
                 await ragSpan?.addEvent('retrieval.result', retrievalStageTraceAttributes(run.evidences));
                 await ragSpan?.end({ status: 'ok' });
                 const matches: SearchResult[] = run.evidences.map(evidence => ({
                     ...evidence,
                     vector: [],
-                    score: evidence.evidenceRerankScore
+                    score: evidence.evidenceRankingScore
+                        ?? evidence.evidenceRerankScore
+                        ?? evidence.chunkRankingScore
                         ?? evidence.chunkRerankScore
                         ?? evidence.fusionScore
                 }));

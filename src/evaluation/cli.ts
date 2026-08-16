@@ -8,6 +8,7 @@ export type RecallEvalArgs = {
     retriever: 'vector' | 'grep' | 'both';
     wikiFirst?: boolean;
     probeCandidateLimit?: number;
+    questionIds?: string[];
 };
 
 export type AgentEvalArgs = {
@@ -56,6 +57,10 @@ export function parseRecallEvalArgs(args: string[]): RecallEvalArgs {
         }
         if (argument === '--probe-candidate-limit') {
             result.probeCandidateLimit = parsePositiveInteger(requireValue(args, ++index, '--probe-candidate-limit'), '--probe-candidate-limit');
+            continue;
+        }
+        if (argument === '--question-ids') {
+            result.questionIds = parseQuestionIds(requireValue(args, ++index, '--question-ids'));
             continue;
         }
         if (!argument?.startsWith('--') && !result.questionsFile) {
@@ -128,7 +133,7 @@ export function recallUsage(): string {
     return [
         'usage:',
         '  npm run eval:recall',
-        '  npm run eval:recall -- -- (--profile <indexProfileId> | --retrieval-profile <retrievalProfileId>) --variant raw-only|raw-wiki|both --retriever vector|grep|both [--wiki-first true|false] [--probe-candidate-limit <n>] [questionsFile]',
+        '  npm run eval:recall -- -- (--profile <indexProfileId> | --retrieval-profile <retrievalProfileId>) --variant raw-only|raw-wiki|both --retriever vector|grep|both [--wiki-first true|false] [--probe-candidate-limit <n>] [--question-ids <id1,id2,...>] [questionsFile]',
         '',
         'Default profile: bm25-v1. Run without arguments prints this help and does not run an evaluation.'
     ].join('\n');
@@ -173,9 +178,9 @@ function parsePositiveInteger(value: string, option: string): number {
 }
 
 function parseQuestionIds(value: string): string[] {
-    const ids = value.split(',').map(item => item.trim()).filter(Boolean);
+    const ids = value.split(/[,\s]+/).map(item => item.trim()).filter(Boolean);
     if (!ids.length || new Set(ids).size !== ids.length) {
-        throw new Error('--question-ids must be a non-empty CSV without duplicates');
+        throw new Error('--question-ids must be a non-empty comma/space-separated list without duplicates');
     }
     return ids;
 }

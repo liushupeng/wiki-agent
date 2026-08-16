@@ -19,7 +19,8 @@
         "device": "cpu",
         "maxLength": 512,
         "batchSize": 8,
-        "cacheDir": "models"
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
       }
     },
     {
@@ -35,7 +36,8 @@
       "denseProfile": "bge-m3-v1",
       "candidateLimitPerRetriever": 100,
       "fusionLimit": 100,
-      "rrfK": 60
+      "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates"
     },
     {
       "id": "hybrid-bge-m3-rerank-v1",
@@ -45,6 +47,7 @@
       "candidateLimitPerRetriever": 100,
       "fusionLimit": 100,
       "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates",
       "chunkRerankLimit": 100,
       "anchorLimit": 20,
       "maxPerSource": 2,
@@ -56,7 +59,262 @@
         "device": "cpu",
         "maxLength": 512,
         "batchSize": 8,
-        "cacheDir": "models"
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
+      }
+    },
+    {
+      "id": "hybrid-bge-m3-chunk-rerank-v1",
+      "mode": "hybrid",
+      "sparseProfile": "bm25-v1",
+      "denseProfile": "bge-m3-v1",
+      "candidateLimitPerRetriever": 100,
+      "fusionLimit": 100,
+      "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates",
+      "chunkRerankLimit": 100,
+      "anchorLimit": 20,
+      "maxPerSource": 2,
+      "contextWindow": 1,
+      "stages": {
+        "chunkRerank": true,
+        "evidenceExpand": true,
+        "evidenceRerank": false,
+        "sourceLimit": true
+      },
+      "reranker": {
+        "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "maxLength": 512,
+        "batchSize": 8,
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
+      }
+    },
+    {
+      "id": "hybrid-bge-m3-score-fusion-v1",
+      "mode": "hybrid",
+      "sparseProfile": "bm25-v1",
+      "denseProfile": "bge-m3-v1",
+      "candidateLimitPerRetriever": 100,
+      "fusionLimit": 100,
+      "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates",
+      "chunkRerankLimit": 100,
+      "anchorLimit": 20,
+      "maxPerSource": 2,
+      "contextWindow": 1,
+      "chunkRerankFusionWeight": 0.8,
+      "evidenceRerankFusionWeight": 0.6,
+      "stages": {
+        "chunkRerank": true,
+        "evidenceExpand": true,
+        "evidenceRerank": true,
+        "sourceLimit": true
+      },
+      "reranker": {
+        "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "maxLength": 512,
+        "batchSize": 8,
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
+      }
+    },
+    {
+      "id": "hybrid-bge-m3-rerank-anchor40-v1",
+      "mode": "hybrid",
+      "sparseProfile": "bm25-v1",
+      "denseProfile": "bge-m3-v1",
+      "candidateLimitPerRetriever": 100,
+      "fusionLimit": 100,
+      "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates",
+      "chunkRerankLimit": 100,
+      "anchorLimit": 40,
+      "maxPerSource": 2,
+      "contextWindow": 1,
+      "reranker": {
+        "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "maxLength": 512,
+        "batchSize": 8,
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
+      }
+    },
+    {
+      "id": "hybrid-bge-m3-rerank-no-source-limit-v1",
+      "mode": "hybrid",
+      "sparseProfile": "bm25-v1",
+      "denseProfile": "bge-m3-v1",
+      "candidateLimitPerRetriever": 100,
+      "fusionLimit": 100,
+      "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates",
+      "chunkRerankLimit": 100,
+      "anchorLimit": 20,
+      "maxPerSource": 2,
+      "contextWindow": 1,
+      "stages": {
+        "sourceLimit": false
+      },
+      "reranker": {
+        "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "maxLength": 512,
+        "batchSize": 8,
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
+      }
+    },
+    {
+      "id": "hybrid-bge-m3-chunk-rerank-metadata-v1",
+      "mode": "hybrid",
+      "sparseProfile": "bm25-v1",
+      "denseProfile": "bge-m3-v1",
+      "candidateLimitPerRetriever": 100,
+      "fusionLimit": 100,
+      "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates",
+      "chunkRerankLimit": 100,
+      "anchorLimit": 20,
+      "maxPerSource": 2,
+      "contextWindow": 1,
+      "rerankDocumentMode": "metadata-prefixed",
+      "stages": {
+        "chunkRerank": true,
+        "evidenceExpand": true,
+        "evidenceRerank": false,
+        "sourceLimit": true
+      },
+      "reranker": {
+        "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "maxLength": 512,
+        "batchSize": 8,
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
+      }
+    },
+    {
+      "id": "hybrid-bge-m3-source-local-v1",
+      "mode": "hybrid",
+      "sparseProfile": "bm25-v1",
+      "denseProfile": "bge-m3-v1",
+      "candidateLimitPerRetriever": 100,
+      "fusionLimit": 100,
+      "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates",
+      "chunkRerankLimit": 100,
+      "anchorLimit": 20,
+      "maxPerSource": 2,
+      "contextWindow": 1,
+      "sourceLocalSearch": {
+        "sourceLimit": 20,
+        "candidateLimitPerSource": 4,
+        "chunksPerSource": 1
+      },
+      "stages": {
+        "chunkRerank": true,
+        "evidenceExpand": true,
+        "evidenceRerank": false,
+        "sourceLimit": true
+      },
+      "reranker": {
+        "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "maxLength": 512,
+        "batchSize": 8,
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
+      }
+    },
+    {
+      "id": "hybrid-bge-m3-metadata-source-local-v1",
+      "mode": "hybrid",
+      "sparseProfile": "bm25-v1",
+      "denseProfile": "bge-m3-v1",
+      "candidateLimitPerRetriever": 100,
+      "fusionLimit": 100,
+      "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates",
+      "chunkRerankLimit": 100,
+      "anchorLimit": 20,
+      "maxPerSource": 2,
+      "contextWindow": 1,
+      "rerankDocumentMode": "metadata-prefixed",
+      "sourceLocalSearch": {
+        "sourceLimit": 20,
+        "candidateLimitPerSource": 4,
+        "chunksPerSource": 1,
+        "rankingMode": "source-preserving"
+      },
+      "stages": {
+        "chunkRerank": true,
+        "evidenceExpand": true,
+        "evidenceRerank": false,
+        "sourceLimit": true
+      },
+      "reranker": {
+        "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "maxLength": 512,
+        "batchSize": 8,
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
+      }
+    },
+    {
+      "id": "hybrid-bge-m3-metadata-source-local-only-v1",
+      "mode": "hybrid",
+      "sparseProfile": "bm25-v1",
+      "denseProfile": "bge-m3-v1",
+      "candidateLimitPerRetriever": 100,
+      "fusionLimit": 100,
+      "rrfK": 60,
+      "candidateCacheDir": "var/cache/retrieval-candidates",
+      "chunkRerankLimit": 100,
+      "anchorLimit": 20,
+      "maxPerSource": 2,
+      "contextWindow": 1,
+      "rerankDocumentMode": "metadata-prefixed",
+      "sourceLocalSearch": {
+        "sourceLimit": 20,
+        "candidateLimitPerSource": 4,
+        "chunksPerSource": 1,
+        "rankingMode": "source-preserving",
+        "anchorMode": "source-local-only"
+      },
+      "stages": {
+        "chunkRerank": true,
+        "evidenceExpand": true,
+        "evidenceRerank": false,
+        "sourceLimit": true
+      },
+      "reranker": {
+        "model": "onnx-community/bge-reranker-v2-m3-ONNX",
+        "revision": "main",
+        "dtype": "q4",
+        "device": "cpu",
+        "maxLength": 512,
+        "batchSize": 8,
+        "cacheDir": "models",
+        "scoreCacheDir": "var/cache/reranker-scores"
       }
     }
   ]

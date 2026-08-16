@@ -57,9 +57,28 @@ test('parseRecallEvalArgs defaults and separates variant from retriever', () => 
             retriever: 'vector'
         }
     );
+    assert.deepEqual(
+        parseRecallEvalArgs(['--question-ids', 'investment-pillars, raft-components']),
+        {
+            profile: 'bm25-v1',
+            variant: 'both',
+            retriever: 'vector',
+            questionIds: ['investment-pillars', 'raft-components']
+        }
+    );
+    assert.deepEqual(
+        parseRecallEvalArgs(['--question-ids', 'investment-pillars raft-components']),
+        {
+            profile: 'bm25-v1',
+            variant: 'both',
+            retriever: 'vector',
+            questionIds: ['investment-pillars', 'raft-components']
+        }
+    );
     assert.throws(() => parseRecallEvalArgs(['--mode', 'both']), /usage:/);
     assert.throws(() => parseRecallEvalArgs(['--retriever', 'invalid']), /unsupported retriever/);
     assert.throws(() => parseRecallEvalArgs(['--wiki-first', 'sometimes']), /must be true or false/);
+    assert.throws(() => parseRecallEvalArgs(['--question-ids', 'one,one']), /without duplicates/);
 });
 
 test('parseAgentEvalArgs supports deterministic samples or explicit IDs', () => {

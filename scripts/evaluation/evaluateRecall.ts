@@ -25,6 +25,7 @@ import {
     retrievalCandidatesTraceAttributes,
     retrievalRequestTraceAttributes,
     retrievalResultTraceAttributes,
+    retrievalStageTraceAttributes,
     retrievalSpanTraceAttributes
 } from '../../src/rag/retrievalDiagnostics.js';
 import { createTelemetry, SpanHandle, Telemetry } from '../../src/trace/telemetry.js';
@@ -54,7 +55,16 @@ async function main() {
         throw new Error('--probe-candidate-limit must be greater than the normal candidate limit (20)');
     }
     const questionsFile = path.resolve(arguments_.questionsFile ?? 'evaluation/questions.json');
-    const questions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
+    const loadedQuestions = JSON.parse(await fs.readFile(questionsFile, 'utf-8')) as EvalQuestion[];
+    const requestedQuestionIds = new Set(arguments_.questionIds ?? []);
+    const questions = requestedQuestionIds.size
+        ? loadedQuestions.filter(question => question.id && requestedQuestionIds.has(question.id))
+        : loadedQuestions;
+    if (requestedQuestionIds.size) {
+        const found = new Set(questions.map(question => question.id));
+        const missing = [...requestedQuestionIds].filter(id => !found.has(id));
+        if (missing.length) throw new Error(`unknown evaluation question ids: ${missing.join(', ')}`);
+    }
     const results: Record<string, EvalSummary | EvalComparisonSummary> = {};
     const probes: Record<string, Record<string, ProbeSummary>> = {};
     const wikiFirstByVariant: Record<string, boolean> = {};
@@ -114,6 +124,7 @@ async function main() {
             ...(arguments_.retrievalProfile ? { retrievalProfile: arguments_.retrievalProfile } : {}),
             retriever: arguments_.retriever,
             variant: arguments_.variant,
+            ...(arguments_.questionIds ? { questionIds: arguments_.questionIds } : {}),
             wikiFirst: wikiFirstByVariant,
             ...(arguments_.probeCandidateLimit === undefined ? {} : { probeCandidateLimit: arguments_.probeCandidateLimit, probes }),
             traceFile: telemetry.filePath,
@@ -176,7 +187,7 @@ async function evaluateWithProgress(
         else progress.update(message);
     }, decision => writeRetrievalTrace(trace, decision));
     progress.stop();
-    console.log(`[recall] [${experimentMode}/${retriever.name}] 完成：${summary.passed}/${summary.total} 通过，耗时 ${Math.round(performance.now() - startedAt)} ms。`);
+    console.log(`[recall] [${experimentMode}/${retriever.name}] 完成：${summary.passed}/${summary.total} 宽松通过，${summary.strictPassed}/${summary.total} 严格通过，耗时 ${Math.round(performance.now() - startedAt)} ms。`);
     if (probeCandidateLimit !== undefined) {
         const probe = await probeCandidateMisses(questions, summary, retriever, trace, probeCandidateLimit);
         onProbe(retriever.name, probe);
@@ -280,6 +291,9 @@ async function writeRetrievalTrace(
     };
     await span.addEvent('retrieval.request', retrievalRequestTraceAttributes(retrieval));
     await span.addEvent('retrieval.candidates', retrievalCandidatesTraceAttributes(retrieval));
+    for (const [stage, matches] of Object.entries(decision.stages ?? {})) {
+        await span.addEvent(`retrieval.stage.${stage}`, retrievalStageTraceAttributes(matches));
+    }
     await span.addEvent('retrieval.result', retrievalResultTraceAttributes(retrieval));
     const expectedSources = decision.result.expectedSources ?? (decision.question.expectedSource ? [decision.question.expectedSource] : []);
     const candidateRank = rankOfExpectedSource(decision.candidates, expectedSources);
@@ -290,17 +304,26 @@ async function writeRetrievalTrace(
             ? 'candidate_miss'
             : finalRank === undefined
                 ? 'final_rank_miss'
-                : decision.result.passed
+                : decision.result.strictPassed
                     ? 'pass'
-                    : 'term_coverage_miss';
+                    : 'source_term_coverage_miss';
     await span.addEvent('gen_ai.evaluation.result', {
         'gen_ai.evaluation.name': 'retrieval_evidence',
-        'gen_ai.evaluation.score.value': decision.result.passed ? 1 : 0,
-        'gen_ai.evaluation.score.label': decision.result.passed ? 'pass' : 'fail',
+        'gen_ai.evaluation.score.value': decision.result.strictPassed ? 1 : 0,
+        'gen_ai.evaluation.score.label': decision.result.strictPassed ? 'pass' : 'fail',
         'wiki_agent.eval.expected_sources': JSON.stringify(expectedSources),
         'wiki_agent.eval.candidate_rank': candidateRank ?? -1,
         'wiki_agent.eval.final_rank': finalRank ?? -1,
+        ...(decision.result.stageRanks
+            ? { 'wiki_agent.eval.stage_ranks': JSON.stringify(decision.result.stageRanks) }
+            : {}),
+        ...(decision.result.stageDiagnostics
+            ? { 'wiki_agent.eval.stage_diagnostics': JSON.stringify(decision.result.stageDiagnostics) }
+            : {}),
         'wiki_agent.eval.term_coverage': decision.result.termScore,
+        'wiki_agent.eval.source_term_coverage': decision.result.sourceTermScore,
+        'wiki_agent.eval.loose_passed': decision.result.passed,
+        'wiki_agent.eval.strict_passed': decision.result.strictPassed,
         'wiki_agent.eval.failure_type': failureType
     });
     await span.end({
@@ -340,7 +363,8 @@ function printSummary(
             const metrics = summary.metrics;
             console.log([
                 `  ${profile}/${variant}/${summary.retriever}`,
-                `通过 ${summary.passed}/${summary.total}`,
+                `宽松通过 ${summary.passed}/${summary.total}`,
+                `严格通过 ${summary.strictPassed}/${summary.total}`,
                 `Recall@20 ${formatRatio(metrics?.candidateRecallAtK)}`,
                 `Hit@5 ${formatRatio(metrics?.recallAtK)}`,
                 `Hit@1 ${formatRatio(metrics?.hitAt1)}`,

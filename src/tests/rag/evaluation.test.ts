@@ -31,8 +31,10 @@ test('scoreQuestion passes when expected source and enough terms are matched', (
     }, matches);
 
     assert.equal(result.passed, true);
+    assert.equal(result.strictPassed, true);
     assert.equal(result.sourceHit, true);
     assert.equal(result.termScore, 1);
+    assert.equal(result.sourceTermScore, 1);
     assert.deepEqual(result.topSources, [{ source: 'agent.md', score: 0.8765 }]);
 });
 
@@ -48,6 +50,22 @@ test('scoreQuestion fails when term coverage is below the threshold', () => {
     assert.equal(result.termScore, 0.5);
 });
 
+test('scoreQuestion does not count terms from unrelated sources as a strict pass', () => {
+    const result = scoreQuestion({
+        question: 'how is the project built and profiled?',
+        expectedSource: 'project/README.md',
+        expectedTerms: ['cmake', 'pprof', 'FlameGraph', 'graphviz']
+    }, [
+        { ...matches[0], source: 'project/README.md', text: 'Build with cmake.' },
+        { ...matches[0], source: 'observability.md', text: 'Use pprof, FlameGraph, and graphviz.' }
+    ]);
+
+    assert.equal(result.passed, true);
+    assert.equal(result.termScore, 1);
+    assert.equal(result.strictPassed, false);
+    assert.equal(result.sourceTermScore, 0.25);
+});
+
 test('scoreQuestion accepts any configured evidence source', () => {
     const result = scoreQuestion({
         question: 'why use rag tools?',
@@ -58,6 +76,44 @@ test('scoreQuestion accepts any configured evidence source', () => {
     assert.equal(result.sourceHit, true);
     assert.equal(result.passed, true);
     assert.deepEqual(result.expectedSources, ['raw/agent.md', 'wiki/rag-overview.md']);
+});
+
+test('scoreQuestion records the expected source rank at every available pipeline stage', () => {
+    const wrong = { ...matches[0], id: 'wrong#1', source: 'wrong.md' };
+    const expected = { ...matches[0], id: 'agent#1', source: 'agent.md' };
+    const result = scoreQuestion({
+        question: 'why use rag tools?',
+        expectedSource: 'agent.md',
+        expectedTerms: ['Agent']
+    }, [wrong, expected], [wrong, expected], {
+        sparse: [expected, wrong],
+        dense: [wrong],
+        fusion: [wrong, expected],
+        chunkRerank: [expected, wrong],
+        evidenceAssembly: [wrong, expected],
+        evidenceRerank: [wrong],
+        final: [wrong, expected]
+    });
+
+    assert.deepEqual(result.stageRanks, {
+        sparse: 1,
+        dense: null,
+        fusion: 2,
+        chunkRerank: 1,
+        evidenceAssembly: 2,
+        evidenceRerank: null,
+        final: 2
+    });
+    assert.deepEqual(result.stageDiagnostics?.fusion, {
+        sourceRank: 2,
+        contentRank: 2,
+        bestTermCoverage: 1
+    });
+    assert.deepEqual(result.stageDiagnostics?.dense, {
+        sourceRank: null,
+        contentRank: null,
+        bestTermCoverage: 0
+    });
 });
 
 test('evaluateRetriever searches vector queries and summarizes accuracy', async () => {
@@ -82,6 +138,7 @@ test('evaluateRetriever searches vector queries and summarizes accuracy', async 
     assert.equal(summary.status, 'success');
     assert.equal(summary.retriever, 'vector');
     assert.equal(summary.passed, 1);
+    assert.equal(summary.strictPassed, 1);
     assert.equal(summary.total, 2);
     assert.equal(summary.accuracy, 0.5);
 });

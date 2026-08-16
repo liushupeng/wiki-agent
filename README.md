@@ -284,6 +284,14 @@ npm run index:knowledge -- -- --profile bge-m3-v1 --variant raw-only
 npm run eval:recall -- -- --retrieval-profile dense-bge-m3-v1 --variant raw-only --retriever vector
 npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-v1 --variant raw-only --retriever vector
 npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-chunk-rerank-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-score-fusion-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-anchor40-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-no-source-limit-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-chunk-rerank-metadata-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-source-local-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-local-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-local-only-v1 --variant raw-only --retriever vector
 ```
 
 `check:rag-models` 默认只做快速 smoke check。显式传入 `--benchmark` 时，会从真实
@@ -297,7 +305,7 @@ npm run check:rag-models -- -- --benchmark --samples 64 --batches 4,8,16 --dtype
 只有本地已准备 `model_int8.onnx` 且 Node.js Runtime 支持 WebGPU 时，才加入
 `--dtypes q4,int8 --devices cpu,webgpu`；失败的组合会保留错误摘要，并继续测试其他组合。
 
-稠密 embedding 使用按模型配置和 chunk 文本寻址的磁盘缓存；索引失败后重跑会复用已经完成的向量。混合检索会校验两个索引 manifest 中的 chunk 指纹，避免融合不同语料快照。在线 Agent 可设置 `RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-rerank-v1`，并用 `RAG_INDEX_VARIANT` 选择 variant。
+稠密 embedding 使用按模型配置和 chunk 文本寻址的磁盘缓存；索引失败后重跑会复用已经完成的向量。混合检索会校验两个索引 manifest 中的 chunk 指纹，避免融合不同语料快照。配置 `candidateCacheDir` 后，相同索引快照、query 和 candidate limit 的 BM25/BGE-M3 候选会冻结并复用；配置 Reranker 的 `scoreCacheDir` 后，相同模型身份、query 和文本的精排分数也会复用，便于快速重复消融。在线 Agent 可设置 `RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-rerank-v1`，并用 `RAG_INDEX_VARIANT` 选择 variant。
 
 检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。提供题目文件、`--profile`、`--variant` 或 `--retriever` 中任一参数才会实际运行：
 
@@ -306,11 +314,64 @@ npm run eval:recall -- -- --variant both --retriever both
 npm run eval:recall -- -- --profile bm25-v1 --variant both --retriever vector
 npm run eval:recall -- -- --profile bm25-v1 --variant raw-wiki --retriever vector --wiki-first false
 npm run eval:recall -- -- --profile bm25-v1 --variant raw-only --retriever vector --probe-candidate-limit 100
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant raw-only --retriever vector --question-ids investment-pillars,raft-components
 ```
 
-`--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。`--probe-candidate-limit <N>` 会仅对正常 Top-20 候选未命中的题追加深度探测，N 必须大于 20。召回报告会记录每个变体的实际 Wiki 优先策略和 probe 汇总，并写入 `var/evals/recall/<timestamp>/report.json`。
+`--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。`--probe-candidate-limit <N>` 会仅对正常 Top-20 候选未命中的题追加深度探测，N 必须大于 20。`--question-ids <id1,id2,...>` 可只重跑失败题或指定样本，适合低成本生成排序诊断。召回报告会记录每个变体的实际 Wiki 优先策略、题目范围和 probe 汇总，并写入 `var/evals/recall/<timestamp>/report.json`。
 
-每次 Recall 评测还会在同一输出目录写入一条 `eval.recall` JSONL Trace。其 `rag.search` 子 span 与在线检索使用相同的候选—重排诊断字段：query、profile、variant、candidate limit、Wiki 优先策略、Top-20 候选和最终 Top-5 结果；评测事件补充金标命中、rank、关键词覆盖率和失败类型。终端仅显示 Trace 路径，Trace 是诊断原始事实，报告是其汇总视图。
+每次 Recall 评测还会在同一输出目录写入一条 `eval.recall` JSONL Trace。其 `rag.search` 子 span 与在线检索使用相同的候选—重排诊断字段：query、profile、variant、candidate limit、Wiki 优先策略、Top-20 候选和最终 Top-5 结果；评测事件补充金标命中、关键词覆盖率、失败类型，以及正确来源在 sparse、dense、RRF、Chunk Reranker、Evidence 组装、Evidence Reranker 和最终来源限额后的逐阶段 rank。`report.json` 的逐题结果同时记录 `stageRanks` 和 `stageDiagnostics`；后者包含各阶段的来源 rank、满足关键词阈值的内容 rank，以及正确来源中的最佳关键词覆盖率，可区分“来源排错”和“正确来源内片段不完整”。报告保留原有的跨 Top-5 合并关键词口径作为“宽松通过”，并新增只允许正确来源贡献关键词的 `sourceTermScore` 和“严格通过”，避免无关文档补齐关键词造成假阳性。终端仅显示 Trace 路径，Trace 是诊断原始事实，报告是其汇总视图。
+
+`hybrid-bge-m3-chunk-rerank-v1` 保留 Evidence 扩展但关闭 Evidence Reranker，用于验证二次重排是否造成降级。`hybrid-bge-m3-score-fusion-v1` 对 RRF、Chunk Reranker 和 Evidence Reranker 分数分别做 min-max 归一化后线性融合；当前实验权重为 Chunk Reranker 0.8、Evidence Reranker 0.6，既保留语义重排的主导作用，也防止强候选被单阶段分数直接淘汰。现有 `hybrid-bge-m3-rerank-v1` 保持原行为，继续作为对照组。
+
+`hybrid-bge-m3-rerank-anchor40-v1` 仅将 Evidence Anchor 从 20 扩至 40，用于检验被 Chunk Reranker 排在 21–40 名的正确内容能否被 Evidence Reranker 救回。`hybrid-bge-m3-rerank-no-source-limit-v1` 仅关闭最终的每来源最多两条限制，用于检验同一来源中排在第三条及之后的正确 Evidence 是否被限额误删。
+
+`hybrid-bge-m3-chunk-rerank-metadata-v1` 以关闭 Evidence Reranker 的当前最佳消融为基础，在 Chunk Reranker 输入前增加 source、titlePath 和 tags，使日期、文件名与知识层级参与相关性判断。`hybrid-bge-m3-source-local-v1` 同样关闭 Evidence Reranker，但会先从 RRF 前 20 个不同来源中各取最多 4 个词法相关 chunk，再用同一 Reranker 选出每来源最佳 chunk，与全局 Chunk Reranker 结果合并；Trace 和报告会新增 `sourceLocal` 与 `anchorSelection` 阶段，用于观察“来源正确但答案片段未召回”的恢复情况。
+
+`hybrid-bge-m3-metadata-source-local-v1` 组合 metadata 输入与来源内检索，并用来源内最佳 chunk 替换该来源原本排名最高的 chunk、继承其全局名次；这样既避免答案片段因裸 chunk 分数过低被淘汰，也不会因追加同来源候选挤占 Anchor。题库标注应与原文及问题约束一致：数值单位沿用原文（例如 `120 ms`），问题未限定唯一文件时允许所有实际包含答案的来源。
+
+`hybrid-bge-m3-metadata-source-local-only-v1` 只使用每个候选来源内部选出的最佳 chunk 作为 Anchor，排除同一来源的其他全局候选。它用于验证来源内候选排序已经足够可靠、且全局 chunk 是否仍在挤占最终 Top-5；该模式仍是实验项，不直接替换默认在线 profile。
+
+### 检索优化：先解决召回，再解决排序
+
+检索优化使用固定的 50 题 `raw-only` 题集，并将问题拆成两层：先用
+`Recall@20` 判断正确来源能否进入候选池，再用 `Hit@5`、`Hit@1` 和
+`MRR@5` 判断正确结果能否排到前面。这样每次只改变一个主要变量，避免把“没有召回”
+和“召回后排错”混为一谈。
+
+#### 召回优化
+
+| 阶段 | 主要变化 | Recall@20 | Hit@5 | Hit@1 | 自动通过 | 结论 |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| TF 词频余弦基线 | 中文词频余弦 | 44% | 40% | 20% | 9/50 | 中文词法匹配能力不足 |
+| 中文 bigram BM25 | TF 词频余弦 → BM25 | 82%（+38pp） | 68%（+28pp） | 50%（+30pp） | 30/50（+21） | 先修正检索算法，获得最大单步提升 |
+| BM25 + 语料裁剪 | 47,093 → 19,397 chunks | 86%（+4pp） | 78%（+10pp） | 58%（+8pp） | 34/50（+4） | 去掉低价值语料可同时改善召回与排序 |
+| BGE-M3 Dense 单路 | BM25 → Dense | 92%（+6pp） | 82%（+4pp） | 60%（+2pp） | 36/50（+2） | 语义检索补足词法检索，但单路排序优势有限 |
+| BM25 + BGE-M3 + RRF | 词法、语义双路召回 | 98%（+12pp） | 86%（+8pp） | 70%（+12pp） | 37/50（+3） | 两路具有互补性，候选覆盖率达到 49/50 |
+
+表中的 Dense 和 Hybrid 增量均相对裁剪后的 BM25 基线（Recall@20 86%、
+Hit@5 78%、Hit@1 58%、34/50）计算。召回阶段的迭代路径是：
+
+```text
+修正中文词法检索
+-> 清理语料噪声
+-> 验证 Dense 单路的语义增益
+-> 用 RRF 融合 BM25 与 Dense 的互补候选
+```
+
+#### 排序优化
+
+| 阶段 | 主要变化 | Recall@20 | Hit@5 | Hit@1 | MRR@5 | 自动通过 | 结论 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| BM25 基线 | 裁剪后的 BM25 | 86% | 78% | 58% | 0.6583 | 34/50 | 排序前基线 |
+| BM25 + BGE Reranker | 对 BM25 Top-100 重排 | 86%（不变） | 90%（+12pp） | 82%（+24pp） | 0.8567（+0.1984） | 41/50（+7） | 不增加候选，仅靠重排即可显著提升头部命中 |
+| Hybrid + RRF | 双路召回，尚未精排 | 98%（+12pp） | 86%（+8pp） | 70%（+12pp） | — | 37/50（+3） | 召回已接近饱和，主要矛盾转向排序 |
+| Hybrid + 两阶段 BGE Reranker | Chunk 重排 + Evidence 重排 | 98%（+12pp） | 90%（+12pp） | 80%（+22pp） | — | 42/50（+8） | 在保持 49/50 候选覆盖的同时，把更多正确结果推入 Top-5 |
+
+排序表中的增量同样相对裁剪后的 BM25 基线计算。完整方案最终将
+Recall@20 从 86% 提升至 98%、Hit@5 从 78% 提升至 90%、Hit@1 从
+58% 提升至 80%，自动通过题由 34/50 提升至 42/50。当前 8 个失败题的正确来源
+均已进入候选池，因此后续优化重点不再是扩大召回，而是定位正确结果在
+RRF、Chunk Reranker、Evidence Reranker 和来源限额中的排名变化。
 
 Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，必须通过显式 CLI 参数选择可复现样本、指定题目，或用 `--all` 明确允许全量运行；无参数只显示帮助且绝不调用 LLM：
 

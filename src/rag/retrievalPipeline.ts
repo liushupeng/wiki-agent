@@ -1,12 +1,16 @@
 import { IndexRuntime, openActiveIndex } from './indexRuntime.js';
 import { SearchResult, TextChunk } from './types.js';
+import { tokenizeForBm25 } from './embeddings.js';
 import {
     HybridRetrievalProfile,
+    RerankerProfile,
     RetrievalProfile,
     loadRetrievalProfilesConfig,
     resolveRetrievalProfile
 } from './retrievalProfiles.js';
 import { Reranker, TransformersJsReranker } from './reranker.js';
+import { CachedReranker } from './rerankerCache.js';
+import { RetrievalCandidateCache } from './retrievalCandidateCache.js';
 
 export type CandidateHit = TextChunk & {
     sparseRank?: number;
@@ -15,6 +19,7 @@ export type CandidateHit = TextChunk & {
     denseScore?: number;
     fusionScore: number;
     chunkRerankScore?: number;
+    chunkRankingScore?: number;
 };
 
 export type Evidence = TextChunk & {
@@ -22,7 +27,9 @@ export type Evidence = TextChunk & {
     anchorId: string;
     fusionScore: number;
     chunkRerankScore?: number;
+    chunkRankingScore?: number;
     evidenceRerankScore?: number;
+    evidenceRankingScore?: number;
 };
 
 export type RetrievalRun = {
@@ -32,12 +39,17 @@ export type RetrievalRun = {
     denseCandidates: CandidateHit[];
     fusedCandidates: CandidateHit[];
     rerankedCandidates: CandidateHit[];
+    sourceLocalCandidates: CandidateHit[];
+    anchorCandidates: CandidateHit[];
+    assembledEvidences: Evidence[];
+    rerankedEvidences: Evidence[];
     evidences: Evidence[];
     elapsedMs: {
         sparse: number;
         dense: number;
         fusion: number;
         chunkRerank: number;
+        sourceLocal: number;
         evidenceRerank: number;
         total: number;
     };
@@ -57,7 +69,7 @@ export async function openRetriever(
     const profile = resolveRetrievalProfile(config, retrievalProfileId);
     if (profile.mode === 'single') {
         const index = await openActiveIndex(profile.indexProfile, variantId);
-        const reranker = dependencies.reranker ?? (profile.reranker ? new TransformersJsReranker(profile.reranker) : undefined);
+        const reranker = dependencies.reranker ?? createConfiguredReranker(profile.reranker);
         return createSingleRetriever(profile, index, reranker);
     }
     const [sparse, dense] = await Promise.all([
@@ -65,8 +77,16 @@ export async function openRetriever(
         openActiveIndex(profile.denseProfile, variantId)
     ]);
     validateHybridIndexes(sparse, dense);
-    const reranker = dependencies.reranker ?? (profile.reranker ? new TransformersJsReranker(profile.reranker) : undefined);
+    const reranker = dependencies.reranker ?? createConfiguredReranker(profile.reranker);
     return createHybridRetriever(profile, sparse, dense, reranker);
+}
+
+function createConfiguredReranker(profile?: RerankerProfile): Reranker | undefined {
+    if (!profile) return undefined;
+    const reranker = new TransformersJsReranker(profile);
+    return profile.scoreCacheDir
+        ? new CachedReranker(reranker, profile, profile.scoreCacheDir)
+        : reranker;
 }
 
 export function reciprocalRankFusion(
@@ -115,6 +135,63 @@ export function limitPerSource<T extends { source: string }>(items: T[], maxPerS
     return selected;
 }
 
+export function linearScoreFusion(priorScores: number[], rerankerScores: number[], rerankerWeight: number): number[] {
+    if (priorScores.length !== rerankerScores.length) throw new Error('score fusion inputs must have equal lengths');
+    if (!Number.isFinite(rerankerWeight) || rerankerWeight < 0 || rerankerWeight > 1) {
+        throw new Error('rerankerWeight must be between 0 and 1');
+    }
+    const normalizedPrior = minMaxNormalize(priorScores);
+    const normalizedReranker = minMaxNormalize(rerankerScores);
+    return normalizedPrior.map((prior, index) =>
+        (1 - rerankerWeight) * prior + rerankerWeight * normalizedReranker[index]!
+    );
+}
+
+export function formatRerankDocument(
+    item: Pick<TextChunk, 'source' | 'text' | 'titlePath' | 'tags'>,
+    mode: 'text' | 'metadata-prefixed' = 'text'
+): string {
+    if (mode === 'text') return item.text;
+    const metadata = [
+        `source: ${item.source}`,
+        ...(item.titlePath?.length ? [`title: ${item.titlePath.join(' > ')}`] : []),
+        ...(item.tags?.length ? [`tags: ${item.tags.join(', ')}`] : [])
+    ];
+    return `${metadata.join('\n')}\n\n${item.text}`;
+}
+
+export function selectLexicalCandidates(query: string, chunks: TextChunk[], limit: number): TextChunk[] {
+    const queryTerms = new Set(tokenizeForBm25(query));
+    const score = (chunk: TextChunk): number => {
+        const documentTerms = new Set(tokenizeForBm25(formatRerankDocument(chunk, 'metadata-prefixed')));
+        let matched = 0;
+        for (const term of queryTerms) if (documentTerms.has(term)) matched += 1;
+        return queryTerms.size ? matched / queryTerms.size : 0;
+    };
+    return chunks
+        .map(chunk => ({ chunk, score: score(chunk) }))
+        .sort((left, right) => right.score - left.score || left.chunk.start - right.chunk.start || left.chunk.id.localeCompare(right.chunk.id))
+        .slice(0, limit)
+        .map(item => item.chunk);
+}
+
+export function preserveSourceRanking(
+    localCandidates: CandidateHit[],
+    globallyRankedCandidates: CandidateHit[]
+): CandidateHit[] {
+    const bestBySource = new Map<string, CandidateHit>();
+    for (const candidate of globallyRankedCandidates) {
+        const key = normalizeSource(candidate.source);
+        if (!bestBySource.has(key)) bestBySource.set(key, candidate);
+    }
+    return localCandidates.map(candidate => {
+        const sourceRepresentative = bestBySource.get(normalizeSource(candidate.source));
+        return sourceRepresentative
+            ? { ...candidate, chunkRankingScore: candidateRankingScore(sourceRepresentative) }
+            : candidate;
+    }).sort(compareRankedCandidates);
+}
+
 function createSingleRetriever(
     profile: RetrievalProfile & { mode: 'single' },
     index: IndexRuntime,
@@ -138,13 +215,16 @@ function createSingleRetriever(
             const rerankStarted = performance.now();
             let rerankedCandidates = candidates;
             if (reranker) {
-                const scores = await reranker.score(query, candidates.map(item => item.text));
+                const scores = await reranker.score(query, candidates.map(item =>
+                    formatRerankDocument(item, profile.rerankDocumentMode)
+                ));
                 rerankedCandidates = candidates
                     .map((item, rank) => ({ ...item, chunkRerankScore: scores[rank]! }))
                     .sort((left, right) => right.chunkRerankScore! - left.chunkRerankScore! || right.fusionScore - left.fusionScore);
             }
             const rerankElapsed = performance.now() - rerankStarted;
             const topK = options.topK ?? 5;
+            const evidences = rerankedCandidates.slice(0, topK).map(candidateToEvidence);
             return {
                 profile: profile.id,
                 query,
@@ -152,12 +232,17 @@ function createSingleRetriever(
                 denseCandidates: index.profile.embedder.type === 'bm25' ? [] : candidates,
                 fusedCandidates: candidates,
                 rerankedCandidates,
-                evidences: rerankedCandidates.slice(0, topK).map(candidateToEvidence),
+                sourceLocalCandidates: [],
+                anchorCandidates: rerankedCandidates,
+                assembledEvidences: evidences,
+                rerankedEvidences: evidences,
+                evidences,
                 elapsedMs: {
                     sparse: index.profile.embedder.type === 'bm25' ? elapsed : 0,
                     dense: index.profile.embedder.type === 'bm25' ? 0 : elapsed,
                     fusion: 0,
                     chunkRerank: rerankElapsed,
+                    sourceLocal: 0,
                     evidenceRerank: 0,
                     total: performance.now() - totalStarted
                 }
@@ -172,18 +257,40 @@ function createHybridRetriever(
     dense: IndexRuntime,
     reranker?: Reranker
 ): Retriever {
+    const candidateCache = profile.candidateCacheDir
+        ? new RetrievalCandidateCache(profile.candidateCacheDir, JSON.stringify({
+            sparseProfile: sparse.profile.id,
+            denseProfile: dense.profile.id,
+            variant: sparse.variant.id,
+            sparseIndex: sparse.manifest.profileFingerprint,
+            denseIndex: dense.manifest.profileFingerprint,
+            sparseChunks: sparse.manifest.chunkFingerprint,
+            denseChunks: dense.manifest.chunkFingerprint,
+            sparseCreatedAt: sparse.manifest.chunkFingerprint ? undefined : sparse.manifest.createdAt,
+            denseCreatedAt: dense.manifest.chunkFingerprint ? undefined : dense.manifest.createdAt
+        }))
+        : undefined;
     return {
         profile,
         async retrieve(query, options = {}) {
             const totalStarted = performance.now();
             const perRetrieverLimit = options.candidateLimit ?? profile.candidateLimitPerRetriever;
-            const sparseStarted = performance.now();
-            const sparsePromise = sparse.search(query, perRetrieverLimit);
-            const denseStarted = performance.now();
-            const densePromise = dense.search(query, perRetrieverLimit);
-            const [sparseRaw, denseRaw] = await Promise.all([sparsePromise, densePromise]);
-            const sparseElapsed = performance.now() - sparseStarted;
-            const denseElapsed = performance.now() - denseStarted;
+            const retrievalStarted = performance.now();
+            const snapshot = candidateCache
+                ? await candidateCache.getOrLoad(query, perRetrieverLimit, async () => {
+                    const [sparseResults, denseResults] = await Promise.all([
+                        sparse.search(query, perRetrieverLimit),
+                        dense.search(query, perRetrieverLimit)
+                    ]);
+                    return { sparse: sparseResults, dense: denseResults };
+                })
+                : await Promise.all([
+                    sparse.search(query, perRetrieverLimit),
+                    dense.search(query, perRetrieverLimit)
+                ]).then(([sparseResults, denseResults]) => ({ sparse: sparseResults, dense: denseResults }));
+            const sparseRaw = snapshot.sparse;
+            const denseRaw = snapshot.dense;
+            const retrievalElapsed = performance.now() - retrievalStarted;
 
             const fusionStarted = performance.now();
             const sparseCandidates = reciprocalRankFusion(sparseRaw, [], profile.rrfK, perRetrieverLimit);
@@ -193,28 +300,85 @@ function createHybridRetriever(
 
             const chunkStarted = performance.now();
             let rerankedCandidates = fusedCandidates;
-            if (reranker) {
+            const chunkRerankEnabled = profile.stages?.chunkRerank ?? Boolean(reranker);
+            if (reranker && chunkRerankEnabled) {
                 const input = fusedCandidates.slice(0, profile.chunkRerankLimit ?? fusedCandidates.length);
-                const scores = await reranker.score(query, input.map(item => item.text));
-                rerankedCandidates = input
-                    .map((item, index) => ({ ...item, chunkRerankScore: scores[index]! }))
-                    .sort((left, right) => right.chunkRerankScore! - left.chunkRerankScore! || right.fusionScore - left.fusionScore);
+                const scores = await reranker.score(query, input.map(item =>
+                    formatRerankDocument(item, profile.rerankDocumentMode)
+                ));
+                const rankingScores = profile.chunkRerankFusionWeight === undefined
+                    ? scores
+                    : linearScoreFusion(input.map(item => item.fusionScore), scores, profile.chunkRerankFusionWeight);
+                rerankedCandidates = input.map((item, index) => ({
+                    ...item,
+                    chunkRerankScore: scores[index]!,
+                    ...(profile.chunkRerankFusionWeight === undefined
+                        ? {}
+                        : { chunkRankingScore: rankingScores[index]! })
+                })).sort((left, right) =>
+                    (right.chunkRankingScore ?? right.chunkRerankScore!)
+                    - (left.chunkRankingScore ?? left.chunkRerankScore!)
+                    || right.fusionScore - left.fusionScore
+                );
             }
             const chunkElapsed = performance.now() - chunkStarted;
 
+            const sourceLocalStarted = performance.now();
+            const sourceLocalCandidates = reranker && profile.sourceLocalSearch
+                ? await retrieveSourceLocalCandidates(
+                    query,
+                    fusedCandidates,
+                    rerankedCandidates,
+                    sparse,
+                    reranker,
+                    profile
+                )
+                : [];
+            const anchorCandidates = profile.sourceLocalSearch?.anchorMode === 'source-local-only'
+                ? sourceLocalCandidates
+                : profile.sourceLocalSearch?.rankingMode === 'source-preserving'
+                    ? replaceSourceRepresentatives(rerankedCandidates, sourceLocalCandidates)
+                    : mergeRankedCandidates(rerankedCandidates, sourceLocalCandidates);
+            const sourceLocalElapsed = performance.now() - sourceLocalStarted;
+
             const evidenceStarted = performance.now();
-            const anchors = rerankedCandidates.slice(0, profile.anchorLimit ?? (options.topK ?? 5));
-            let evidences = await assembleEvidenceWindows(anchors, sparse, profile.contextWindow ?? 0);
-            if (reranker && (profile.contextWindow ?? 0) > 0) {
-                const scores = await reranker.score(query, evidences.map(item => item.text));
-                evidences = evidences
-                    .map((item, index) => ({ ...item, evidenceRerankScore: scores[index]! }))
-                    .sort((left, right) => right.evidenceRerankScore! - left.evidenceRerankScore!);
+            const anchors = anchorCandidates.slice(0, profile.anchorLimit ?? (options.topK ?? 5));
+            const evidenceExpandEnabled = profile.stages?.evidenceExpand ?? (profile.contextWindow ?? 0) > 0;
+            const assembledEvidences = await assembleEvidenceWindows(
+                anchors,
+                sparse,
+                evidenceExpandEnabled ? profile.contextWindow ?? 0 : 0
+            );
+            let rerankedEvidences = assembledEvidences;
+            const evidenceRerankEnabled = profile.stages?.evidenceRerank
+                ?? Boolean(reranker && evidenceExpandEnabled);
+            if (reranker && evidenceRerankEnabled) {
+                const scores = await reranker.score(query, assembledEvidences.map(item =>
+                    formatRerankDocument(item, profile.rerankDocumentMode)
+                ));
+                const priorScores = assembledEvidences.map(item =>
+                    item.chunkRankingScore ?? item.chunkRerankScore ?? item.fusionScore
+                );
+                const rankingScores = profile.evidenceRerankFusionWeight === undefined
+                    ? scores
+                    : linearScoreFusion(priorScores, scores, profile.evidenceRerankFusionWeight);
+                rerankedEvidences = assembledEvidences.map((item, index) => ({
+                    ...item,
+                    evidenceRerankScore: scores[index]!,
+                    ...(profile.evidenceRerankFusionWeight === undefined
+                        ? {}
+                        : { evidenceRankingScore: rankingScores[index]! })
+                })).sort((left, right) =>
+                    (right.evidenceRankingScore ?? right.evidenceRerankScore!)
+                    - (left.evidenceRankingScore ?? left.evidenceRerankScore!)
+                );
             }
-            if (profile.maxPerSource) {
-                evidences = limitPerSource(evidences, profile.maxPerSource, options.topK ?? 5);
+            let evidences: Evidence[];
+            const sourceLimitEnabled = profile.stages?.sourceLimit ?? Boolean(profile.maxPerSource);
+            if (profile.maxPerSource && sourceLimitEnabled) {
+                evidences = limitPerSource(rerankedEvidences, profile.maxPerSource, options.topK ?? 5);
             } else {
-                evidences = evidences.slice(0, options.topK ?? 5);
+                evidences = rerankedEvidences.slice(0, options.topK ?? 5);
             }
             const evidenceElapsed = performance.now() - evidenceStarted;
 
@@ -225,18 +389,126 @@ function createHybridRetriever(
                 denseCandidates,
                 fusedCandidates,
                 rerankedCandidates,
+                sourceLocalCandidates,
+                anchorCandidates,
+                assembledEvidences,
+                rerankedEvidences,
                 evidences,
                 elapsedMs: {
-                    sparse: sparseElapsed,
-                    dense: denseElapsed,
+                    sparse: retrievalElapsed,
+                    dense: retrievalElapsed,
                     fusion: fusionElapsed,
                     chunkRerank: chunkElapsed,
+                    sourceLocal: sourceLocalElapsed,
                     evidenceRerank: evidenceElapsed,
                     total: performance.now() - totalStarted
                 }
             };
         }
     };
+}
+
+async function retrieveSourceLocalCandidates(
+    query: string,
+    fusedCandidates: CandidateHit[],
+    rerankedCandidates: CandidateHit[],
+    lookup: Pick<IndexRuntime, 'findBySource'>,
+    reranker: Reranker,
+    profile: HybridRetrievalProfile
+): Promise<CandidateHit[]> {
+    const options = profile.sourceLocalSearch!;
+    const sourceAnchors = new Map<string, CandidateHit>();
+    for (const candidate of fusedCandidates) {
+        const key = normalizeSource(candidate.source);
+        if (!sourceAnchors.has(key)) sourceAnchors.set(key, candidate);
+        if (sourceAnchors.size >= options.sourceLimit) break;
+    }
+
+    const localInputs = (await Promise.all([...sourceAnchors.entries()].map(async ([sourceKey, anchor]) => {
+        const chunks = (await lookup.findBySource(anchor.source)).map(withoutVector);
+        return selectLexicalCandidates(query, chunks, options.candidateLimitPerSource)
+            .map(chunk => ({ sourceKey, anchor, chunk }));
+    }))).flat();
+    if (!localInputs.length) return [];
+
+    const scores = await reranker.score(query, localInputs.map(item =>
+        formatRerankDocument(item.chunk, profile.rerankDocumentMode)
+    ));
+    const rankingScores = profile.chunkRerankFusionWeight === undefined
+        ? scores
+        : linearScoreFusion(localInputs.map(item => item.anchor.fusionScore), scores, profile.chunkRerankFusionWeight);
+    const existingById = new Map(fusedCandidates.map(candidate => [candidate.id, candidate]));
+    const bySource = new Map<string, CandidateHit[]>();
+
+    localInputs.forEach((input, index) => {
+        const existing = existingById.get(input.chunk.id);
+        const candidate: CandidateHit = {
+            ...(existing ?? input.chunk),
+            fusionScore: existing?.fusionScore ?? input.anchor.fusionScore,
+            chunkRerankScore: scores[index]!,
+            ...(profile.chunkRerankFusionWeight === undefined
+                ? {}
+                : { chunkRankingScore: rankingScores[index]! })
+        };
+        const items = bySource.get(input.sourceKey) ?? [];
+        items.push(candidate);
+        bySource.set(input.sourceKey, items);
+    });
+
+    const selected = [...bySource.values()].flatMap(items =>
+        items.sort(compareRankedCandidates).slice(0, options.chunksPerSource)
+    );
+    return options.rankingMode === 'source-preserving'
+        ? preserveSourceRanking(selected, rerankedCandidates)
+        : selected.sort(compareRankedCandidates);
+}
+
+function mergeRankedCandidates(primary: CandidateHit[], supplemental: CandidateHit[]): CandidateHit[] {
+    const merged = new Map(primary.map(candidate => [candidate.id, candidate]));
+    for (const candidate of supplemental) {
+        const existing = merged.get(candidate.id);
+        if (!existing || compareRankedCandidates(candidate, existing) < 0) merged.set(candidate.id, candidate);
+    }
+    return [...merged.values()].sort(compareRankedCandidates);
+}
+
+export function replaceSourceRepresentatives(
+    primary: CandidateHit[],
+    replacements: CandidateHit[]
+): CandidateHit[] {
+    const replacementBySource = new Map<string, CandidateHit>();
+    for (const candidate of replacements) {
+        const key = normalizeSource(candidate.source);
+        if (!replacementBySource.has(key)) replacementBySource.set(key, candidate);
+    }
+    const replacementIds = new Set([...replacementBySource.values()].map(candidate => candidate.id));
+    const insertedSources = new Set<string>();
+    const result: CandidateHit[] = [];
+
+    for (const candidate of primary) {
+        const sourceKey = normalizeSource(candidate.source);
+        const replacement = replacementBySource.get(sourceKey);
+        if (replacement && !insertedSources.has(sourceKey)) {
+            result.push(replacement);
+            insertedSources.add(sourceKey);
+            continue;
+        }
+        if (!replacementIds.has(candidate.id)) result.push(candidate);
+    }
+    for (const [sourceKey, replacement] of replacementBySource) {
+        if (!insertedSources.has(sourceKey)) result.push(replacement);
+    }
+    return result;
+}
+
+function compareRankedCandidates(left: CandidateHit, right: CandidateHit): number {
+    return candidateRankingScore(right) - candidateRankingScore(left)
+        || right.fusionScore - left.fusionScore
+        || left.id.localeCompare(right.id);
+}
+
+function candidateRankingScore(candidate: CandidateHit): number {
+    return candidate.chunkRankingScore ?? candidate.chunkRerankScore ?? candidate.fusionScore;
 }
 
 async function assembleEvidenceWindows(
@@ -277,7 +549,8 @@ async function assembleEvidenceWindows(
             chunkIds: selected.map(item => item.id),
             anchorId: anchor.id,
             fusionScore: anchor.fusionScore,
-            ...(anchor.chunkRerankScore === undefined ? {} : { chunkRerankScore: anchor.chunkRerankScore })
+            ...(anchor.chunkRerankScore === undefined ? {} : { chunkRerankScore: anchor.chunkRerankScore }),
+            ...(anchor.chunkRankingScore === undefined ? {} : { chunkRankingScore: anchor.chunkRankingScore })
         });
     }
     return windows;
@@ -330,4 +603,12 @@ function validateHybridIndexes(sparse: IndexRuntime, dense: IndexRuntime): void 
 
 function normalizeSource(source: string): string {
     return source.replaceAll('\\', '/').toLowerCase();
+}
+
+function minMaxNormalize(scores: number[]): number[] {
+    if (scores.length === 0) return [];
+    const minimum = Math.min(...scores);
+    const maximum = Math.max(...scores);
+    if (maximum === minimum) return scores.map(() => 0.5);
+    return scores.map(score => (score - minimum) / (maximum - minimum));
 }

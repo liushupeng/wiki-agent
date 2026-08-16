@@ -12,6 +12,7 @@ export type RerankerProfile = {
     maxLength: number;
     batchSize: number;
     cacheDir?: string;
+    scoreCacheDir?: string;
 };
 
 export type SingleRetrievalProfile = {
@@ -19,6 +20,7 @@ export type SingleRetrievalProfile = {
     mode: 'single';
     indexProfile: string;
     candidateLimit: number;
+    rerankDocumentMode?: 'text' | 'metadata-prefixed';
     reranker?: RerankerProfile;
 };
 
@@ -34,6 +36,23 @@ export type HybridRetrievalProfile = {
     anchorLimit?: number;
     maxPerSource?: number;
     contextWindow?: number;
+    candidateCacheDir?: string;
+    rerankDocumentMode?: 'text' | 'metadata-prefixed';
+    chunkRerankFusionWeight?: number;
+    evidenceRerankFusionWeight?: number;
+    sourceLocalSearch?: {
+        sourceLimit: number;
+        candidateLimitPerSource: number;
+        chunksPerSource: number;
+        rankingMode?: 'chunk-score' | 'source-preserving';
+        anchorMode?: 'merge' | 'source-local-only';
+    };
+    stages?: {
+        chunkRerank?: boolean;
+        evidenceExpand?: boolean;
+        evidenceRerank?: boolean;
+        sourceLimit?: boolean;
+    };
     reranker?: RerankerProfile;
 };
 
@@ -85,11 +104,18 @@ function parseProfile(value: unknown, index: number): RetrievalProfile {
             mode,
             indexProfile: readId(value.indexProfile, `retrieval profile "${id}" indexProfile`),
             candidateLimit: readPositiveInteger(value.candidateLimit, `retrieval profile "${id}" candidateLimit`),
+            ...(value.rerankDocumentMode === undefined ? {} : {
+                rerankDocumentMode: readChoice(value.rerankDocumentMode, ['text', 'metadata-prefixed'], `retrieval profile "${id}" rerankDocumentMode`) as 'text' | 'metadata-prefixed'
+            }),
             ...(reranker ? { reranker } : {})
         };
     }
     if (mode !== 'hybrid') throw new Error(`retrieval profile "${id}" mode must be single or hybrid`);
     const reranker = value.reranker === undefined ? undefined : parseReranker(value.reranker, id);
+    const stages = value.stages === undefined ? undefined : parseStages(value.stages, id);
+    const sourceLocalSearch = value.sourceLocalSearch === undefined
+        ? undefined
+        : parseSourceLocalSearch(value.sourceLocalSearch, id);
     return {
         id,
         mode,
@@ -102,7 +128,51 @@ function parseProfile(value: unknown, index: number): RetrievalProfile {
         ...(value.anchorLimit === undefined ? {} : { anchorLimit: readPositiveInteger(value.anchorLimit, `retrieval profile "${id}" anchorLimit`) }),
         ...(value.maxPerSource === undefined ? {} : { maxPerSource: readPositiveInteger(value.maxPerSource, `retrieval profile "${id}" maxPerSource`) }),
         ...(value.contextWindow === undefined ? {} : { contextWindow: readNonNegativeInteger(value.contextWindow, `retrieval profile "${id}" contextWindow`) }),
+        ...(value.candidateCacheDir === undefined ? {} : { candidateCacheDir: readString(value.candidateCacheDir, `retrieval profile "${id}" candidateCacheDir`) }),
+        ...(value.rerankDocumentMode === undefined ? {} : {
+            rerankDocumentMode: readChoice(value.rerankDocumentMode, ['text', 'metadata-prefixed'], `retrieval profile "${id}" rerankDocumentMode`) as 'text' | 'metadata-prefixed'
+        }),
+        ...(value.chunkRerankFusionWeight === undefined ? {} : { chunkRerankFusionWeight: readUnitInterval(value.chunkRerankFusionWeight, `retrieval profile "${id}" chunkRerankFusionWeight`) }),
+        ...(value.evidenceRerankFusionWeight === undefined ? {} : { evidenceRerankFusionWeight: readUnitInterval(value.evidenceRerankFusionWeight, `retrieval profile "${id}" evidenceRerankFusionWeight`) }),
+        ...(sourceLocalSearch ? { sourceLocalSearch } : {}),
+        ...(stages ? { stages } : {}),
         ...(reranker ? { reranker } : {})
+    };
+}
+
+function parseSourceLocalSearch(
+    value: unknown,
+    profileId: string
+): NonNullable<HybridRetrievalProfile['sourceLocalSearch']> {
+    if (!isRecord(value)) throw new Error(`retrieval profile "${profileId}" sourceLocalSearch must be an object`);
+    return {
+        sourceLimit: readPositiveInteger(value.sourceLimit, `retrieval profile "${profileId}" sourceLocalSearch.sourceLimit`),
+        candidateLimitPerSource: readPositiveInteger(value.candidateLimitPerSource, `retrieval profile "${profileId}" sourceLocalSearch.candidateLimitPerSource`),
+        chunksPerSource: readPositiveInteger(value.chunksPerSource, `retrieval profile "${profileId}" sourceLocalSearch.chunksPerSource`),
+        ...(value.rankingMode === undefined ? {} : {
+            rankingMode: readChoice(
+                value.rankingMode,
+                ['chunk-score', 'source-preserving'],
+                `retrieval profile "${profileId}" sourceLocalSearch.rankingMode`
+            ) as 'chunk-score' | 'source-preserving'
+        }),
+        ...(value.anchorMode === undefined ? {} : {
+            anchorMode: readChoice(
+                value.anchorMode,
+                ['merge', 'source-local-only'],
+                `retrieval profile "${profileId}" sourceLocalSearch.anchorMode`
+            ) as 'merge' | 'source-local-only'
+        })
+    };
+}
+
+function parseStages(value: unknown, profileId: string): NonNullable<HybridRetrievalProfile['stages']> {
+    if (!isRecord(value)) throw new Error(`retrieval profile "${profileId}" stages must be an object`);
+    return {
+        ...(value.chunkRerank === undefined ? {} : { chunkRerank: readBoolean(value.chunkRerank, 'stages.chunkRerank') }),
+        ...(value.evidenceExpand === undefined ? {} : { evidenceExpand: readBoolean(value.evidenceExpand, 'stages.evidenceExpand') }),
+        ...(value.evidenceRerank === undefined ? {} : { evidenceRerank: readBoolean(value.evidenceRerank, 'stages.evidenceRerank') }),
+        ...(value.sourceLimit === undefined ? {} : { sourceLimit: readBoolean(value.sourceLimit, 'stages.sourceLimit') })
     };
 }
 
@@ -116,7 +186,8 @@ function parseReranker(value: unknown, profileId: string): RerankerProfile {
         ...(value.revision === undefined ? {} : { revision: readString(value.revision, 'reranker revision') }),
         ...(value.dtype === undefined ? {} : { dtype: readString(value.dtype, 'reranker dtype') }),
         ...(device ? { device: device as 'cpu' | 'webgpu' } : {}),
-        ...(value.cacheDir === undefined ? {} : { cacheDir: readString(value.cacheDir, 'reranker cacheDir') })
+        ...(value.cacheDir === undefined ? {} : { cacheDir: readString(value.cacheDir, 'reranker cacheDir') }),
+        ...(value.scoreCacheDir === undefined ? {} : { scoreCacheDir: readString(value.scoreCacheDir, 'reranker scoreCacheDir') })
     };
 }
 
@@ -145,6 +216,18 @@ function readPositiveInteger(value: unknown, label: string): number {
 function readNonNegativeInteger(value: unknown, label: string): number {
     if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`${label} must be a non-negative integer`);
     return value as number;
+}
+
+function readUnitInterval(value: unknown, label: string): number {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+        throw new Error(`${label} must be a number between 0 and 1`);
+    }
+    return value;
+}
+
+function readBoolean(value: unknown, label: string): boolean {
+    if (typeof value !== 'boolean') throw new Error(`${label} must be a boolean`);
+    return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
