@@ -336,9 +336,11 @@ function createHybridRetriever(
                 : [];
             const anchorCandidates = profile.sourceLocalSearch?.anchorMode === 'source-local-only'
                 ? sourceLocalCandidates
-                : profile.sourceLocalSearch?.rankingMode === 'source-preserving'
-                    ? replaceSourceRepresentatives(rerankedCandidates, sourceLocalCandidates)
-                    : mergeRankedCandidates(rerankedCandidates, sourceLocalCandidates);
+                : profile.sourceLocalSearch?.anchorMode === 'source-aggregate'
+                    ? aggregateSourceCandidates(rerankedCandidates, sourceLocalCandidates)
+                    : profile.sourceLocalSearch?.rankingMode === 'source-preserving'
+                        ? replaceSourceRepresentatives(rerankedCandidates, sourceLocalCandidates)
+                        : mergeRankedCandidates(rerankedCandidates, sourceLocalCandidates);
             const sourceLocalElapsed = performance.now() - sourceLocalStarted;
 
             const evidenceStarted = performance.now();
@@ -501,6 +503,37 @@ export function replaceSourceRepresentatives(
     return result;
 }
 
+export function aggregateSourceCandidates(
+    globallyRanked: CandidateHit[],
+    sourceLocal: CandidateHit[]
+): CandidateHit[] {
+    const globalBySource = new Map<string, CandidateHit>();
+    for (const candidate of globallyRanked) {
+        const key = normalizeSource(candidate.source);
+        if (!globalBySource.has(key)) globalBySource.set(key, candidate);
+    }
+    const localBySource = new Map<string, CandidateHit>();
+    for (const candidate of sourceLocal) {
+        const key = normalizeSource(candidate.source);
+        if (!localBySource.has(key)) localBySource.set(key, candidate);
+    }
+    const aggregated = [...localBySource.entries()].map(([source, local]) => {
+        const global = globalBySource.get(source);
+        if (!global) return local;
+        globalBySource.delete(source);
+        if (global.id === local.id) return local;
+        const ordered = [global, local].sort((left, right) => left.start - right.start);
+        return {
+            ...local,
+            id: `${local.source}#aggregate-${global.id}-${local.id}`,
+            text: mergeSeparatedChunkText(ordered),
+            start: Math.min(global.start, local.start),
+            end: Math.max(global.end, local.end)
+        };
+    });
+    return aggregated.sort(compareRankedCandidates);
+}
+
 function compareRankedCandidates(left: CandidateHit, right: CandidateHit): number {
     return candidateRankingScore(right) - candidateRankingScore(left)
         || right.fusionScore - left.fusionScore
@@ -564,6 +597,20 @@ function mergeChunkText(chunks: TextChunk[]): string {
     for (const chunk of ordered.slice(1)) {
         const overlap = Math.max(0, end - chunk.start);
         text += chunk.text.slice(Math.min(overlap, chunk.text.length));
+        end = Math.max(end, chunk.end);
+    }
+    return text;
+}
+
+function mergeSeparatedChunkText(chunks: TextChunk[]): string {
+    if (!chunks.length) return '';
+    let text = chunks[0]!.text;
+    let end = chunks[0]!.end;
+    for (const chunk of chunks.slice(1)) {
+        const overlap = Math.max(0, end - chunk.start);
+        text += overlap > 0
+            ? chunk.text.slice(Math.min(overlap, chunk.text.length))
+            : `\n\n${chunk.text}`;
         end = Math.max(end, chunk.end);
     }
     return text;

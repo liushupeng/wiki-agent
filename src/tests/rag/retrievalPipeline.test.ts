@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+    aggregateSourceCandidates,
     formatRerankDocument,
     limitPerSource,
     linearScoreFusion,
@@ -110,4 +111,40 @@ test('source-preserving merge replaces rather than appends a source representati
 
     assert.deepEqual(merged.map(candidate => candidate.id), ['a-local', 'b-best']);
     assert.equal(merged.filter(candidate => candidate.source === 'a.md').length, 1);
+});
+
+test('source aggregation keeps one ranked candidate with global and local text', () => {
+    const aggregated = aggregateSourceCandidates([
+        {
+            ...result('global', 'a.md', 0),
+            text: 'global answer',
+            start: 0,
+            end: 13,
+            fusionScore: 0.03,
+            chunkRerankScore: 10,
+            chunkRankingScore: 10
+        },
+        {
+            ...result('global-only', 'b.md', 1),
+            text: 'outside local source set',
+            start: 0,
+            end: 24,
+            fusionScore: 0.04,
+            chunkRerankScore: 30,
+            chunkRankingScore: 30
+        }
+    ], [{
+        ...result('local', 'a.md', 0),
+        text: 'local answer',
+        start: 100,
+        end: 112,
+        fusionScore: 0.01,
+        chunkRerankScore: 1,
+        chunkRankingScore: 20
+    }]);
+
+    assert.equal(aggregated.length, 1);
+    assert.match(aggregated[0]!.text, /global answer\n\nlocal answer/);
+    assert.equal(aggregated[0]?.chunkRankingScore, 20);
+    assert.equal(aggregated[0]?.source, 'a.md');
 });

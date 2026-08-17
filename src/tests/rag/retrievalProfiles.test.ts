@@ -21,7 +21,7 @@ test('retrieval profiles keep physical indexes separate from hybrid strategy', (
                     candidateLimitPerSource: 4,
                     chunksPerSource: 1,
                     rankingMode: 'source-preserving',
-                    anchorMode: 'source-local-only'
+                    anchorMode: 'source-aggregate'
                 },
                 chunkRerankFusionWeight: 0.8,
                 evidenceRerankFusionWeight: 0.6,
@@ -51,7 +51,7 @@ test('retrieval profiles keep physical indexes separate from hybrid strategy', (
             candidateLimitPerSource: 4,
             chunksPerSource: 1,
             rankingMode: 'source-preserving',
-            anchorMode: 'source-local-only'
+            anchorMode: 'source-aggregate'
         });
         assert.equal(profile.chunkRerankFusionWeight, 0.8);
         assert.equal(profile.evidenceRerankFusionWeight, 0.6);

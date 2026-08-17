@@ -45,7 +45,7 @@ export type HybridRetrievalProfile = {
         candidateLimitPerSource: number;
         chunksPerSource: number;
         rankingMode?: 'chunk-score' | 'source-preserving';
-        anchorMode?: 'merge' | 'source-local-only';
+        anchorMode?: 'merge' | 'source-local-only' | 'source-aggregate';
     };
     stages?: {
         chunkRerank?: boolean;
@@ -159,9 +159,9 @@ function parseSourceLocalSearch(
         ...(value.anchorMode === undefined ? {} : {
             anchorMode: readChoice(
                 value.anchorMode,
-                ['merge', 'source-local-only'],
+                ['merge', 'source-local-only', 'source-aggregate'],
                 `retrieval profile "${profileId}" sourceLocalSearch.anchorMode`
-            ) as 'merge' | 'source-local-only'
+            ) as 'merge' | 'source-local-only' | 'source-aggregate'
         })
     };
 }

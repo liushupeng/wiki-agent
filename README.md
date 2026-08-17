@@ -1,8 +1,6 @@
 # wiki-agent
 
-`wiki-agent` 是一个 LLM Wiki / Agentic RAG 项目，用来展示一个 Agent 系统如何从“会检索 Markdown 笔记”演进为“会维护长期知识资产”的工程实现。
-
-它不是只把文件切 chunk 后交给向量检索，而是把 Agent loop、memory、tool、permission policy、observability、MCP、skill 和 eval 组合起来，让 LLM 能按任务规划、选择工具、读取证据、维护 wiki，并把失败样例沉淀为可改进的数据。
+`wiki-agent` 是一个 LLM Wiki / Agentic RAG 项目，用来展示一个 Agent 系统如何从“会检索 Markdown 笔记”演进为“会维护长期知识资产”的工程实现。它不是只把文件切 chunk 后交给向量检索，而是把 Agent loop、memory、tool、permission policy、observability、MCP、skill 和 eval 组合起来，让 LLM 能按任务规划、选择工具、读取证据、维护 wiki，并把失败样例沉淀为可改进的数据。
 
 这个项目采用一个简单的 Agent 视角：
 
@@ -12,19 +10,19 @@
 ```
 
 - `loop` 是由 LLM 驱动的规划-执行循环：模型基于当前 memory 决定下一步是回答还是调用工具，工具结果再写回 memory，触发下一轮再规划
-- `memory` 用于保持 Agent 的对话连续性：短期保留最近上下文，中期承接压缩摘要；用户明确保存的长期 memory 与会话消息持久化在本地
+- `memory` 用于保持 Agent 的对话连续性：短期 memory 保留最近上下文，中期 memory 承接压缩摘要；用户明确保存的长期 memory 与会话消息持久化在本地
 - `tool` 是广义工具，代表模型可调用的外部能力：RAG 检索、skill 加载、文件系统、Shell、API、测试命令都属于这个范畴
 - `policy` 提供权限、审批、预算和终止约束
 - `observability` 通过 trace、日志和评测让 Agent 行为可解释、可调试
 
-## 架构图
+## 知识图谱
 
 ### 业务流程
 
 ```mermaid
 flowchart TD
     userInput["User Input"] --> agentLoop["WikiAgent Loop"]
-    agentLoop --> memory["Memory: Short Mid Long"]
+    agentLoop --> memory["Memory<br>Short/Mid/Long"]
     agentLoop --> registry["Tool Registry"]
     registry --> toolSchemas["Active Tool Schemas"]
     toolSchemas --> model["OpenAI-compatible LLM"]
@@ -34,7 +32,7 @@ flowchart TD
     agentLoop --> executor["Tool Executor"]
     executor --> policy["Permission Policy"]
     executor --> registry
-    executor --> tools["Local Tools and MCP Tools"]
+    executor --> tools["Local Tools + MCP Tools"]
     tools --> toolResults["Tool Results"]
     toolResults --> memory
     memory --> agentLoop
@@ -72,18 +70,10 @@ flowchart LR
     telemetry --> jaeger["Jaeger"]
 ```
 
-- **应用层**：Node.js、TypeScript、OpenAI-compatible API。
-- **检索层**：BM25 + SQLite 倒排索引、BGE-M3、BGE reranker、LanceDB。
-- **本地推理**：Transformers.js、ONNX Runtime。
-- **集成与可观测性**：MCP、SQLite、OpenTelemetry、Jaeger。
-
-项目适合学习和实验：
-
-- Agent loop 如何处理 `tool_calls`。
-- RAG 索引、embedding、向量检索如何组合。
-- LLM Wiki 如何把 raw sources、maintained wiki、schema、eval 和 bad case 串成闭环。
-- 工具权限、人工审批、沙箱和 trace 如何形成安全边界。
-- 多种 chunker、embedding、vector store 如何逐步替换实验。
+- **应用层**：Node.js、TypeScript、OpenAI-compatible API
+- **检索层**：BM25 + SQLite 倒排索引、BGE-M3 + LanceDB、BGE reranker
+- **本地推理**：Transformers.js、ONNX Runtime
+- **集成与可观测性**：MCP、SQLite、OpenTelemetry、Jaeger
 
 ## 核心设计取舍
 
@@ -95,20 +85,7 @@ flowchart LR
 - **MCP 优先，本地工具兜底**：Filesystem/Git/SQLite 等成熟能力通过 MCP 接入；MCP 覆盖的本地等价工具会跳过，避免重复暴露。需要更严格策略的本地工具可通过 MCP 配置排除同名远端能力。
 - **先沉淀数据，再谈训练**：当前重点是 trace、eval、bad case、wiki schema 和 skill，为未来 reranker、tool routing 或后训练准备数据资产。
 
-### Agent Memory 与 Wiki 知识层
-
-Agent memory 和 Wiki 都跨越多轮任务，但服务的目标不同；Wiki 不是 `MemoryManager` 的一个字段，而是独立的、可检索与可审查的知识层。
-
-| 层 | 主要内容 | 生命周期 | 当前载体 / 状态 |
-|---|---|---|---|
-| 短期 Memory | 当前对话、当前工具结果、当前任务状态 | 当前会话 | `MemoryManager` 的短期消息 |
-| 中期 Memory | 被压缩的较早对话摘要 | 当前会话 | `MemoryManager` 的中期摘要 |
-| 长期 Memory | 用户偏好、长期目标、稳定任务状态 | 跨任务 | `var/memory/agent.db`，仅由 `remember <内容>` 显式写入 |
-| Wiki 知识层 | 有来源的事实、概念、决策、研究结论、跨页关系与冲突 | 长期持续维护 | `wiki/` + `wiki/AGENTS.md` + RAG 索引 |
-
-长期 memory 中反复出现、可验证且可复用的结论，可以在来源核验和用户确认后 promote 到 Wiki；Wiki 页面不应被 memory 压缩或自动遗忘机制直接改写。
-
-## 和普通 RAG 的区别
+## wiki-agent VS 普通 RAG
 
 普通 RAG 通常是：
 
@@ -131,50 +108,18 @@ raw sources
 
 这意味着知识不会只在每次提问时被临时拼接，而是逐步沉淀到 `wiki/` 中，形成可审阅、可版本管理、可持续维护的 Markdown 知识层。
 
-## 当前验证数据规模
+## 快速开始
 
-`notes/` 是本地真实知识源目录，已加入 `.gitignore`，不随代码提交。下面的统计用于记录当前项目验证规模，后续迭代可以同步补充在这个规模下的检索、问答、wiki 维护和 bad case 表现。
-
-统计快照：2026-07-16。
-
-- 总文件数：2151
-- 总目录数：357
-- 总体积：约 596.6 MiB
-- 一级目录数：6
-- 一级目录文件量分布：1417、521、190、17、3、3
-- 当前 RAG 直接支持的文本类型：`.md`、`.markdown`、`.txt`
-- 当前可直接进入索引的文件数：约 1244 个，其中 `.md` 1212 个，`.txt` 32 个
-
-主要文件类型分布：
-
-- `.md`：1212
-- `.html`：429
-- `.csv`：120
-- `.png`：87
-- `.py`：81
-- `.pyc`：47
-- `.xlsx`：38
-- `.txt`：32
-- `.tsv`：23
-- `.pl`：19
-- `.jpg`：13
-- `.pdf`：10
-- 其他少量类型：`.pptx`、`.docx`、`.cpp`、`.mp4`、`.awk`、`.h`、`.zip`、`.json`、`.gif`、`.sh`、`.tex`、`.toml`、`.cmd`、`.xmind`、`.yml`、无扩展名文件等
-
-这个规模已经不是玩具数据集：它同时包含 Markdown 知识笔记、HTML 页面、表格数据、图片、脚本和代码文件。当前系统先把 `.md` / `.txt` 作为第一批验证对象；其他类型需要通过 source policy、ignore 规则和后续 loader 扩展逐步接入。
-
-## 前置要求
+### 环境依赖
 
 需要先准备这些本机依赖：
 
 ```powershell
 # Node.js / npm
-winget install OpenJS.NodeJS
 node --version
 npm --version
 
 # Git，本地 Git 工具和 Git MCP 都会用到
-winget install Git.Git
 git --version
 
 # uv / uvx，Git 和 SQLite MCP 使用 uv tool 安装 Python MCP server
@@ -205,13 +150,9 @@ where.exe mcp-server-sqlite
 npm run check:mcp
 ```
 
-`config/mcp.servers.jsonc` 配置使用 `mcp-server-filesystem`、`mcp-server-git` 和 `mcp-server-sqlite` 命令。
+还需要准备 DeepSeek 或其他 OpenAI-compatible LLM API key，并写入本地 `.env`。`.env.example` 会作为可提交的默认配置层自动加载；`.env` 只需保存密钥和本机覆盖项，无需复制所有默认值。
 
-还需要准备 DeepSeek 或其他 OpenAI-compatible LLM API key，并写入本地 `.env`。
-`.env.example` 会作为可提交的默认配置层自动加载；`.env` 只需保存密钥和本机覆盖项，无需复制所有默认值。
-
-可先检查 API 的 DNS、HTTPS 和认证是否可用；该命令请求轻量的 `/models`
-端点，不调用模型生成：
+可先检查 API 的 DNS、HTTPS 和认证是否可用；该命令请求轻量的 `/models` 端点，不调用模型生成：
 
 ```powershell
 # 检查合并后的配置，再检查 LLM API 连通性
@@ -224,25 +165,9 @@ $env:API_KEY="your_api_key"
 npm run check:llm
 ```
 
-返回 `HTTP 200` 表示网络与认证均正常；`401` 或 `403` 表示服务已可达，
-但 Key 或权限有问题；DNS、HTTPS 连接失败或超时则说明应检查公司网络、
-代理或服务端可用性。
+返回 `HTTP 200` 表示网络与认证均正常；`401` 或 `403` 表示服务已可达，但 Key 或权限有问题；DNS、HTTPS 连接失败或超时则说明应检查公司网络、代理或服务端可用性。
 
-## 快速开始
-
-```bash
-npm install
-```
-
-新建或编辑本地 `.env`，至少填入：
-
-```env
-API_KEY=your_api_key
-```
-
-`BASE_URL`、`MODEL_NAME` 和其他非敏感默认项已由 `.env.example` 提供；如需本机覆盖，再在 `.env` 写入同名变量。
-
-常用命令：
+### 常用命令
 
 ```bash
 npm run ask -- "检索我的 Agent 笔记"
@@ -253,139 +178,6 @@ npm run eval:agent
 npm run check:mcp
 npm test
 ```
-
-## 可复现评测
-
-`evaluation/questions.json` 是统一的 50 题主题库；题目按检索漏斗标记 `primaryStage`（候选召回、重排、证据、Agent），并保留分类、难度与查询类型。
-
-实验组严格分开：
-
-- `raw-only`：仅 `notes/`，使用 `bm25-v1/raw-only`。
-- `raw-wiki`：`notes/ + wiki/`，重排时 Wiki 优先，使用 `bm25-v1/raw-wiki`。
-
-`bm25-v1` 的 variants 在配置中显式绑定 source config。三个资源消耗型命令在无参数时只输出帮助（exit code 0），不会构建索引、运行评测或调用 LLM。实际构建索引必须显式指定 profile；省略 `--variant` 时构建该 profile 的全部 variants。manifest 会记录 profile、variant、数据源配置指纹、文档数和 chunk 数，运行时若任一身份不匹配会拒绝混用：
-
-```powershell
-npm run index:knowledge
-npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
-npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
-```
-
-本地混合检索将物理索引和查询策略分开配置：`rag.indexes.jsonc` 中的
-`bm25-v1`、`bge-m3-v1` 负责构建索引，`rag.retrieval.jsonc` 中的
-`dense-bge-m3-v1`、`hybrid-bge-m3-v1`、`hybrid-bge-m3-rerank-v1`
-分别启用纯向量、RRF 融合和两级 cross-encoder 精排。首次运行会下载较大的
-ONNX 模型，先做本机可行性检查，再从同一语料快照重建两个索引：
-
-```powershell
-npm run check:rag-models
-npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
-npm run index:knowledge -- -- --profile bge-m3-v1 --variant raw-only
-npm run eval:recall -- -- --retrieval-profile dense-bge-m3-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-chunk-rerank-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-score-fusion-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-anchor40-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-no-source-limit-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-chunk-rerank-metadata-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-source-local-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-local-v1 --variant raw-only --retriever vector
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-local-only-v1 --variant raw-only --retriever vector
-```
-
-`check:rag-models` 默认只做快速 smoke check。显式传入 `--benchmark` 时，会从真实
-chunk 中固定抽样，并让每组 dtype、device 和 batch size 在独立进程中运行，输出稳态
-吞吐、batch p50/p95、峰值内存和全量索引预计耗时：
-
-```powershell
-npm run check:rag-models -- -- --benchmark --samples 64 --batches 4,8,16 --dtypes q4 --devices cpu
-```
-
-只有本地已准备 `model_int8.onnx` 且 Node.js Runtime 支持 WebGPU 时，才加入
-`--dtypes q4,int8 --devices cpu,webgpu`；失败的组合会保留错误摘要，并继续测试其他组合。
-
-稠密 embedding 使用按模型配置和 chunk 文本寻址的磁盘缓存；索引失败后重跑会复用已经完成的向量。混合检索会校验两个索引 manifest 中的 chunk 指纹，避免融合不同语料快照。配置 `candidateCacheDir` 后，相同索引快照、query 和 candidate limit 的 BM25/BGE-M3 候选会冻结并复用；配置 Reranker 的 `scoreCacheDir` 后，相同模型身份、query 和文本的精排分数也会复用，便于快速重复消融。在线 Agent 可设置 `RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-rerank-v1`，并用 `RAG_INDEX_VARIANT` 选择 variant。
-
-检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。提供题目文件、`--profile`、`--variant` 或 `--retriever` 中任一参数才会实际运行：
-
-```powershell
-npm run eval:recall -- -- --variant both --retriever both
-npm run eval:recall -- -- --profile bm25-v1 --variant both --retriever vector
-npm run eval:recall -- -- --profile bm25-v1 --variant raw-wiki --retriever vector --wiki-first false
-npm run eval:recall -- -- --profile bm25-v1 --variant raw-only --retriever vector --probe-candidate-limit 100
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant raw-only --retriever vector --question-ids investment-pillars,raft-components
-```
-
-`--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。`--probe-candidate-limit <N>` 会仅对正常 Top-20 候选未命中的题追加深度探测，N 必须大于 20。`--question-ids <id1,id2,...>` 可只重跑失败题或指定样本，适合低成本生成排序诊断。召回报告会记录每个变体的实际 Wiki 优先策略、题目范围和 probe 汇总，并写入 `var/evals/recall/<timestamp>/report.json`。
-
-每次 Recall 评测还会在同一输出目录写入一条 `eval.recall` JSONL Trace。其 `rag.search` 子 span 与在线检索使用相同的候选—重排诊断字段：query、profile、variant、candidate limit、Wiki 优先策略、Top-20 候选和最终 Top-5 结果；评测事件补充金标命中、关键词覆盖率、失败类型，以及正确来源在 sparse、dense、RRF、Chunk Reranker、Evidence 组装、Evidence Reranker 和最终来源限额后的逐阶段 rank。`report.json` 的逐题结果同时记录 `stageRanks` 和 `stageDiagnostics`；后者包含各阶段的来源 rank、满足关键词阈值的内容 rank，以及正确来源中的最佳关键词覆盖率，可区分“来源排错”和“正确来源内片段不完整”。报告保留原有的跨 Top-5 合并关键词口径作为“宽松通过”，并新增只允许正确来源贡献关键词的 `sourceTermScore` 和“严格通过”，避免无关文档补齐关键词造成假阳性。终端仅显示 Trace 路径，Trace 是诊断原始事实，报告是其汇总视图。
-
-`hybrid-bge-m3-chunk-rerank-v1` 保留 Evidence 扩展但关闭 Evidence Reranker，用于验证二次重排是否造成降级。`hybrid-bge-m3-score-fusion-v1` 对 RRF、Chunk Reranker 和 Evidence Reranker 分数分别做 min-max 归一化后线性融合；当前实验权重为 Chunk Reranker 0.8、Evidence Reranker 0.6，既保留语义重排的主导作用，也防止强候选被单阶段分数直接淘汰。现有 `hybrid-bge-m3-rerank-v1` 保持原行为，继续作为对照组。
-
-`hybrid-bge-m3-rerank-anchor40-v1` 仅将 Evidence Anchor 从 20 扩至 40，用于检验被 Chunk Reranker 排在 21–40 名的正确内容能否被 Evidence Reranker 救回。`hybrid-bge-m3-rerank-no-source-limit-v1` 仅关闭最终的每来源最多两条限制，用于检验同一来源中排在第三条及之后的正确 Evidence 是否被限额误删。
-
-`hybrid-bge-m3-chunk-rerank-metadata-v1` 以关闭 Evidence Reranker 的当前最佳消融为基础，在 Chunk Reranker 输入前增加 source、titlePath 和 tags，使日期、文件名与知识层级参与相关性判断。`hybrid-bge-m3-source-local-v1` 同样关闭 Evidence Reranker，但会先从 RRF 前 20 个不同来源中各取最多 4 个词法相关 chunk，再用同一 Reranker 选出每来源最佳 chunk，与全局 Chunk Reranker 结果合并；Trace 和报告会新增 `sourceLocal` 与 `anchorSelection` 阶段，用于观察“来源正确但答案片段未召回”的恢复情况。
-
-`hybrid-bge-m3-metadata-source-local-v1` 组合 metadata 输入与来源内检索，并用来源内最佳 chunk 替换该来源原本排名最高的 chunk、继承其全局名次；这样既避免答案片段因裸 chunk 分数过低被淘汰，也不会因追加同来源候选挤占 Anchor。题库标注应与原文及问题约束一致：数值单位沿用原文（例如 `120 ms`），问题未限定唯一文件时允许所有实际包含答案的来源。
-
-`hybrid-bge-m3-metadata-source-local-only-v1` 只使用每个候选来源内部选出的最佳 chunk 作为 Anchor，排除同一来源的其他全局候选。它用于验证来源内候选排序已经足够可靠、且全局 chunk 是否仍在挤占最终 Top-5；该模式仍是实验项，不直接替换默认在线 profile。
-
-### 检索优化：先解决召回，再解决排序
-
-检索优化使用固定的 50 题 `raw-only` 题集，并将问题拆成两层：先用
-`Recall@20` 判断正确来源能否进入候选池，再用 `Hit@5`、`Hit@1` 和
-`MRR@5` 判断正确结果能否排到前面。这样每次只改变一个主要变量，避免把“没有召回”
-和“召回后排错”混为一谈。
-
-#### 召回优化
-
-| 阶段 | 主要变化 | Recall@20 | Hit@5 | Hit@1 | 自动通过 | 结论 |
-| --- | --- | ---: | ---: | ---: | ---: | --- |
-| TF 词频余弦基线 | 中文词频余弦 | 44% | 40% | 20% | 9/50 | 中文词法匹配能力不足 |
-| 中文 bigram BM25 | TF 词频余弦 → BM25 | 82%（+38pp） | 68%（+28pp） | 50%（+30pp） | 30/50（+21） | 先修正检索算法，获得最大单步提升 |
-| BM25 + 语料裁剪 | 47,093 → 19,397 chunks | 86%（+4pp） | 78%（+10pp） | 58%（+8pp） | 34/50（+4） | 去掉低价值语料可同时改善召回与排序 |
-| BGE-M3 Dense 单路 | BM25 → Dense | 92%（+6pp） | 82%（+4pp） | 60%（+2pp） | 36/50（+2） | 语义检索补足词法检索，但单路排序优势有限 |
-| BM25 + BGE-M3 + RRF | 词法、语义双路召回 | 98%（+12pp） | 86%（+8pp） | 70%（+12pp） | 37/50（+3） | 两路具有互补性，候选覆盖率达到 49/50 |
-
-表中的 Dense 和 Hybrid 增量均相对裁剪后的 BM25 基线（Recall@20 86%、
-Hit@5 78%、Hit@1 58%、34/50）计算。召回阶段的迭代路径是：
-
-```text
-修正中文词法检索
--> 清理语料噪声
--> 验证 Dense 单路的语义增益
--> 用 RRF 融合 BM25 与 Dense 的互补候选
-```
-
-#### 排序优化
-
-| 阶段 | 主要变化 | Recall@20 | Hit@5 | Hit@1 | MRR@5 | 自动通过 | 结论 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| BM25 基线 | 裁剪后的 BM25 | 86% | 78% | 58% | 0.6583 | 34/50 | 排序前基线 |
-| BM25 + BGE Reranker | 对 BM25 Top-100 重排 | 86%（不变） | 90%（+12pp） | 82%（+24pp） | 0.8567（+0.1984） | 41/50（+7） | 不增加候选，仅靠重排即可显著提升头部命中 |
-| Hybrid + RRF | 双路召回，尚未精排 | 98%（+12pp） | 86%（+8pp） | 70%（+12pp） | — | 37/50（+3） | 召回已接近饱和，主要矛盾转向排序 |
-| Hybrid + 两阶段 BGE Reranker | Chunk 重排 + Evidence 重排 | 98%（+12pp） | 90%（+12pp） | 80%（+22pp） | — | 42/50（+8） | 在保持 49/50 候选覆盖的同时，把更多正确结果推入 Top-5 |
-
-排序表中的增量同样相对裁剪后的 BM25 基线计算。完整方案最终将
-Recall@20 从 86% 提升至 98%、Hit@5 从 78% 提升至 90%、Hit@1 从
-58% 提升至 80%，自动通过题由 34/50 提升至 42/50。当前 8 个失败题的正确来源
-均已进入候选池，因此后续优化重点不再是扩大召回，而是定位正确结果在
-RRF、Chunk Reranker、Evidence Reranker 和来源限额中的排名变化。
-
-Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，必须通过显式 CLI 参数选择可复现样本、指定题目，或用 `--all` 明确允许全量运行；无参数只显示帮助且绝不调用 LLM：
-
-```powershell
-npm run eval:agent -- -- --variant both --random-count 5 --seed baseline-1
-
-npm run eval:agent -- -- --variant raw-only --question-ids investment-pillars,raft-components
-
-npm run eval:agent -- -- --profile bm25-v1 --variant both --random-count 3 --seed bm25-baseline-1
-```
-
-`--profile` 选择索引 profile（默认 `bm25-v1`）。`--all`、`--random-count` 与 `--question-ids` 互斥；`--seed` 仅可与 `--random-count` 一起使用。全量 Agent 评测必须明确传入 `--all`。`--help` 可显示三条命令的完整用法；非法参数会同时输出错误和 usage。旧的 `RAG_EVAL_MODE`、`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 和 `AGENT_EVAL_QUESTION_IDS` 环境变量不再作为评测入口读取。
-
-双组 Agent 输出写入 `var/evals/agent/<time>/`：`report.json` 含 Git/题库 SHA、模型和 source/profile/variant identity、总体与分类汇总及 raw/wiki lift；`review/` 含匿名 A/B 的 `review.jsonl`、CSV、HTML 与 `annotation-template.csv`。盲测映射只保存在 `blind-mapping.internal.json`，勿交给标注者。`npm run build` 与 `node --test` 均不调用 LLM。
 
 ## 目录结构
 
@@ -682,6 +474,24 @@ AGENT_WORKSPACE_ROOT=.
 
 `ApplyPatchTool`、`GitStatusTool`、`GitDiffTool`、`RunTestsTool` 都在该工作区内运行。
 
+## Skill 懒加载
+
+启动时只把 `skills/*/SKILL.md` 下每个 skill 的 `name` 和 `description` 注入 system prompt。任务命中 skill manifest 时，LLM 需要先调用：
+
+```text
+load_skill({ "name": "..." })
+```
+
+工具返回 skill 全文后，下一轮模型才能按 skill 的具体方法执行。这样避免把所有 skill 全文一次性塞进上下文。
+
+内置维护型 wiki skills：
+
+- `source-audit`：真实目录接入前做 source audit，产出 source policy、ignore 规则和首批验证范围。
+- `ingest`：把 raw source 整理进 maintained wiki，并更新 index/log/contradictions。
+- `wiki-answer`：优先基于 wiki 回答，证据不足再回查 raw sources。
+- `wiki-lint`：检查孤立页面、缺引用、重复概念、过期结论和冲突。
+- `badcase`：把失败回答、检索遗漏或工具选择错误沉淀为 bad case 和 eval 候选。
+
 ## 可观测性与评测
 
 Agent 系统很难只靠最终答案调试，所以项目把 trace、成本估算、RAG eval、bad case 模板作为一等能力。
@@ -728,7 +538,7 @@ npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl --dry-
 .\jaeger.exe --set=extensions.jaeger_storage.backends.some_storage.memory.max_traces=500 --set=extensions.jaeger_query.enable_tracing=false
 ```
 
-3. 执行 `npm run ask` 会自动导入。也可手动导入既有 trace：
+1. 执行 `npm run ask` 会自动导入。也可手动导入既有 trace：
 
 ```powershell
 npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoint http://127.0.0.1:4318/v1/traces
@@ -768,126 +578,125 @@ HTTP 是默认协议；如使用 gRPC，设置 `OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 
 建议排查时先在根 run span 下查看失败或耗时最长的子 span，再沿父子关系定位具体模型调用、工具调用或 RAG 检索。
 
-## Skill 懒加载
+## 检索优化
 
-启动时只把 `skills/*/SKILL.md` 下每个 skill 的 `name` 和 `description` 注入 system prompt。任务命中 skill manifest 时，LLM 需要先调用：
+`evaluation/questions.json` 是统一的 50 题主题库；题目按检索漏斗标记 `primaryStage`（候选召回、重排、证据、Agent），并保留分类、难度与查询类型。
+
+实验组严格分开：
+
+- `raw-only`：仅 `notes/`，使用 `bm25-v1/raw-only`。
+- `raw-wiki`：`notes/ + wiki/`，重排时 Wiki 优先，使用 `bm25-v1/raw-wiki`。
+
+`bm25-v1` 的 variants 在配置中显式绑定 source config。三个资源消耗型命令在无参数时只输出帮助（exit code 0），不会构建索引、运行评测或调用 LLM。实际构建索引必须显式指定 profile；省略 `--variant` 时构建该 profile 的全部 variants。manifest 会记录 profile、variant、数据源配置指纹、文档数和 chunk 数，运行时若任一身份不匹配会拒绝混用：
+
+```powershell
+npm run index:knowledge
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
+```
+
+本地混合检索将物理索引和查询策略分开配置：`rag.indexes.jsonc` 中的 `bm25-v1`、`bge-m3-v1` 负责构建索引，`rag.retrieval.jsonc` 中的 `dense-bge-m3-v1`、`hybrid-bge-m3-v1`、`hybrid-bge-m3-rerank-v1` 分别启用纯向量、RRF 融合和两级 cross-encoder 精排。首次运行会下载较大的 ONNX 模型，先做本机可行性检查，再从同一语料快照重建两个索引：
+
+```powershell
+npm run check:rag-models
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
+npm run index:knowledge -- -- --profile bge-m3-v1 --variant raw-only
+npm run eval:recall -- -- --retrieval-profile dense-bge-m3-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-chunk-rerank-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-score-fusion-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-anchor40-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-no-source-limit-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-chunk-rerank-metadata-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-source-local-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-local-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-local-only-v1 --variant raw-only --retriever vector
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector
+```
+
+`check:rag-models` 默认只做快速 smoke check。显式传入 `--benchmark` 时，会从真实 chunk 中固定抽样，并让每组 dtype、device 和 batch size 在独立进程中运行，输出稳态吞吐、batch p50/p95、峰值内存和全量索引预计耗时：
+
+```powershell
+npm run check:rag-models -- -- --benchmark --samples 64 --batches 4,8,16 --dtypes q4 --devices cpu
+```
+
+只有本地已准备 `model_int8.onnx` 且 Node.js Runtime 支持 WebGPU 时，才加入`--dtypes q4,int8 --devices cpu,webgpu`；失败的组合会保留错误摘要，并继续测试其他组合。
+
+稠密 embedding 使用按模型配置和 chunk 文本寻址的磁盘缓存；索引失败后重跑会复用已经完成的向量。混合检索会校验两个索引 manifest 中的 chunk 指纹，避免融合不同语料快照。配置 `candidateCacheDir` 后，相同索引快照、query 和 candidate limit 的 BM25/BGE-M3 候选会冻结并复用；配置 Reranker 的 `scoreCacheDir` 后，相同模型身份、query 和文本的精排分数也会复用，便于快速重复消融。在线 Agent 可设置 `RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-rerank-v1`，并用 `RAG_INDEX_VARIANT` 选择 variant。
+
+检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。提供题目文件、`--profile`、`--variant` 或 `--retriever` 中任一参数才会实际运行：
+
+```powershell
+npm run eval:recall -- -- --variant both --retriever both
+npm run eval:recall -- -- --profile bm25-v1 --variant both --retriever vector
+npm run eval:recall -- -- --profile bm25-v1 --variant raw-wiki --retriever vector --wiki-first false
+npm run eval:recall -- -- --profile bm25-v1 --variant raw-only --retriever vector --probe-candidate-limit 100
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant raw-only --retriever vector --question-ids investment-pillars,raft-components
+```
+
+`--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。`--probe-candidate-limit <N>` 会仅对正常 Top-20 候选未命中的题追加深度探测，N 必须大于 20。`--question-ids <id1,id2,...>` 可只重跑失败题或指定样本，适合低成本生成排序诊断。召回报告会记录每个变体的实际 Wiki 优先策略、题目范围和 probe 汇总，并写入 `var/evals/recall/<timestamp>/report.json`。
+
+每次 Recall 评测还会在同一输出目录写入一条 `eval.recall` JSONL Trace。其 `rag.search` 子 span 与在线检索使用相同的候选—重排诊断字段：query、profile、variant、candidate limit、Wiki 优先策略、Top-20 候选和最终 Top-5 结果；评测事件补充金标命中、关键词覆盖率、失败类型，以及正确来源在 sparse、dense、RRF、Chunk Reranker、Evidence 组装、Evidence Reranker 和最终来源限额后的逐阶段 rank。`report.json` 的逐题结果同时记录 `stageRanks` 和 `stageDiagnostics`；后者包含各阶段的来源 rank、满足关键词阈值的内容 rank，以及正确来源中的最佳关键词覆盖率，可区分“来源排错”和“正确来源内片段不完整”。报告保留原有的跨 Top-5 合并关键词口径作为“宽松通过”，并新增只允许正确来源贡献关键词的 `sourceTermScore` 和“严格通过”，避免无关文档补齐关键词造成假阳性。终端仅显示 Trace 路径，Trace 是诊断原始事实，报告是其汇总视图。
+
+`hybrid-bge-m3-chunk-rerank-v1` 保留 Evidence 扩展但关闭 Evidence Reranker，用于验证二次重排是否造成降级。`hybrid-bge-m3-score-fusion-v1` 对 RRF、Chunk Reranker 和 Evidence Reranker 分数分别做 min-max 归一化后线性融合；当前实验权重为 Chunk Reranker 0.8、Evidence Reranker 0.6，既保留语义重排的主导作用，也防止强候选被单阶段分数直接淘汰。现有 `hybrid-bge-m3-rerank-v1` 保持原行为，继续作为对照组。
+
+`hybrid-bge-m3-rerank-anchor40-v1` 仅将 Evidence Anchor 从 20 扩至 40，用于检验被 Chunk Reranker 排在 21–40 名的正确内容能否被 Evidence Reranker 救回。`hybrid-bge-m3-rerank-no-source-limit-v1` 仅关闭最终的每来源最多两条限制，用于检验同一来源中排在第三条及之后的正确 Evidence 是否被限额误删。
+
+`hybrid-bge-m3-chunk-rerank-metadata-v1` 以关闭 Evidence Reranker 的当前最佳消融为基础，在 Chunk Reranker 输入前增加 source、titlePath 和 tags，使日期、文件名与知识层级参与相关性判断。`hybrid-bge-m3-source-local-v1` 同样关闭 Evidence Reranker，但会先从 RRF 前 20 个不同来源中各取最多 4 个词法相关 chunk，再用同一 Reranker 选出每来源最佳 chunk，与全局 Chunk Reranker 结果合并；Trace 和报告会新增 `sourceLocal` 与 `anchorSelection` 阶段，用于观察“来源正确但答案片段未召回”的恢复情况。
+
+`hybrid-bge-m3-metadata-source-local-v1` 组合 metadata 输入与来源内检索，并用来源内最佳 chunk 替换该来源原本排名最高的 chunk、继承其全局名次；这样既避免答案片段因裸 chunk 分数过低被淘汰，也不会因追加同来源候选挤占 Anchor。题库标注应与原文及问题约束一致：数值单位沿用原文（例如 `120 ms`），问题未限定唯一文件时允许所有实际包含答案的来源。
+
+`hybrid-bge-m3-metadata-source-local-only-v1` 只使用每个候选来源内部选出的最佳 chunk 作为 Anchor，排除同一来源的其他全局候选。它用于验证来源内候选排序已经足够可靠、且全局 chunk 是否仍在挤占最终 Top-5；该模式仍是实验项，不直接替换默认在线 profile。
+
+`hybrid-bge-m3-metadata-source-aggregate-v1` 仍保持每个候选来源一个 Anchor，但把该来源的全局最佳 chunk 与来源内最佳 chunk 聚合到同一 Anchor。它保留来源内检索带来的答案片段，同时避免来源内排序偶尔选错 chunk 时丢失已经由全局 Reranker 找到的正确内容。
+
+评测中的“宽松通过”要求最终 Top-5 命中预期来源，且全部 Top-5 合并后覆盖至少60% 的预期关键词；“严格通过”同样要求命中预期来源，但关键词只能由预期来源中的结果贡献，避免无关文档拼出答案。所有通过率和检索指标都以完整题集 50 题为分母。`Recall@20` 只检查重排前 RRF 前 20 个候选中的来源覆盖，并不限制后续 Chunk Reranker 使用的更深候选池，因此它可以是 49/50，而最终 Top-5 仍通过 50/50。
+
+### 召回优化
+
+| 阶段                | 主要变化               |    Recall@20 |        Hit@5 |        Hit@1 |     自动通过 | 结论                                     |
+| ------------------- | ---------------------- | -----------: | -----------: | -----------: | -----------: | ---------------------------------------- |
+| TF 词频余弦基线     | 中文词频余弦           |          44% |          40% |          20% |         9/50 | 中文词法匹配能力不足                     |
+| 中文 bigram BM25    | TF 词频余弦 → BM25     | 82%（+38pp） | 68%（+28pp） | 50%（+30pp） | 30/50（+21） | 先修正检索算法，获得最大单步提升         |
+| BM25 + 语料裁剪     | 47,093 → 19,397 chunks |  86%（+4pp） | 78%（+10pp） |  58%（+8pp） |  34/50（+4） | 去掉低价值语料可同时改善召回与排序       |
+| BGE-M3 Dense 单路   | BM25 → Dense           |  92%（+6pp） |  82%（+4pp） |  60%（+2pp） |  36/50（+2） | 语义检索补足词法检索，但单路排序优势有限 |
+| BM25 + BGE-M3 + RRF | 词法、语义双路召回     | 98%（+12pp） |  86%（+8pp） | 70%（+12pp） |  37/50（+3） | 两路具有互补性，候选覆盖率达到 49/50     |
+
+表中的 Dense 和 Hybrid 增量均相对裁剪后的 BM25 基线（Recall@20 86%、
+Hit@5 78%、Hit@1 58%、34/50）计算。召回阶段的迭代路径是：
 
 ```text
-load_skill({ "name": "..." })
+修正中文词法检索
+-> 清理语料噪声
+-> 验证 Dense 单路的语义增益
+-> 用 RRF 融合 BM25 与 Dense 的互补候选
 ```
 
-工具返回 skill 全文后，下一轮模型才能按 skill 的具体方法执行。这样避免把所有 skill 全文一次性塞进上下文。
+### 排序优化
 
-内置维护型 wiki skills：
+| 阶段                         | 主要变化                                      |    Recall@20 |        Hit@5 |        Hit@1 |             MRR@5 |       自动通过 | 结论                                                         |
+| ---------------------------- | --------------------------------------------- | -----------: | -----------: | -----------: | ----------------: | -------------: | ------------------------------------------------------------ |
+| BM25 基线                    | 裁剪后的 BM25                                 |          86% |          78% |          58% |            0.6583 |          34/50 | 排序前基线                                                   |
+| BM25 + BGE Reranker          | 对 BM25 Top-100 重排                          |  86%（不变） | 90%（+12pp） | 82%（+24pp） | 0.8567（+0.1984） |    41/50（+7） | 不增加候选，仅靠重排即可显著提升头部命中                     |
+| Hybrid + RRF                 | 双路召回，尚未精排                            | 98%（+12pp） |  86%（+8pp） | 70%（+12pp） |                 — |    37/50（+3） | 召回已接近饱和，主要矛盾转向排序                             |
+| Hybrid + 两阶段 BGE Reranker | Chunk 重排 + Evidence 重排                    | 98%（+12pp） | 90%（+12pp） | 80%（+22pp） |                 — |    42/50（+8） | 在保持 49/50 候选覆盖的同时，把更多正确结果推入 Top-5        |
+| Metadata + 来源内独占 Anchor | Reranker 输入补充元数据，并按来源重新选 chunk |          98% |          98% |            — |                 — | 严格通过 49/50 | 来源内检索能恢复答案片段，但独占策略会丢失少数全局正确 chunk |
+| Metadata + 来源聚合 Anchor   | 同一来源聚合全局最佳与来源内最佳 chunk        |          98% |         100% |          90% |            0.9390 | 严格通过 50/50 | 保留来源内排序和全局正确内容，完成最终收敛                   |
 
-- `source-audit`：真实目录接入前做 source audit，产出 source policy、ignore 规则和首批验证范围。
-- `ingest`：把 raw source 整理进 maintained wiki，并更新 index/log/contradictions。
-- `wiki-answer`：优先基于 wiki 回答，证据不足再回查 raw sources。
-- `wiki-lint`：检查孤立页面、缺引用、重复概念、过期结论和冲突。
-- `badcase`：把失败回答、检索遗漏或工具选择错误沉淀为 bad case 和 eval 候选。
+排序表中的增量同样相对裁剪后的 BM25 基线计算。优化先通过逐阶段诊断确认瓶颈，再分别尝试关闭 Evidence Reranker、线性分数融合、扩大 Anchor 和取消来源限额；这些方案能解释局部降级，但没有解决“来源正确、chunk 错误”的主要问题。Metadata 输入让 Reranker 同时看到 source、titlePath 和 tags；在最初 8 道失败题上，Hit@5 从 62.5% 提升到 75%，Hit@1 从 37.5% 提升到 62.5%。随后加入来源内词法预筛与重排，独占 Anchor 达到严格通过 49/50，但会删除一个已经正确的全局chunk；最终的来源聚合 Anchor 保留来源内代表的排名，并把同来源的全局最佳文本合并进来，达到严格通过 50/50、Hit@5 100%、Hit@1 90% 和 MRR@5 0.9390。
 
-## Bad Case And Eval Loop
+Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，必须通过显式 CLI 参数选择可复现样本、指定题目，或用 `--all` 明确允许全量运行；无参数只显示帮助且绝不调用 LLM：
 
-推荐把每次明显失败都沉淀为可复现数据：
-
-```text
-bad answer / weak retrieval / wrong tool choice
--> evaluation/badcases/*.md
--> evaluation/questions.json
--> update skill / schema / prompt / tool description
--> rerun eval
+```powershell
+npm run eval:agent -- -- --variant both --random-count 5 --seed baseline-1
+npm run eval:agent -- -- --variant raw-only --question-ids investment-pillars,raft-components
+npm run eval:agent -- -- --profile bm25-v1 --variant both --random-count 3 --seed bm25-baseline-1
 ```
 
-已有样例：
+`--profile` 选择索引 profile（默认 `bm25-v1`）。`--all`、`--random-count` 与 `--question-ids` 互斥；`--seed` 仅可与 `--random-count` 一起使用。全量 Agent 评测必须明确传入 `--all`。`--help` 可显示三条命令的完整用法；非法参数会同时输出错误和 usage。旧的 `RAG_EVAL_MODE`、`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 和 `AGENT_EVAL_QUESTION_IDS` 环境变量不再作为评测入口读取。
 
-- `evaluation/badcases/TEMPLATE.md`：失败样例模板。
-- `evaluation/questions.json`：统一主题评测集。
-
-## 端到端作品集演示
-
-一个原始资料到 Wiki 再到评测的最小闭环：
-
-```text
-notes/<source>.md
--> ingest
--> wiki/sources + wiki/concepts + wiki/index.md + wiki/log.md
--> search_notes / grep_notes
--> wiki-answer
--> badcase
--> evaluation/questions.json
-```
-
-这个 demo 重点展示的不是“能调用一次 LLM”，而是 Agent 工程中更重要的部分：
-
-- 如何把原始资料变成长期可维护的 wiki。
-- 如何让模型在 vector search、grep search、read note、skill、tool group 之间做选择。
-- 如何用 trace 解释一次 Agent 行为。
-- 如何把失败样例沉淀为 eval、skill、schema 或 prompt 的改进。
-
-## 未来演进
-
-短期方向是继续完善 LLM Wiki 层：
-
-- 让 `ingest` 更稳定地生成 source/concept/decision 页面。
-- 让 `wiki-lint` 能检查孤立页、缺引用、重复概念和冲突。
-- 让 `wiki-answer` 形成稳定的 wiki-first 回答格式。
-- 把真实 bad case 持续补进 `evaluation/badcases/` 和 `evaluation/questions.json`。
-
-中期方向是增强评测和工具路由：
-
-- 对比 vector、grep、wiki-first retrieval 在不同问题类型下的表现。
-- 用 trace 中的 `gen_ai.chat`、`tool.execute` 与 RAG 子 span 做行为分析。
-
-长期方向是在积累足够数据后探索训练或后训练：
-
-- 用 bad case 和人工修正记录准备偏好数据。
-- 训练轻量 reranker 或 tool routing classifier。
-- 用真实任务样本评估是否需要 SFT/RL，而不是过早引入训练复杂度。
-
-## 配置
-
-配置按以下优先级合并：
-
-```text
-操作系统环境变量 > .env（密钥与本机覆盖项）> .env.example（版本化默认值）> 代码默认值
-```
-
-`.env.example` 中的主要默认配置：
-
-```env
-BASE_URL=https://api.deepseek.com
-# API_KEY 仅在本地 .env、系统环境变量或 CI secret 中设置
-MODEL_NAME=deepseek-v4-pro
-
-AGENT_SANDBOX_ROOT=C:\AgentSandbox
-AGENT_WORKSPACE_ROOT=.
-MAX_LOOP_STEPS=20
-TRACE_DIR=var/traces
-APPROVAL_MODE=prompt
-
-TOOL_OUTPUT_MAX_CHARS=12000
-CONTEXT_TOOL_RESULT_MAX_CHARS=6000
-READ_FILE_MAX_BYTES=200000
-SHELL_TIMEOUT_MS=5000
-SHELL_MAX_BUFFER_BYTES=1048576
-RUN_TESTS_MAX_TIMEOUT_MS=120000
-
-MEMORY_MAX_MESSAGES=40
-MEMORY_KEEP_RECENT_MESSAGES=18
-MEMORY_MAX_CHARS=60000
-MEMORY_DIR=var/memory
-MEMORY_SESSION_RETENTION_DAYS=30
-MEMORY_JOURNAL_RETENTION_DAYS=90
-
-KNOWLEDGE_SOURCES_CONFIG_PATH=config/knowledge.sources.jsonc
-RAG_INDEXES_CONFIG_PATH=config/rag.indexes.jsonc
-```
-
-每次启动会创建并输出 `sessionId`。在 Windows 上使用 `npm run ask` 恢复会话时，需用 `npm run ask -- -- --session <sessionId> "问题"`；第二个 `--` 用于阻止 npm 将 `--session` 解析为自身配置。REPL 中输入 `remember <内容>` 才会保存长期记忆，使用 `memories` 查看、`forget <ID>` 删除。
-
-会话消息在每次用户输入、模型回复和工具结果产生后立即写入 SQLite，不必等待会话正常结束。输入 `sessions [数量] [预览字符数]` 可按最后活动时间列出会话 ID、时间、消息数与开头预览；输入 `session <ID> [预览字符数]` 可查看会话概览。会话全文保存在 SQLite，按日 Markdown 摘要位于 `var/memory/journals/`；`clear` 只清空当前会话消息，不删除已明确保存的长期记忆或既有日记。`MEMORY_SESSION_RETENTION_DAYS` 默认 30 天，超过期限的会话及其消息会硬删除。
-
-运行 `npm run check:config` 可校验 LLM 凭证、知识源、active RAG profile 和 MCP 配置是否可读取，不会发送模型请求。
+双组 Agent 输出写入 `var/evals/agent/<time>/`：`report.json` 含 Git/题库 SHA、模型和 source/profile/variant identity、总体与分类汇总及 raw/wiki lift；`review/` 含匿名 A/B 的 `review.jsonl`、CSV、HTML 与 `annotation-template.csv`。盲测映射只保存在 `blind-mapping.internal.json`，勿交给标注者。`npm run build` 与 `node --test` 均不调用 LLM。
 
 ## 测试
 
@@ -922,10 +731,7 @@ dist/src/tests/**/*.test.js
 npm run eval:agent -- -- --variant both --random-count 3 --seed 20260805
 ```
 
-每题的 memory、JSONL v2 trace 均隔离在 `var/evals/agent/<timestamp>/<题号>-<id>/`，并在根目录写入
-`report.json`。评测强制自动审批、关闭 prompt artifact 且不自动导入 Jaeger。报告包含答案
-`expectedTerms` 覆盖率、来源证据命中（`rag.read_note` 或检索来源）、`sourceHit && termCoverage >= 60%`
-的 pass、步骤数、总时延、RAG 工具调用数/占比、工具失败详情和终止原因。
+每题的 memory、JSONL v2 trace 均隔离在 `var/evals/agent/<timestamp>/<题号>-<id>/`，并在根目录写入 `report.json`。评测强制自动审批、关闭 prompt artifact 且不自动导入 Jaeger。报告包含答案 `expectedTerms` 覆盖率、来源证据命中（`rag.read_note` 或检索来源）、`sourceHit && termCoverage >= 60%` 的 pass、步骤数、总时延、RAG 工具调用数/占比、工具失败详情和终止原因。
 
 RAG eval 支持对比向量检索和 grep 检索：
 
