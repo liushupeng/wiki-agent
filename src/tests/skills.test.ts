@@ -69,7 +69,7 @@ test('built-in wiki skills use current paths and respect tool boundaries', async
         readSkill('note-curation')
     ]);
 
-    assert.match(captureBadcase.content, /evaluation\/rag\/questions\.json/);
+    assert.match(captureBadcase.content, /evaluation\/questions\.json/);
     assert.doesNotMatch(captureBadcase.content, /examples\/\*-eval/);
     assert.match(ingestSource.content, /配置的 `notes\/` 根目录/);
     assert.match(lintWiki.content, /默认将 lint 视为只读/);

@@ -37,7 +37,7 @@ flowchart TD
     toolResults --> memory
     memory --> agentLoop
 
-    tools --> ragLayer["RAG: Vector Search and Grep"]
+    tools --> ragLayer["RAG: Hybrid Retrieval and Grep"]
     ragLayer --> wikiLayer["Maintained Wiki"]
     ragLayer --> rawSources["Raw Sources"]
 
@@ -62,7 +62,7 @@ flowchart LR
     reranker <--> fusion["RRF Fusion"]
     fusion <--> bm25["BM25"]
     fusion <--> bge["BGE-M3"]
-    bm25 <--> bm25db["SQLite<br/>BM25 Inverted Index"]
+    bm25 <--> bm25db["JSON<br/>BM25 Index"]
     bge <--> lancedb["LanceDB<br/>Vector Index"]
 
     tools --> mcp["MCP Servers"]
@@ -71,7 +71,7 @@ flowchart LR
 ```
 
 - **应用层**：Node.js、TypeScript、OpenAI-compatible API
-- **检索层**：BM25 + SQLite 倒排索引、BGE-M3 + LanceDB、BGE reranker
+- **检索层**：BM25 + JSON 索引、BGE-M3 + LanceDB、BGE reranker
 - **本地推理**：Transformers.js、ONNX Runtime
 - **集成与可观测性**：MCP、SQLite、OpenTelemetry、Jaeger
 
@@ -80,10 +80,10 @@ flowchart LR
 - **Agent loop 保持清晰**：`src/agent.ts` 只负责 LLM 驱动的规划-执行循环、模型调用、工具调度和 trace；工具执行、权限判断、协议适配都拆到独立模块。
 - **Memory 与 Wiki 分层**：短期 memory 负责最近对话，中期 memory 负责压缩后的摘要；用户明确保存的长期 memory 与会话历史存于 `var/memory/`。`wiki/`、skills、evaluation 是独立的长期知识与质量资产，不属于 `MemoryManager`。
 - **工具是广义能力入口**：RAG、grep、skill、MCP、本地文件、Git、Shell、测试命令都通过统一 `IAgentTool` 接口进入 Agent。
-- **检索采用 vector + grep 双通道**：语义问题优先 `search_notes`，明确术语、配置名、错误文本优先 `grep_notes`。
+- **检索采用 hybrid + grep 双通道**：语义问题由 `search_notes` 使用 BM25、BGE-M3、RRF 与 Reranker，明确术语、配置名、错误文本优先 `grep_notes`。
 - **工具 schema 按需暴露**：所有工具注册到 `ToolRegistry`，但每轮只暴露 core tools 和已加载 tool group，降低上下文占用。
 - **MCP 优先，本地工具兜底**：Filesystem/Git/SQLite 等成熟能力通过 MCP 接入；MCP 覆盖的本地等价工具会跳过，避免重复暴露。需要更严格策略的本地工具可通过 MCP 配置排除同名远端能力。
-- **先沉淀数据，再谈训练**：当前重点是 trace、eval、bad case、wiki schema 和 skill，为未来 reranker、tool routing 或后训练准备数据资产。
+- **先沉淀数据，再谈训练**：检索 Reranker 已落地；当前继续沉淀 trace、eval、bad case、wiki schema 和 skill，为 tool routing、泛化评测与后训练准备数据资产。
 
 ## wiki-agent VS 普通 RAG
 
@@ -130,12 +130,8 @@ uvx --version
 项目依赖和 MCP server 工具安装：
 
 ```powershell
-# 如果是从代码库安装已有依赖，执行这一条即可
+# 安装 package.json 中锁定的应用、RAG、MCP 与可观测性依赖
 npm install
-
-# 如果是从零给项目补齐 npm 依赖，对应的具体包安装命令是：
-npm install openai dotenv @modelcontextprotocol/sdk @modelcontextprotocol/server-filesystem
-npm install --save-dev typescript tsx @types/node
 
 # 安装 Git / SQLite MCP server
 uv tool install mcp-server-git
@@ -171,10 +167,10 @@ npm run check:llm
 
 ```bash
 npm run ask -- "检索我的 Agent 笔记"
-npm run ask -- -- --session <sessionId> "继续上一会话的任务"
-npm run index:knowledge
-npm run eval:recall
-npm run eval:agent
+npm run ask -- --session <sessionId> "继续上一会话的任务"
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector
+npm run eval:agent -- -- --variant both --random-count 3 --seed demo
 npm run check:mcp
 npm test
 ```
@@ -188,8 +184,9 @@ wiki-agent/
 ├── skills/              # 可按需加载的 skill Markdown
 ├── wiki/                # Agent 维护的结构化 Markdown wiki
 ├── notes/               # 默认 Markdown 知识源示例
-├── evaluation/          # RAG/Wiki 评测题与失败案例
-├── config/              # 示例配置，例如 MCP server 列表、write_file 作用域
+├── evaluation/          # 开发集、独立 Holdout 与失败案例
+├── config/              # RAG 索引/检索、知识源、MCP、write scopes 与评测配置
+├── models/              # 本地 Transformers.js / ONNX 模型缓存
 ├── var/                 # 运行产物：索引、trace 等，不进入 Git
 ├── docs/                # 代码导读
 ├── .env.example         # 运行配置模板
@@ -203,11 +200,13 @@ src/
 ├── main.ts              # CLI 入口，初始化 memory、registry、agent
 ├── agent.ts             # Agent loop：模型调用、工具调度、span 生命周期
 ├── context/             # 模型上下文：对话记忆、工具结果预算
-├── trace.ts             # Telemetry、JSONL v2 与 OTLP backend
+├── trace/               # Telemetry、JSONL v2、artifact 与 OTLP backend
 ├── permissions.ts       # 工具权限决策
 ├── sandbox.ts           # 本地沙箱路径保护
 ├── limits.ts            # 工具输出和文件读取限制
-├── config.ts            # 环境变量解析
+├── env.ts               # 默认环境层与本机覆盖加载
+├── config/              # write scopes 等运行配置解析
+├── evaluation/          # 评测 CLI、实验编排与报告结构
 ├── cli/                 # CLI 适配器
 ├── prompts/             # system prompt
 ├── protocol/            # OpenAI tool-call 协议适配
@@ -270,9 +269,9 @@ npm run index:knowledge
 npm run index:knowledge -- -- --profile bm25-v1
 ```
 
-索引 profile 在 `config/rag.indexes.jsonc` 中声明多个 variant；每个 variant 显式绑定一个 knowledge sources 配置。日常 `ask` 固定使用 active profile 的 `raw-wiki` variant。该配置文件支持注释，并通过同目录的 JSON Schema 提供字段说明、校验和自动补全。
+索引 profile 在 `config/rag.indexes.jsonc` 中声明多个 variant；每个 variant 显式绑定一个 knowledge sources 配置。日常 `ask` 默认使用 active profile 的 active variant，也可通过 RAG 工具选项覆盖。该配置文件支持注释，并通过同目录的 JSON Schema 提供字段说明、校验和自动补全。
 
-配置文件中每个 source 的 `name` 会写入检索结果的 `source` 前缀，例如 `wiki/index.md`、`raw/agent-rag.md`。CLI 显式传入目录时仍可临时索引单根目录：
+配置文件中每个 source 的 `name` 会写入检索结果的 `source` 前缀，例如 `wiki/index.md`、`raw/agent-rag.md`。索引 variant 通过 `sourceConfigPath` 绑定语料配置；`raw-only` 与 `raw-wiki` 分别使用 `config/evaluation/raw-only.sources.jsonc` 和 `config/evaluation/raw-wiki.sources.jsonc`。`config/knowledge.sources.jsonc` 则供 grep 等按文件系统读取知识源的工具使用。
 
 ```jsonc
 {
@@ -312,6 +311,8 @@ var/indexes/bm25-v1/raw-only/index.json
 var/indexes/bm25-v1/raw-only/manifest.json
 var/indexes/bm25-v1/raw-wiki/index.json
 var/indexes/bm25-v1/raw-wiki/manifest.json
+var/indexes/bge-m3-v1/raw-only/index.lance/
+var/indexes/bge-m3-v1/raw-only/manifest.json
 ```
 
 索引数据流采用惰性读取和流式写入。每次只读取一个文件，逐个生成 chunk
@@ -328,17 +329,18 @@ iterateSourceDocuments / iterateSourceDocumentsFromRoots
 `config/rag.indexes.jsonc`：它固定 embedding、chunk 参数、向量后端；variant 固定语料 source config 与索引目录名。
 `manifest.json` 记录 profile、variant、source config、文档数和 chunk 数；查询端会验证这些身份及 embedding，不一致时拒绝查询并要求重建。
 
-当前可索引的 Markdown/Text 数据约 26 MiB，单 JSON 索引足以满足本地使用。
-固定维度 dense embedding 可先在 JSON 后端小规模评测；索引体积或延迟成为瓶颈后，再迁移至 LanceDB、Qdrant 等专用后端。
+TF 与 BM25 profile 使用 JSON store，便于本地实验和检查；BGE-M3 profile 已使用
+LanceDB 保存 1024 维稠密向量。物理索引由 profile 隔离，混合检索只融合相同语料
+快照上的 BM25 与 BGE-M3 结果。
 
 索引期间，命令行会持续显示已处理文档数、chunk 数、耗时和当前文件；
 交互式终端会原地刷新，重定向日志时则每 5 秒输出一行。完成后还会汇总
 来源、切分参数、索引大小、处理吞吐量和进程峰值内存。
 
-2026-07-16 使用默认配置实测：共索引 1,253 个文件、生成 47,119 个 chunk，
-索引文件约 93.18 MiB，构建过程峰值工作集约 214.6 MiB。
+文档数、chunk 数、索引大小、吞吐和峰值内存会随 source ignore 规则与 profile
+变化，构建完成后以对应索引目录中的 `manifest.json` 和命令行摘要为准。
 
-`search_notes` 会优先返回 `wiki/` source 命中；证据不足时再使用 raw source 命中补充。`grep_notes` 同样会在 configured knowledge roots 中搜索，并在结果里保留 source prefix。
+`search_notes` 使用检索 profile 时按该 profile 的融合与重排策略返回结果；未指定检索 profile 的单索引回退路径会优先返回 `wiki/` 命中。`grep_notes` 在 configured knowledge roots 中搜索，并在结果里保留 source prefix。
 
 核心接口在：
 
@@ -491,6 +493,9 @@ load_skill({ "name": "..." })
 - `wiki-answer`：优先基于 wiki 回答，证据不足再回查 raw sources。
 - `wiki-lint`：检查孤立页面、缺引用、重复概念、过期结论和冲突。
 - `badcase`：把失败回答、检索遗漏或工具选择错误沉淀为 bad case 和 eval 候选。
+- `distill-topic`：把分散资料提炼为可维护的主题知识页。
+- `notes-rag`：按检索、局部阅读与证据约束处理笔记问题。
+- `note-curation`：整理笔记结构、元数据、链接和重复内容。
 
 ## 可观测性与评测
 
@@ -538,7 +543,7 @@ npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl --dry-
 .\jaeger.exe --set=extensions.jaeger_storage.backends.some_storage.memory.max_traces=500 --set=extensions.jaeger_query.enable_tracing=false
 ```
 
-1. 执行 `npm run ask` 会自动导入。也可手动导入既有 trace：
+3. 执行 `npm run ask` 会自动导入。也可手动导入既有 trace：
 
 ```powershell
 npm run trace:import -- -- --input var/traces/<timestamp>_<traceId>.jsonl --endpoint http://127.0.0.1:4318/v1/traces
@@ -580,7 +585,7 @@ HTTP 是默认协议；如使用 gRPC，设置 `OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 
 ## 检索优化
 
-`evaluation/questions.json` 是统一的 50 题主题库；题目按检索漏斗标记 `primaryStage`（候选召回、重排、证据、Agent），并保留分类、难度与查询类型。
+`evaluation/questions.json` 是用于迭代调优的 50 题开发集；每题记录稳定 ID、分类、问题、grep 词项、预期来源与预期关键词。独立 Holdout 不参与参数选择，避免在同一批题上反复修正造成过拟合。
 
 实验组严格分开：
 
@@ -595,7 +600,7 @@ npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
 npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
 ```
 
-本地混合检索将物理索引和查询策略分开配置：`rag.indexes.jsonc` 中的 `bm25-v1`、`bge-m3-v1` 负责构建索引，`rag.retrieval.jsonc` 中的 `dense-bge-m3-v1`、`hybrid-bge-m3-v1`、`hybrid-bge-m3-rerank-v1` 分别启用纯向量、RRF 融合和两级 cross-encoder 精排。首次运行会下载较大的 ONNX 模型，先做本机可行性检查，再从同一语料快照重建两个索引：
+本地混合检索将物理索引和查询策略分开配置：`rag.indexes.jsonc` 中的 `bm25-v1`、`bge-m3-v1` 负责构建索引；`rag.retrieval.jsonc` 保留纯向量、RRF、Reranker 等消融策略，其 active retrieval profile 为 `hybrid-bge-m3-metadata-source-aggregate-v1`。首次运行会下载较大的 ONNX 模型，先做本机可行性检查，再从同一语料快照重建两个索引：
 
 ```powershell
 npm run check:rag-models
@@ -623,16 +628,24 @@ npm run check:rag-models -- -- --benchmark --samples 64 --batches 4,8,16 --dtype
 
 只有本地已准备 `model_int8.onnx` 且 Node.js Runtime 支持 WebGPU 时，才加入`--dtypes q4,int8 --devices cpu,webgpu`；失败的组合会保留错误摘要，并继续测试其他组合。
 
-稠密 embedding 使用按模型配置和 chunk 文本寻址的磁盘缓存；索引失败后重跑会复用已经完成的向量。混合检索会校验两个索引 manifest 中的 chunk 指纹，避免融合不同语料快照。配置 `candidateCacheDir` 后，相同索引快照、query 和 candidate limit 的 BM25/BGE-M3 候选会冻结并复用；配置 Reranker 的 `scoreCacheDir` 后，相同模型身份、query 和文本的精排分数也会复用，便于快速重复消融。在线 Agent 可设置 `RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-rerank-v1`，并用 `RAG_INDEX_VARIANT` 选择 variant。
+稠密 embedding 使用按模型配置和 chunk 文本寻址的磁盘缓存；索引失败后重跑会复用已经完成的向量。混合检索会校验两个索引 manifest 中的 chunk 指纹，避免融合不同语料快照。配置 `candidateCacheDir` 后，相同索引快照、query 和 candidate limit 的 BM25/BGE-M3 候选会冻结并复用；配置 Reranker 的 `scoreCacheDir` 后，相同模型身份、query 和文本的精排分数也会复用，便于快速重复消融。
 
-检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。提供题目文件、`--profile`、`--variant` 或 `--retriever` 中任一参数才会实际运行：
+在线 `ask` 未设置 `RAG_RETRIEVAL_PROFILE` 时仍走 active BM25 单索引和 `raw-wiki`；启用最终混合方案时必须同时指定 retrieval profile 与两个物理索引共有的 variant，避免 BM25 和 BGE-M3 打开不同语料快照：
+
+```env
+RAG_RETRIEVAL_CONFIG_PATH=config/rag.retrieval.jsonc
+RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-metadata-source-aggregate-v1
+RAG_INDEX_VARIANT=raw-only
+```
+
+检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。无参数或 `--help` 只显示帮助；其他合法参数会实际运行：
 
 ```powershell
 npm run eval:recall -- -- --variant both --retriever both
 npm run eval:recall -- -- --profile bm25-v1 --variant both --retriever vector
 npm run eval:recall -- -- --profile bm25-v1 --variant raw-wiki --retriever vector --wiki-first false
 npm run eval:recall -- -- --profile bm25-v1 --variant raw-only --retriever vector --probe-candidate-limit 100
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant raw-only --retriever vector --question-ids investment-pillars,raft-components
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector --question-ids investment-pillars,raft-components
 ```
 
 `--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。`--probe-candidate-limit <N>` 会仅对正常 Top-20 候选未命中的题追加深度探测，N 必须大于 20。`--question-ids <id1,id2,...>` 可只重跑失败题或指定样本，适合低成本生成排序诊断。召回报告会记录每个变体的实际 Wiki 优先策略、题目范围和 probe 汇总，并写入 `var/evals/recall/<timestamp>/report.json`。
@@ -643,15 +656,34 @@ npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-rerank-v1 --variant 
 
 `hybrid-bge-m3-rerank-anchor40-v1` 仅将 Evidence Anchor 从 20 扩至 40，用于检验被 Chunk Reranker 排在 21–40 名的正确内容能否被 Evidence Reranker 救回。`hybrid-bge-m3-rerank-no-source-limit-v1` 仅关闭最终的每来源最多两条限制，用于检验同一来源中排在第三条及之后的正确 Evidence 是否被限额误删。
 
-`hybrid-bge-m3-chunk-rerank-metadata-v1` 以关闭 Evidence Reranker 的当前最佳消融为基础，在 Chunk Reranker 输入前增加 source、titlePath 和 tags，使日期、文件名与知识层级参与相关性判断。`hybrid-bge-m3-source-local-v1` 同样关闭 Evidence Reranker，但会先从 RRF 前 20 个不同来源中各取最多 4 个词法相关 chunk，再用同一 Reranker 选出每来源最佳 chunk，与全局 Chunk Reranker 结果合并；Trace 和报告会新增 `sourceLocal` 与 `anchorSelection` 阶段，用于观察“来源正确但答案片段未召回”的恢复情况。
+`hybrid-bge-m3-chunk-rerank-metadata-v1` 以关闭 Evidence Reranker 的当前最佳消融为基础，在 Chunk Reranker 输入前增加 source、titlePath 和 tags，使日期、文件名与知识层级参与相关性判断。`hybrid-bge-m3-source-local-v1` 同样关闭 Evidence Reranker，但会先从 RRF 前 20 个不同来源中各取最多 4 个词法相关 chunk，并强制加入该来源的全局最佳 chunk，再用同一 Reranker 选出每来源最佳 chunk；这样词法预筛不会删除已经由全局语义检索验证过的强候选。Trace 和报告会新增 `sourceLocal` 与 `anchorSelection` 阶段，用于观察“来源正确但答案片段未召回”的恢复情况。
 
 `hybrid-bge-m3-metadata-source-local-v1` 组合 metadata 输入与来源内检索，并用来源内最佳 chunk 替换该来源原本排名最高的 chunk、继承其全局名次；这样既避免答案片段因裸 chunk 分数过低被淘汰，也不会因追加同来源候选挤占 Anchor。题库标注应与原文及问题约束一致：数值单位沿用原文（例如 `120 ms`），问题未限定唯一文件时允许所有实际包含答案的来源。
 
-`hybrid-bge-m3-metadata-source-local-only-v1` 只使用每个候选来源内部选出的最佳 chunk 作为 Anchor，排除同一来源的其他全局候选。它用于验证来源内候选排序已经足够可靠、且全局 chunk 是否仍在挤占最终 Top-5；该模式仍是实验项，不直接替换默认在线 profile。
+`hybrid-bge-m3-metadata-source-local-only-v1` 只使用每个候选来源内部选出的最佳 chunk 作为 Anchor，排除同一来源的其他全局候选。它用于验证来源内候选排序已经足够可靠、且全局 chunk 是否仍在挤占最终 Top-5；该模式仍是实验项，不替换当前 active retrieval profile。
 
 `hybrid-bge-m3-metadata-source-aggregate-v1` 仍保持每个候选来源一个 Anchor，但把该来源的全局最佳 chunk 与来源内最佳 chunk 聚合到同一 Anchor。它保留来源内检索带来的答案片段，同时避免来源内排序偶尔选错 chunk 时丢失已经由全局 Reranker 找到的正确内容。
 
-评测中的“宽松通过”要求最终 Top-5 命中预期来源，且全部 Top-5 合并后覆盖至少60% 的预期关键词；“严格通过”同样要求命中预期来源，但关键词只能由预期来源中的结果贡献，避免无关文档拼出答案。所有通过率和检索指标都以完整题集 50 题为分母。`Recall@20` 只检查重排前 RRF 前 20 个候选中的来源覆盖，并不限制后续 Chunk Reranker 使用的更深候选池，因此它可以是 49/50，而最终 Top-5 仍通过 50/50。
+评测中的“宽松通过”要求最终 Top-5 命中预期来源，且全部 Top-5 合并后覆盖至少60% 的预期关键词；“严格通过”同样要求命中预期来源，但关键词只能由预期来源中的结果贡献，避免无关文档拼出答案。开发集的通过率和检索指标以完整的 50 题为分母。`Recall@20` 只检查重排前 RRF 前 20 个候选中的来源覆盖，并不限制后续 Chunk Reranker 使用的更深候选池，因此它可以是 49/50，而最终 Top-5 仍通过 50/50。
+
+### 独立 Holdout
+
+`evaluation/holdout/questions.json` 是不参与参数选择的独立 Holdout，目前包含 15 题、14 个唯一来源，并与 50 题开发集保持 expected source 零重叠。Holdout 每题显式记录 `queryType`、`primaryStage` 和 `difficulty`，覆盖投资执行、产业研究、分布式系统、软件工程、操作系统、通信、数学和 Agent 等类别。
+
+Holdout 的使用规则：
+
+- 首次完整评测结果必须原样保留，不根据结果删除“难题”或改写关键词。
+- Holdout 失败题不能直接用于调整现有 profile；如果决定据此优化，应把相关题移入下一版开发集，并重新补充未见来源。
+- 只允许修正可由原文证明的标注错误，并在变更记录中说明原因。
+- 日常消融仍使用 `evaluation/questions.json`；阶段性验收才运行 Holdout。
+
+题目文件作为位置参数传入 CLI。首次验收命令为：
+
+```powershell
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector evaluation/holdout/questions.json
+```
+
+创建题集时不运行该命令，避免在继续修改实现前提前用 Holdout 结果调参。
 
 ### 召回优化
 
@@ -718,7 +750,7 @@ dist/src/tests/**/*.test.js
 - 权限策略
 - 沙箱、限制和 trace
 - 文件、搜索、Shell、Coding、RAG 工具
-- RAG pipeline 和 JSON vector store
+- Hybrid RAG pipeline、JSON store 和 LanceDB store
 - memory 压缩
 - skill manifest 懒加载
 - Agent policy contract：检索路由、局部读笔记、关联范围及高风险工具加载顺序；这类测试不请求 LLM，只防止 system prompt 的关键行为约束被意外删除。

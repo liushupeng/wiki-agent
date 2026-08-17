@@ -7,8 +7,10 @@ import {
     createGrepEvalRetriever,
     createVectorEvalRetriever,
     evaluateRetriever,
-    scoreQuestion
+    scoreQuestion,
+    validateEvaluationQuestionBank
 } from '../../rag/evaluation.js';
+import type { EvalQuestion } from '../../rag/evaluation.js';
 import { SearchResult } from '../../rag/types.js';
 
 const matches: SearchResult[] = [
@@ -22,6 +24,26 @@ const matches: SearchResult[] = [
         score: 0.87654
     }
 ];
+
+test('holdout question bank is explicit and source-disjoint from the development set', async () => {
+    const [development, holdout] = await Promise.all([
+        fs.readFile(path.resolve('evaluation/questions.json'), 'utf-8').then(text => JSON.parse(text) as EvalQuestion[]),
+        fs.readFile(path.resolve('evaluation/holdout/questions.json'), 'utf-8').then(text => JSON.parse(text) as EvalQuestion[])
+    ]);
+
+    validateEvaluationQuestionBank(holdout);
+    assert.equal(holdout.length, 15);
+    const developmentSources = new Set(development.flatMap(question =>
+        question.expectedSources ?? (question.expectedSource ? [question.expectedSource] : [])
+    ));
+    for (const question of holdout) {
+        assert.ok(question.expectedSource || question.expectedSources?.length, `${question.id} requires an expected source`);
+        assert.ok(question.expectedTerms?.length, `${question.id} requires expected terms`);
+        for (const source of question.expectedSources ?? [question.expectedSource!]) {
+            assert.equal(developmentSources.has(source), false, `${question.id} reuses development source ${source}`);
+        }
+    }
+});
 
 test('scoreQuestion passes when expected source and enough terms are matched', () => {
     const result = scoreQuestion({

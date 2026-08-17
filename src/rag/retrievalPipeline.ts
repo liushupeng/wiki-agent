@@ -175,6 +175,16 @@ export function selectLexicalCandidates(query: string, chunks: TextChunk[], limi
         .map(item => item.chunk);
 }
 
+export function includeGlobalSourceCandidate(
+    lexicalCandidates: TextChunk[],
+    globalCandidate?: TextChunk
+): TextChunk[] {
+    if (!globalCandidate || lexicalCandidates.some(candidate => candidate.id === globalCandidate.id)) {
+        return lexicalCandidates;
+    }
+    return [...lexicalCandidates, globalCandidate];
+}
+
 export function preserveSourceRanking(
     localCandidates: CandidateHit[],
     globallyRankedCandidates: CandidateHit[]
@@ -425,10 +435,18 @@ async function retrieveSourceLocalCandidates(
         if (!sourceAnchors.has(key)) sourceAnchors.set(key, candidate);
         if (sourceAnchors.size >= options.sourceLimit) break;
     }
+    const globalBestBySource = new Map<string, CandidateHit>();
+    for (const candidate of rerankedCandidates) {
+        const key = normalizeSource(candidate.source);
+        if (!globalBestBySource.has(key)) globalBestBySource.set(key, candidate);
+    }
 
     const localInputs = (await Promise.all([...sourceAnchors.entries()].map(async ([sourceKey, anchor]) => {
         const chunks = (await lookup.findBySource(anchor.source)).map(withoutVector);
-        return selectLexicalCandidates(query, chunks, options.candidateLimitPerSource)
+        return includeGlobalSourceCandidate(
+            selectLexicalCandidates(query, chunks, options.candidateLimitPerSource),
+            globalBestBySource.get(sourceKey)
+        )
             .map(chunk => ({ sourceKey, anchor, chunk }));
     }))).flat();
     if (!localInputs.length) return [];

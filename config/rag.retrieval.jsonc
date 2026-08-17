@@ -1,5 +1,5 @@
 {
-  "activeRetrievalProfile": "bm25-v1",
+  "activeRetrievalProfile": "hybrid-bge-m3-metadata-source-aggregate-v1",
   "profiles": [
     {
       "id": "bm25-v1",

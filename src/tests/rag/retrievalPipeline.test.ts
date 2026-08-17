@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
     aggregateSourceCandidates,
     formatRerankDocument,
+    includeGlobalSourceCandidate,
     limitPerSource,
     linearScoreFusion,
     preserveSourceRanking,
@@ -78,6 +79,23 @@ test('source-local lexical prefilter can use dates from source metadata', () => 
     ], 1);
 
     assert.equal(candidates[0]?.id, 'right');
+});
+
+test('source-local candidates always include the global source winner without duplication', () => {
+    const lexical = [
+        result('local-1', 'a.md', 0),
+        result('local-2', 'a.md', 0)
+    ];
+    const global = result('global-best', 'a.md', 0);
+
+    assert.deepEqual(
+        includeGlobalSourceCandidate(lexical, global).map(candidate => candidate.id),
+        ['local-1', 'local-2', 'global-best']
+    );
+    assert.deepEqual(
+        includeGlobalSourceCandidate([global, ...lexical], global).map(candidate => candidate.id),
+        ['global-best', 'local-1', 'local-2']
+    );
 });
 
 test('source-local candidates can inherit their source global ranking', () => {

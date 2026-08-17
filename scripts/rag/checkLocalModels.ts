@@ -26,7 +26,7 @@ async function runSmokeCheck() {
     }
     const retrieval = resolveRetrievalProfile(
         await loadRetrievalProfilesConfig(),
-        process.argv[3] ?? 'hybrid-bge-m3-rerank-v1'
+        process.argv[3] ?? 'hybrid-bge-m3-metadata-source-aggregate-v1'
     );
     if (retrieval.mode !== 'hybrid' || !retrieval.reranker) {
         throw new Error(`retrieval profile ${retrieval.id} has no reranker`);
