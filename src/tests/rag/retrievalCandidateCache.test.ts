@@ -24,8 +24,8 @@ test('RetrievalCandidateCache freezes candidates by index, query, and limit', as
     try {
         const firstCache = new RetrievalCandidateCache(directory, 'snapshot-a');
         const first = await firstCache.getOrLoad('query', 100, load);
-        const second = await new RetrievalCandidateCache(directory, 'snapshot-a')
-            .getOrLoad('query', 100, load);
+        const secondCache = new RetrievalCandidateCache(directory, 'snapshot-a');
+        const second = await secondCache.getOrLoad('query', 100, load);
         await firstCache.getOrLoad('query', 20, load);
         await new RetrievalCandidateCache(directory, 'snapshot-b').getOrLoad('query', 100, load);
 
@@ -33,6 +33,8 @@ test('RetrievalCandidateCache freezes candidates by index, query, and limit', as
         assert.deepEqual(first.sparse[0]?.vector, []);
         assert.deepEqual(first.dense[0]?.vector, []);
         assert.deepEqual(second, first);
+        assert.deepEqual(firstCache.getCacheStats(), { requests: 2, hits: 0, misses: 2 });
+        assert.deepEqual(secondCache.getCacheStats(), { requests: 1, hits: 1, misses: 0 });
     } finally {
         await fs.rm(directory, { recursive: true, force: true });
     }

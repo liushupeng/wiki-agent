@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { RerankerProfile } from './retrievalProfiles.js';
 import { Reranker } from './reranker.js';
+import { CacheStats } from './cacheStats.js';
 
 type ScoreMiss = {
     document: string;
@@ -13,6 +14,7 @@ type ScoreMiss = {
 export class CachedReranker implements Reranker {
     readonly name: string;
     private readonly identity: string;
+    private readonly stats: CacheStats = { requests: 0, hits: 0, misses: 0 };
 
     constructor(
         private readonly inner: Reranker,
@@ -30,12 +32,14 @@ export class CachedReranker implements Reranker {
     }
 
     async score(query: string, documents: string[]): Promise<number[]> {
+        this.stats.requests += documents.length;
         const results: Array<number | undefined> = new Array(documents.length);
         const missesByFile = new Map<string, ScoreMiss>();
         await Promise.all(documents.map(async (document, index) => {
             const file = this.cachePath(query, document);
             const cached = await readScore(file);
             if (cached !== undefined) {
+                this.stats.hits += 1;
                 results[index] = cached;
                 return;
             }
@@ -45,6 +49,7 @@ export class CachedReranker implements Reranker {
         }));
 
         const misses = [...missesByFile.values()];
+        this.stats.misses += misses.reduce((sum, miss) => sum + miss.indexes.length, 0);
         if (misses.length > 0) {
             const generated = await this.inner.score(query, misses.map(miss => miss.document));
             if (generated.length !== misses.length) {
@@ -59,6 +64,10 @@ export class CachedReranker implements Reranker {
         }
 
         return results as number[];
+    }
+
+    getCacheStats(): CacheStats {
+        return { ...this.stats };
     }
 
     private cachePath(query: string, document: string): string {

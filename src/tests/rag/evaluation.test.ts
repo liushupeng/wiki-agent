@@ -8,6 +8,7 @@ import {
     createVectorEvalRetriever,
     evaluateRetriever,
     scoreQuestion,
+    summarizeRetrievalMetrics,
     validateEvaluationQuestionBank
 } from '../../rag/evaluation.js';
 import type { EvalQuestion } from '../../rag/evaluation.js';
@@ -136,6 +137,69 @@ test('scoreQuestion records the expected source rank at every available pipeline
         contentRank: null,
         bestTermCoverage: 0
     });
+});
+
+test('summarizeRetrievalMetrics reports deep recall, stage changes, latency, counts, and caches', () => {
+    const wrong = { ...matches[0], id: 'wrong#1', source: 'wrong.md', text: 'irrelevant' };
+    const expected = { ...matches[0], id: 'agent#1', source: 'agent.md', text: 'Agent retrieval planning' };
+    const incomplete = { ...expected, id: 'agent#2', text: 'Agent' };
+    const recovered = scoreQuestion({
+        question: 'why use rag tools?',
+        expectedSource: 'agent.md',
+        expectedTerms: ['retrieval', 'planning']
+    }, [expected], Array.from({ length: 20 }, (_, index) => ({ ...wrong, id: `wrong#${index}` })), {
+        fusion: [...Array.from({ length: 20 }, (_, index) => ({ ...wrong, id: `wrong#${index}` })), expected],
+        chunkRerank: [incomplete],
+        sourceLocal: [expected],
+        anchorSelection: [incomplete],
+        final: [expected]
+    });
+    recovered.retrievalDiagnostics = {
+        elapsedMs: {
+            sparse: 10,
+            dense: 20,
+            candidateCache: 2,
+            fusion: 1,
+            chunkRerank: 30,
+            sourceLocal: 40,
+            evidenceAssembly: 5,
+            evidenceRerank: 0,
+            total: 93
+        },
+        candidateCounts: {
+            sparse: 100,
+            dense: 100,
+            fusion: 100,
+            chunkRerank: 100,
+            sourceLocalRerankDocuments: 80,
+            sourceLocal: 20,
+            anchors: 5,
+            evidenceAssembly: 5,
+            evidenceRerank: 0,
+            final: 5
+        },
+        cache: {
+            candidates: { requests: 1, hits: 1, misses: 0 },
+            reranker: { requests: 180, hits: 150, misses: 30 }
+        }
+    };
+    const missing = scoreQuestion({
+        question: 'missing',
+        expectedSource: 'agent.md',
+        expectedTerms: ['retrieval']
+    }, [wrong], [wrong], { fusion: [wrong], final: [wrong] });
+
+    const metrics = summarizeRetrievalMetrics([recovered, missing], 5);
+
+    assert.equal(metrics.candidateRecallAtK, 0);
+    assert.equal(metrics.candidateRecallAt100, 0.5);
+    assert.equal(metrics.recoveredBetween20And100, 1);
+    assert.equal(metrics.stillMissingAt100, 1);
+    assert.deepEqual(metrics.stageTransitions.sourceLocal, { recovered: 1, regressed: 0 });
+    assert.deepEqual(metrics.stageTransitions.anchorSelection, { recovered: 0, regressed: 1 });
+    assert.equal(metrics.performance?.elapsedMs.sourceLocal.p95, 40);
+    assert.equal(metrics.performance?.candidateCounts.sourceLocalRerankDocuments.mean, 80);
+    assert.equal(metrics.performance?.cache.reranker.hitRate, 0.8333);
 });
 
 test('evaluateRetriever searches vector queries and summarizes accuracy', async () => {

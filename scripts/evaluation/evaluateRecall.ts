@@ -354,7 +354,7 @@ function printSummary(
     probes: Record<string, Record<string, ProbeSummary>> = {}
 ): void {
     console.log('[recall] 汇总：');
-    console.log('[recall] 指标口径：Recall@20 为重排前候选池；Hit@5、Hit@1、MRR@5 为最终 Top-5 排序结果。');
+    console.log('[recall] 指标口径：Recall@20/100 为融合候选池；Hit@5、Hit@1、MRR@5 为最终 Top-5 排序结果；阶段恢复/回退按 60% 目标关键词覆盖率统计。');
     for (const [variant, result] of Object.entries(results)) {
         const summaries: EvalSummary[] = isComparisonSummary(result)
             ? [result.vector, result.grep]
@@ -366,10 +366,31 @@ function printSummary(
                 `宽松通过 ${summary.passed}/${summary.total}`,
                 `严格通过 ${summary.strictPassed}/${summary.total}`,
                 `Recall@20 ${formatRatio(metrics?.candidateRecallAtK)}`,
+                `Recall@100 ${formatRatio(metrics?.candidateRecallAt100)}`,
+                `20→100 恢复 ${metrics?.recoveredBetween20And100 ?? 'n/a'}`,
+                `Missing@100 ${metrics?.stillMissingAt100 ?? 'n/a'}`,
                 `Hit@5 ${formatRatio(metrics?.recallAtK)}`,
                 `Hit@1 ${formatRatio(metrics?.hitAt1)}`,
                 `MRR@5 ${formatRatio(metrics?.mrr)}`
             ].join(' | '));
+            if (metrics?.stageTransitions) {
+                const transitions = Object.entries(metrics.stageTransitions)
+                    .filter(([, value]) => value.recovered || value.regressed)
+                    .map(([stage, value]) => `${stage} +${value.recovered}/-${value.regressed}`);
+                if (transitions.length) console.log(`    阶段内容恢复/回退：${transitions.join(' | ')}`);
+            }
+            if (metrics?.performance) {
+                const elapsed = metrics.performance.elapsedMs;
+                const stages = ['sparse', 'dense', 'candidateCache', 'fusion', 'chunkRerank', 'sourceLocal', 'evidenceAssembly', 'evidenceRerank', 'total']
+                    .filter(stage => elapsed[stage])
+                    .map(stage => `${stage} p50/p95 ${formatElapsed(elapsed[stage]!.p50)}/${formatElapsed(elapsed[stage]!.p95)}`);
+                console.log(`    阶段耗时：${stages.join(' | ')}`);
+                const candidateCache = metrics.performance.cache.candidates;
+                const rerankerCache = metrics.performance.cache.reranker;
+                console.log(`    缓存：候选 ${candidateCache.hits}/${candidateCache.requests} (${formatRatio(candidateCache.hitRate)}) | Reranker ${rerankerCache.hits}/${rerankerCache.requests} (${formatRatio(rerankerCache.hitRate)})`);
+                const counts = metrics.performance.candidateCounts;
+                console.log(`    文档数（均值/p95）：${Object.entries(counts).map(([stage, value]) => `${stage} ${value.mean}/${value.p95}`).join(' | ')}`);
+            }
         }
     }
     for (const [variant, retrievers] of Object.entries(probes)) {

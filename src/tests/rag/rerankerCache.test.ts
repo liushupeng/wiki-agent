@@ -25,14 +25,16 @@ test('CachedReranker reuses scores and deduplicates repeated pairs', async () =>
     };
 
     try {
-        const first = await new CachedReranker(inner, profile, directory)
-            .score('query', ['same', 'same', 'different']);
-        const second = await new CachedReranker(inner, profile, directory)
-            .score('query', ['same', 'different']);
+        const firstCache = new CachedReranker(inner, profile, directory);
+        const first = await firstCache.score('query', ['same', 'same', 'different']);
+        const secondCache = new CachedReranker(inner, profile, directory);
+        const second = await secondCache.score('query', ['same', 'different']);
 
         assert.deepEqual(first, [0.4, 0.4, 0.9]);
         assert.deepEqual(second, [0.4, 0.9]);
         assert.equal(scoredDocuments, 2);
+        assert.deepEqual(firstCache.getCacheStats(), { requests: 3, hits: 0, misses: 3 });
+        assert.deepEqual(secondCache.getCacheStats(), { requests: 2, hits: 2, misses: 0 });
     } finally {
         await fs.rm(directory, { recursive: true, force: true });
     }

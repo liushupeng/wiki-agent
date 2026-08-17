@@ -638,7 +638,7 @@ RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-metadata-source-aggregate-v1
 RAG_INDEX_VARIANT=raw-only
 ```
 
-检索评测不调用 LLM，可比较候选召回、Hit@1、Recall@K、MRR（没有人工分级相关性时不会伪造 nDCG）。无参数或 `--help` 只显示帮助；其他合法参数会实际运行：
+检索评测不调用 LLM，可比较 Recall@20、Recall@100、Hit@1、Hit@5、MRR，并统计阶段内容恢复/回退、各阶段候选规模、p50/p95 耗时及候选/Reranker 缓存命中率（没有人工分级相关性时不会伪造 nDCG）。无参数或 `--help` 只显示帮助；其他合法参数会实际运行：
 
 ```powershell
 npm run eval:recall -- -- --variant both --retriever both
@@ -650,7 +650,7 @@ npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggr
 
 `--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。`--probe-candidate-limit <N>` 会仅对正常 Top-20 候选未命中的题追加深度探测，N 必须大于 20。`--question-ids <id1,id2,...>` 可只重跑失败题或指定样本，适合低成本生成排序诊断。召回报告会记录每个变体的实际 Wiki 优先策略、题目范围和 probe 汇总，并写入 `var/evals/recall/<timestamp>/report.json`。
 
-每次 Recall 评测还会在同一输出目录写入一条 `eval.recall` JSONL Trace。其 `rag.search` 子 span 与在线检索使用相同的候选—重排诊断字段：query、profile、variant、candidate limit、Wiki 优先策略、Top-20 候选和最终 Top-5 结果；评测事件补充金标命中、关键词覆盖率、失败类型，以及正确来源在 sparse、dense、RRF、Chunk Reranker、Evidence 组装、Evidence Reranker 和最终来源限额后的逐阶段 rank。`report.json` 的逐题结果同时记录 `stageRanks` 和 `stageDiagnostics`；后者包含各阶段的来源 rank、满足关键词阈值的内容 rank，以及正确来源中的最佳关键词覆盖率，可区分“来源排错”和“正确来源内片段不完整”。报告保留原有的跨 Top-5 合并关键词口径作为“宽松通过”，并新增只允许正确来源贡献关键词的 `sourceTermScore` 和“严格通过”，避免无关文档补齐关键词造成假阳性。终端仅显示 Trace 路径，Trace 是诊断原始事实，报告是其汇总视图。
+每次 Recall 评测还会在同一输出目录写入一条 `eval.recall` JSONL Trace。其 `rag.search` 子 span 与在线检索使用相同的候选—重排诊断字段：query、profile、variant、candidate limit、Wiki 优先策略、Top-20 候选和最终 Top-5 结果；评测事件补充金标命中、关键词覆盖率、失败类型，以及正确来源在 sparse、dense、RRF、Chunk Reranker、来源内检索、Anchor、Evidence 组装、Evidence Reranker 和最终结果中的逐阶段 rank。`report.json` 的逐题结果记录 `stageRanks`、`stageDiagnostics` 与 `retrievalDiagnostics`；后者新增阶段耗时、实际参与文档数以及单次查询的候选/Reranker 缓存 hit/miss。汇总指标同时给出 Recall@20/100、20→100 恢复数、Missing@100、各阶段按 60% 关键词阈值计算的恢复/回退数，以及耗时和候选规模分布。报告保留原有的跨 Top-5 合并关键词口径作为“宽松通过”，并新增只允许正确来源贡献关键词的 `sourceTermScore` 和“严格通过”，避免无关文档补齐关键词造成假阳性。终端仅显示 Trace 路径，Trace 是诊断原始事实，报告是其汇总视图。
 
 `hybrid-bge-m3-chunk-rerank-v1` 保留 Evidence 扩展但关闭 Evidence Reranker，用于验证二次重排是否造成降级。`hybrid-bge-m3-score-fusion-v1` 对 RRF、Chunk Reranker 和 Evidence Reranker 分数分别做 min-max 归一化后线性融合；当前实验权重为 Chunk Reranker 0.8、Evidence Reranker 0.6，既保留语义重排的主导作用，也防止强候选被单阶段分数直接淘汰。现有 `hybrid-bge-m3-rerank-v1` 保持原行为，继续作为对照组。
 
@@ -664,7 +664,7 @@ npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggr
 
 `hybrid-bge-m3-metadata-source-aggregate-v1` 仍保持每个候选来源一个 Anchor，但把该来源的全局最佳 chunk 与来源内最佳 chunk 聚合到同一 Anchor。它保留来源内检索带来的答案片段，同时避免来源内排序偶尔选错 chunk 时丢失已经由全局 Reranker 找到的正确内容。
 
-评测中的“宽松通过”要求最终 Top-5 命中预期来源，且全部 Top-5 合并后覆盖至少60% 的预期关键词；“严格通过”同样要求命中预期来源，但关键词只能由预期来源中的结果贡献，避免无关文档拼出答案。开发集的通过率和检索指标以完整的 50 题为分母。`Recall@20` 只检查重排前 RRF 前 20 个候选中的来源覆盖，并不限制后续 Chunk Reranker 使用的更深候选池，因此它可以是 49/50，而最终 Top-5 仍通过 50/50。
+评测中的“宽松通过”要求最终 Top-5 命中预期来源，且全部 Top-5 合并后覆盖至少60% 的预期关键词；“严格通过”同样要求命中预期来源，但关键词只能由预期来源中的结果贡献，避免无关文档拼出答案。开发集的通过率和检索指标以完整的 50 题为分母。`Recall@20` 检查重排前 RRF 前 20 个候选中的来源覆盖，`Recall@100` 检查完整 RRF 候选池前 100 个；两者差值及 20→100 恢复数能区分“浅层候选未命中”和“深层召回仍缺失”。它们不限制后续 Chunk Reranker 使用的候选深度，因此 Recall@20 可以是 49/50，而最终 Top-5 仍通过 50/50。
 
 ### 独立 Holdout
 

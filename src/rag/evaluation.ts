@@ -4,7 +4,7 @@ import { prioritizeWikiMatches } from './ranking.js';
 import { KnowledgeSourceRoot, sourceWithPrefix } from './sourceRoots.js';
 import { SearchResult, TextChunk } from './types.js';
 import { IndexRuntime } from './indexRuntime.js';
-import { Retriever } from './retrievalPipeline.js';
+import { Retriever, RetrievalRun } from './retrievalPipeline.js';
 
 export type EvalQuestion = {
     id?: string;
@@ -39,6 +39,9 @@ export type EvalQuestionResult = {
         contentRank: number | null;
         bestTermCoverage: number;
     }>>;
+    retrievalDiagnostics?: RetrievalRun['diagnostics'] & {
+        elapsedMs: RetrievalRun['elapsedMs'];
+    };
 };
 
 export type RetrievalStageName =
@@ -82,6 +85,7 @@ export type EvalRetriever = {
         candidates: SearchResult[];
         matches: SearchResult[];
         stages?: EvalRetrievalStages;
+        diagnostics?: EvalQuestionResult['retrievalDiagnostics'];
     }>;
 };
 
@@ -203,7 +207,11 @@ export function createPipelineEvalRetriever(retriever: Retriever): EvalRetriever
             return {
                 candidates: toCandidates(run, candidateK),
                 matches: toMatches(run),
-                stages: toStages(run)
+                stages: toStages(run),
+                diagnostics: {
+                    ...run.diagnostics,
+                    elapsedMs: run.elapsedMs
+                }
             };
         }
     };
@@ -280,7 +288,10 @@ export async function evaluateRetriever(
             : await retriever.search(item, candidateK));
         const matches = evaluated?.matches
             ?? (retriever.rerank ? retriever.rerank(candidates, topK) : candidates.slice(0, topK));
-        const result = scoreQuestion(item, matches, candidates, evaluated?.stages);
+        const result = {
+            ...scoreQuestion(item, matches, candidates, evaluated?.stages),
+            ...(evaluated?.diagnostics ? { retrievalDiagnostics: evaluated.diagnostics } : {})
+        };
         results.push(result);
         await onDecision?.({
             question: item,
@@ -441,19 +452,144 @@ function termCoverage(text: string, expectedTerms: string[]): number {
 
 export type RetrievalMetrics = {
     candidateRecallAtK: number;
+    candidateRecallAt100: number;
+    recoveredBetween20And100: number;
+    stillMissingAt100: number;
     hitAt1: number;
     recallAtK: number;
     mrr: number;
+    stageTransitions: Partial<Record<RetrievalStageName, {
+        recovered: number;
+        regressed: number;
+    }>>;
+    performance?: {
+        samples: number;
+        elapsedMs: Record<string, DistributionSummary>;
+        candidateCounts: Record<string, DistributionSummary>;
+        cache: {
+            candidates: CacheSummary;
+            reranker: CacheSummary;
+        };
+    };
 };
 
 export function summarizeRetrievalMetrics(results: EvalQuestionResult[], _topK: number): RetrievalMetrics {
-    if (results.length === 0) return { candidateRecallAtK: 0, hitAt1: 0, recallAtK: 0, mrr: 0 };
+    if (results.length === 0) {
+        return {
+            candidateRecallAtK: 0,
+            candidateRecallAt100: 0,
+            recoveredBetween20And100: 0,
+            stillMissingAt100: 0,
+            hitAt1: 0,
+            recallAtK: 0,
+            mrr: 0,
+            stageTransitions: {}
+        };
+    }
     const ratio = (predicate: (result: EvalQuestionResult) => boolean) =>
         Number((results.filter(predicate).length / results.length).toFixed(4));
+    const hitAt100 = (result: EvalQuestionResult) => {
+        const fusionRank = result.stageDiagnostics?.fusion?.sourceRank;
+        return fusionRank === undefined ? result.candidateSourceHit === true : fusionRank !== null && fusionRank <= 100;
+    };
+    const performance = summarizePerformance(results);
     return {
         candidateRecallAtK: ratio(result => result.candidateSourceHit === true),
+        candidateRecallAt100: ratio(hitAt100),
+        recoveredBetween20And100: results.filter(result => result.candidateSourceHit === false && hitAt100(result)).length,
+        stillMissingAt100: results.filter(result => !hitAt100(result)).length,
         hitAt1: ratio(result => result.hitAt1 === true),
         recallAtK: ratio(result => result.sourceHit),
-        mrr: Number((results.reduce((sum, result) => sum + (result.reciprocalRank ?? 0), 0) / results.length).toFixed(4))
+        mrr: Number((results.reduce((sum, result) => sum + (result.reciprocalRank ?? 0), 0) / results.length).toFixed(4)),
+        stageTransitions: summarizeStageTransitions(results),
+        ...(performance ? { performance } : {})
+    };
+}
+
+type DistributionSummary = {
+    mean: number;
+    p50: number;
+    p95: number;
+    max: number;
+};
+
+type CacheSummary = {
+    requests: number;
+    hits: number;
+    misses: number;
+    hitRate: number;
+};
+
+const STAGE_ORDER: RetrievalStageName[] = [
+    'fusion',
+    'chunkRerank',
+    'sourceLocal',
+    'anchorSelection',
+    'evidenceAssembly',
+    'evidenceRerank',
+    'final'
+];
+
+function summarizeStageTransitions(
+    results: EvalQuestionResult[]
+): RetrievalMetrics['stageTransitions'] {
+    const totals: RetrievalMetrics['stageTransitions'] = {};
+    for (const result of results) {
+        let previousCoverage: number | undefined;
+        for (const stage of STAGE_ORDER) {
+            const coverage = result.stageDiagnostics?.[stage]?.bestTermCoverage;
+            if (coverage === undefined) continue;
+            if (previousCoverage !== undefined) {
+                const transition = totals[stage] ?? { recovered: 0, regressed: 0 };
+                if (previousCoverage < 0.6 && coverage >= 0.6) transition.recovered += 1;
+                if (previousCoverage >= 0.6 && coverage < 0.6) transition.regressed += 1;
+                totals[stage] = transition;
+            }
+            previousCoverage = coverage;
+        }
+    }
+    return totals;
+}
+
+function summarizePerformance(
+    results: EvalQuestionResult[]
+): NonNullable<RetrievalMetrics['performance']> | undefined {
+    const diagnostics = results.flatMap(result => result.retrievalDiagnostics ? [result.retrievalDiagnostics] : []);
+    if (!diagnostics.length) return undefined;
+    const summarizeFields = (values: Array<Record<string, number>>) =>
+        Object.fromEntries(Array.from(new Set(values.flatMap(value => Object.keys(value)))).map(key => [
+            key,
+            summarizeDistribution(values.map(value => value[key] ?? 0))
+        ]));
+    const cache = (name: 'candidates' | 'reranker'): CacheSummary => {
+        const requests = diagnostics.reduce((sum, item) => sum + item.cache[name].requests, 0);
+        const hits = diagnostics.reduce((sum, item) => sum + item.cache[name].hits, 0);
+        const misses = diagnostics.reduce((sum, item) => sum + item.cache[name].misses, 0);
+        return {
+            requests,
+            hits,
+            misses,
+            hitRate: requests ? Number((hits / requests).toFixed(4)) : 0
+        };
+    };
+    return {
+        samples: diagnostics.length,
+        elapsedMs: summarizeFields(diagnostics.map(item => item.elapsedMs)),
+        candidateCounts: summarizeFields(diagnostics.map(item => item.candidateCounts)),
+        cache: {
+            candidates: cache('candidates'),
+            reranker: cache('reranker')
+        }
+    };
+}
+
+function summarizeDistribution(values: number[]): DistributionSummary {
+    const sorted = [...values].sort((left, right) => left - right);
+    const percentile = (ratio: number) => sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)] ?? 0;
+    return {
+        mean: Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2)),
+        p50: Number(percentile(0.5).toFixed(2)),
+        p95: Number(percentile(0.95).toFixed(2)),
+        max: Number((sorted.at(-1) ?? 0).toFixed(2))
     };
 }

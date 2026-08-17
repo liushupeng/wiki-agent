@@ -11,6 +11,7 @@ import {
 import { Reranker, TransformersJsReranker } from './reranker.js';
 import { CachedReranker } from './rerankerCache.js';
 import { RetrievalCandidateCache } from './retrievalCandidateCache.js';
+import { CacheStats, diffCacheStats, readCacheStats } from './cacheStats.js';
 
 export type CandidateHit = TextChunk & {
     sparseRank?: number;
@@ -47,11 +48,31 @@ export type RetrievalRun = {
     elapsedMs: {
         sparse: number;
         dense: number;
+        candidateCache: number;
         fusion: number;
         chunkRerank: number;
         sourceLocal: number;
+        evidenceAssembly: number;
         evidenceRerank: number;
         total: number;
+    };
+    diagnostics: {
+        candidateCounts: {
+            sparse: number;
+            dense: number;
+            fusion: number;
+            chunkRerank: number;
+            sourceLocalRerankDocuments: number;
+            sourceLocal: number;
+            anchors: number;
+            evidenceAssembly: number;
+            evidenceRerank: number;
+            final: number;
+        };
+        cache: {
+            candidates: CacheStats;
+            reranker: CacheStats;
+        };
     };
 };
 
@@ -211,6 +232,7 @@ function createSingleRetriever(
         profile,
         async retrieve(query, options = {}) {
             const totalStarted = performance.now();
+            const rerankerCacheBefore = readCacheStats(reranker);
             const started = performance.now();
             const limit = options.candidateLimit ?? profile.candidateLimit;
             const results = await index.search(query, limit);
@@ -250,11 +272,31 @@ function createSingleRetriever(
                 elapsedMs: {
                     sparse: index.profile.embedder.type === 'bm25' ? elapsed : 0,
                     dense: index.profile.embedder.type === 'bm25' ? 0 : elapsed,
+                    candidateCache: 0,
                     fusion: 0,
                     chunkRerank: rerankElapsed,
                     sourceLocal: 0,
+                    evidenceAssembly: 0,
                     evidenceRerank: 0,
                     total: performance.now() - totalStarted
+                },
+                diagnostics: {
+                    candidateCounts: {
+                        sparse: index.profile.embedder.type === 'bm25' ? candidates.length : 0,
+                        dense: index.profile.embedder.type === 'bm25' ? 0 : candidates.length,
+                        fusion: candidates.length,
+                        chunkRerank: reranker ? candidates.length : 0,
+                        sourceLocalRerankDocuments: 0,
+                        sourceLocal: 0,
+                        anchors: rerankedCandidates.length,
+                        evidenceAssembly: evidences.length,
+                        evidenceRerank: 0,
+                        final: evidences.length
+                    },
+                    cache: {
+                        candidates: { requests: 0, hits: 0, misses: 0 },
+                        reranker: diffCacheStats(readCacheStats(reranker), rerankerCacheBefore)
+                    }
                 }
             };
         }
@@ -284,20 +326,32 @@ function createHybridRetriever(
         profile,
         async retrieve(query, options = {}) {
             const totalStarted = performance.now();
+            const candidateCacheBefore = readCacheStats(candidateCache);
+            const rerankerCacheBefore = readCacheStats(reranker);
             const perRetrieverLimit = options.candidateLimit ?? profile.candidateLimitPerRetriever;
             const retrievalStarted = performance.now();
+            let sparseElapsed = 0;
+            let denseElapsed = 0;
+            const loadCandidates = async () => {
+                const [sparseResults, denseResults] = await Promise.all([
+                    (async () => {
+                        const started = performance.now();
+                        const results = await sparse.search(query, perRetrieverLimit);
+                        sparseElapsed = performance.now() - started;
+                        return results;
+                    })(),
+                    (async () => {
+                        const started = performance.now();
+                        const results = await dense.search(query, perRetrieverLimit);
+                        denseElapsed = performance.now() - started;
+                        return results;
+                    })()
+                ]);
+                return { sparse: sparseResults, dense: denseResults };
+            };
             const snapshot = candidateCache
-                ? await candidateCache.getOrLoad(query, perRetrieverLimit, async () => {
-                    const [sparseResults, denseResults] = await Promise.all([
-                        sparse.search(query, perRetrieverLimit),
-                        dense.search(query, perRetrieverLimit)
-                    ]);
-                    return { sparse: sparseResults, dense: denseResults };
-                })
-                : await Promise.all([
-                    sparse.search(query, perRetrieverLimit),
-                    dense.search(query, perRetrieverLimit)
-                ]).then(([sparseResults, denseResults]) => ({ sparse: sparseResults, dense: denseResults }));
+                ? await candidateCache.getOrLoad(query, perRetrieverLimit, loadCandidates)
+                : await loadCandidates();
             const sparseRaw = snapshot.sparse;
             const denseRaw = snapshot.dense;
             const retrievalElapsed = performance.now() - retrievalStarted;
@@ -311,8 +365,10 @@ function createHybridRetriever(
             const chunkStarted = performance.now();
             let rerankedCandidates = fusedCandidates;
             const chunkRerankEnabled = profile.stages?.chunkRerank ?? Boolean(reranker);
+            let chunkRerankDocuments = 0;
             if (reranker && chunkRerankEnabled) {
                 const input = fusedCandidates.slice(0, profile.chunkRerankLimit ?? fusedCandidates.length);
+                chunkRerankDocuments = input.length;
                 const scores = await reranker.score(query, input.map(item =>
                     formatRerankDocument(item, profile.rerankDocumentMode)
                 ));
@@ -334,7 +390,7 @@ function createHybridRetriever(
             const chunkElapsed = performance.now() - chunkStarted;
 
             const sourceLocalStarted = performance.now();
-            const sourceLocalCandidates = reranker && profile.sourceLocalSearch
+            const sourceLocalResult = reranker && profile.sourceLocalSearch
                 ? await retrieveSourceLocalCandidates(
                     query,
                     fusedCandidates,
@@ -343,7 +399,8 @@ function createHybridRetriever(
                     reranker,
                     profile
                 )
-                : [];
+                : { candidates: [], rerankDocuments: 0 };
+            const sourceLocalCandidates = sourceLocalResult.candidates;
             const anchorCandidates = profile.sourceLocalSearch?.anchorMode === 'source-local-only'
                 ? sourceLocalCandidates
                 : profile.sourceLocalSearch?.anchorMode === 'source-aggregate'
@@ -361,9 +418,11 @@ function createHybridRetriever(
                 sparse,
                 evidenceExpandEnabled ? profile.contextWindow ?? 0 : 0
             );
+            const evidenceAssemblyElapsed = performance.now() - evidenceStarted;
             let rerankedEvidences = assembledEvidences;
             const evidenceRerankEnabled = profile.stages?.evidenceRerank
                 ?? Boolean(reranker && evidenceExpandEnabled);
+            const evidenceRerankStarted = performance.now();
             if (reranker && evidenceRerankEnabled) {
                 const scores = await reranker.score(query, assembledEvidences.map(item =>
                     formatRerankDocument(item, profile.rerankDocumentMode)
@@ -392,7 +451,7 @@ function createHybridRetriever(
             } else {
                 evidences = rerankedEvidences.slice(0, options.topK ?? 5);
             }
-            const evidenceElapsed = performance.now() - evidenceStarted;
+            const evidenceRerankElapsed = performance.now() - evidenceRerankStarted;
 
             return {
                 profile: profile.id,
@@ -407,13 +466,33 @@ function createHybridRetriever(
                 rerankedEvidences,
                 evidences,
                 elapsedMs: {
-                    sparse: retrievalElapsed,
-                    dense: retrievalElapsed,
+                    sparse: sparseElapsed,
+                    dense: denseElapsed,
+                    candidateCache: Math.max(0, retrievalElapsed - Math.max(sparseElapsed, denseElapsed)),
                     fusion: fusionElapsed,
                     chunkRerank: chunkElapsed,
                     sourceLocal: sourceLocalElapsed,
-                    evidenceRerank: evidenceElapsed,
+                    evidenceAssembly: evidenceAssemblyElapsed,
+                    evidenceRerank: reranker && evidenceRerankEnabled ? evidenceRerankElapsed : 0,
                     total: performance.now() - totalStarted
+                },
+                diagnostics: {
+                    candidateCounts: {
+                        sparse: sparseCandidates.length,
+                        dense: denseCandidates.length,
+                        fusion: fusedCandidates.length,
+                        chunkRerank: chunkRerankDocuments,
+                        sourceLocalRerankDocuments: sourceLocalResult.rerankDocuments,
+                        sourceLocal: sourceLocalCandidates.length,
+                        anchors: anchors.length,
+                        evidenceAssembly: assembledEvidences.length,
+                        evidenceRerank: reranker && evidenceRerankEnabled ? assembledEvidences.length : 0,
+                        final: evidences.length
+                    },
+                    cache: {
+                        candidates: diffCacheStats(readCacheStats(candidateCache), candidateCacheBefore),
+                        reranker: diffCacheStats(readCacheStats(reranker), rerankerCacheBefore)
+                    }
                 }
             };
         }
@@ -427,7 +506,7 @@ async function retrieveSourceLocalCandidates(
     lookup: Pick<IndexRuntime, 'findBySource'>,
     reranker: Reranker,
     profile: HybridRetrievalProfile
-): Promise<CandidateHit[]> {
+): Promise<{ candidates: CandidateHit[]; rerankDocuments: number }> {
     const options = profile.sourceLocalSearch!;
     const sourceAnchors = new Map<string, CandidateHit>();
     for (const candidate of fusedCandidates) {
@@ -449,7 +528,7 @@ async function retrieveSourceLocalCandidates(
         )
             .map(chunk => ({ sourceKey, anchor, chunk }));
     }))).flat();
-    if (!localInputs.length) return [];
+    if (!localInputs.length) return { candidates: [], rerankDocuments: 0 };
 
     const scores = await reranker.score(query, localInputs.map(item =>
         formatRerankDocument(item.chunk, profile.rerankDocumentMode)
@@ -478,9 +557,12 @@ async function retrieveSourceLocalCandidates(
     const selected = [...bySource.values()].flatMap(items =>
         items.sort(compareRankedCandidates).slice(0, options.chunksPerSource)
     );
-    return options.rankingMode === 'source-preserving'
-        ? preserveSourceRanking(selected, rerankedCandidates)
-        : selected.sort(compareRankedCandidates);
+    return {
+        candidates: options.rankingMode === 'source-preserving'
+            ? preserveSourceRanking(selected, rerankedCandidates)
+            : selected.sort(compareRankedCandidates),
+        rerankDocuments: localInputs.length
+    };
 }
 
 function mergeRankedCandidates(primary: CandidateHit[], supplemental: CandidateHit[]): CandidateHit[] {
