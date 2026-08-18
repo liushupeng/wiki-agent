@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import OpenAI from 'openai';
+import type { MemoryProposal, MemoryProposalStatus } from './memoryProposal.js';
+import { transitionMemoryProposal } from './memoryProposal.js';
 
 type MemoryMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type LongTermMemoryKind = 'preference' | 'constraint' | 'fact';
@@ -48,6 +50,10 @@ type LongTermMemoryRow = {
     updated_at: string;
 };
 
+type MemoryProposalRow = {
+    payload: string;
+};
+
 /**
  * 可清理的本地会话与长期记忆存储。
  *
@@ -90,6 +96,27 @@ export class MemoryStore {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 expires_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS memory_proposals (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                session_id TEXT,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_proposals_status_updated
+            ON memory_proposals(status, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS memory_proposal_events (
+                proposal_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                at TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (proposal_id, status, at),
+                FOREIGN KEY (proposal_id) REFERENCES memory_proposals(id) ON DELETE CASCADE
             );
         `);
     }
@@ -267,6 +294,78 @@ export class MemoryStore {
         return result.changes > 0;
     }
 
+    saveMemoryProposal(proposal: MemoryProposal): MemoryProposal {
+        this.database.prepare(`
+            INSERT INTO memory_proposals (id, status, kind, content, session_id, payload, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                status = excluded.status,
+                kind = excluded.kind,
+                content = excluded.content,
+                session_id = excluded.session_id,
+                payload = excluded.payload,
+                updated_at = excluded.updated_at
+        `).run(
+            proposal.id,
+            proposal.status,
+            proposal.kind,
+            proposal.content,
+            proposal.sessionId ?? null,
+            JSON.stringify(proposal),
+            proposal.createdAt,
+            proposal.updatedAt
+        );
+        this.database.prepare(`
+            INSERT OR IGNORE INTO memory_proposal_events (proposal_id, status, at, payload)
+            VALUES (?, ?, ?, ?)
+        `).run(proposal.id, proposal.status, proposal.updatedAt, JSON.stringify(proposal));
+        return proposal;
+    }
+
+    getMemoryProposal(proposalId: string): MemoryProposal | undefined {
+        const row = this.database.prepare('SELECT payload FROM memory_proposals WHERE id = ?')
+            .get(proposalId) as MemoryProposalRow | undefined;
+        return row ? parseMemoryProposal(row.payload) : undefined;
+    }
+
+    listMemoryProposals(status?: MemoryProposalStatus): MemoryProposal[] {
+        const rows = (status
+            ? this.database.prepare(`
+                SELECT payload FROM memory_proposals WHERE status = ? ORDER BY updated_at DESC
+            `).all(status)
+            : this.database.prepare(`
+                SELECT payload FROM memory_proposals ORDER BY updated_at DESC
+            `).all()) as MemoryProposalRow[];
+        return rows.flatMap(row => {
+            const proposal = parseMemoryProposal(row.payload);
+            return proposal ? [proposal] : [];
+        });
+    }
+
+    commitApprovedProposal(proposalId: string): { proposal: MemoryProposal; memory: LongTermMemoryItem } {
+        this.database.exec('BEGIN IMMEDIATE');
+        try {
+            const proposal = this.getMemoryProposal(proposalId);
+            if (!proposal) throw new Error(`memory proposal not found: ${proposalId}`);
+            if (proposal.status !== 'approved') {
+                throw new Error(`only approved proposal can be committed; current status is ${proposal.status}`);
+            }
+            const memory = this.remember(proposal.content, proposal.kind);
+            const committed = transitionMemoryProposal(
+                proposal,
+                'committed',
+                { committedMemoryId: memory.id },
+                this.now
+            );
+            this.saveMemoryProposal(committed);
+            this.database.exec('COMMIT');
+            return { proposal: committed, memory };
+        } catch (error) {
+            this.database.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
     prune(options: { sessionRetentionDays: number; journalRetentionDays: number }): void {
         const sessionCutoff = this.daysAgo(options.sessionRetentionDays);
         this.database.prepare('DELETE FROM sessions WHERE updated_at < ?').run(sessionCutoff);
@@ -317,6 +416,18 @@ function isMemoryMessage(value: unknown): value is MemoryMessage {
     return typeof value === 'object'
         && value !== null
         && typeof (value as { role?: unknown }).role === 'string';
+}
+
+function parseMemoryProposal(payload: string): MemoryProposal | undefined {
+    try {
+        const value = JSON.parse(payload);
+        return value && typeof value === 'object' && typeof value.id === 'string'
+            && typeof value.status === 'string' && typeof value.content === 'string'
+            ? value as MemoryProposal
+            : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 function buildSessionPreview(messages: MemoryMessage[], maxChars: number): string {

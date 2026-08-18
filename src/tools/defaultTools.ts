@@ -6,6 +6,8 @@ import { GlobSearchTool, GrepSearchTool } from './searchTool.js';
 import { ShellExecuteTool } from './shellTool.js';
 import { LoadSkillTool } from './skillTool.js';
 import { LoadToolGroupTool, ToolExposureController } from './exposure.js';
+import { ProposeMemoryTool } from './memoryTool.js';
+import type { MemoryProposalService } from './memoryTool.js';
 
 export type McpToolCoverageInfo = {
     remoteToolName: string;
@@ -15,6 +17,7 @@ export type CreateDefaultToolsOptions = {
     skipToolNames?: Iterable<string>;
     exposureController?: ToolExposureController;
     rag?: RagToolOptions;
+    memoryProposalService?: MemoryProposalService;
 };
 
 const LOCAL_TOOLS_COVERED_BY_MCP_REMOTE_TOOL: Record<string, string[]> = {
@@ -52,6 +55,7 @@ export async function createDefaultTools(options: CreateDefaultToolsOptions = {}
         new ReadNoteTool(options.rag),
         new RelatedNotesTool(options.rag),
         new LoadSkillTool(),
+        ...(options.memoryProposalService ? [new ProposeMemoryTool(options.memoryProposalService)] : []),
         new LoadToolGroupTool(exposureController),
         new GitStatusTool(),
         new GitDiffTool(),

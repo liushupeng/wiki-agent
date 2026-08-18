@@ -13,6 +13,7 @@ import { parseJsonSafely } from './utils/json.js';
 import { redactSensitiveValues, writePromptArtifact } from './trace/artifacts.js';
 import { exportTrace } from './trace/export.js';
 import { buildToolObservation } from './context/toolObservation.js';
+import { EvidenceLedger } from './context/evidenceSufficiency.js';
 
 type StepResult =
     | { type: 'continue' }
@@ -27,6 +28,7 @@ const AUTO_TRACE_EXPORT_TIMEOUT_MILLIS = 3_000;
 export class WikiAgent implements IAgent {
     private client: OpenAI;
     private toolExecutor: ToolExecutor;
+    readonly evidenceLedger = new EvidenceLedger();
 
     constructor(
         public config: AgentConfig,
@@ -79,6 +81,7 @@ export class WikiAgent implements IAgent {
      */
     async run(userInstruction: string, onTextChunk: (text: string) => void): Promise<string> {
         this.toolExecutor.resetFailureCounts();
+        this.evidenceLedger.clear();
         // 将用户的原始长指令压入记忆芯片
         this.memory.append({ role: "user", content: userInstruction });
         const telemetry = createTelemetry({
@@ -109,6 +112,16 @@ export class WikiAgent implements IAgent {
 
                     try {
                         const stepResult = await this.runStep(stepCount, runSpan, onTextChunk);
+                        const structuredMemory = this.memory as IMemory & {
+                            recordTrajectoryStep?: (
+                                record: { step: number; outcome: 'continue' | 'final' | 'error'; detail?: string },
+                                evidence: ReturnType<EvidenceLedger['list']>
+                            ) => void;
+                        };
+                        structuredMemory.recordTrajectoryStep?.(
+                            { step: stepCount, outcome: stepResult.type },
+                            this.evidenceLedger.list()
+                        );
                         if (stepResult.type === 'final') {
                             finalOutput = stepResult.content;
                             break;
@@ -386,6 +399,16 @@ export class WikiAgent implements IAgent {
             }
         });
         const observation = await runWithSpan(toolSpan, () => this.toolExecutor.execute(toolName, toolArgsStr));
+        const recordedEvidence = this.evidenceLedger.recordToolResult(toolName, observation);
+        if (recordedEvidence.length > 0) {
+            const assessment = this.evidenceLedger.assess();
+            await toolSpan.addEvent('evidence.sufficiency', {
+                'evidence.state': assessment.state,
+                'evidence.count': assessment.evidenceCount,
+                'evidence.distinct_sources': assessment.distinctSources,
+                'evidence.reasons': JSON.stringify(assessment.reasons)
+            });
+        }
         const observationForContext = buildToolObservation(observation);
         await toolSpan.end({
             status: observation.status === 'success' ? 'ok' : 'error',

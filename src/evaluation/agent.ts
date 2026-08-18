@@ -1,3 +1,6 @@
+import { TaskContract } from './taskContract.js';
+import { VerificationReport } from './trajectoryVerifier.js';
+
 export type AgentEvalQuestion = {
     id: string;
     category?: string;
@@ -8,6 +11,7 @@ export type AgentEvalQuestion = {
     expectedSource?: string;
     expectedSources?: string[];
     expectedTerms?: string[];
+    contract?: TaskContract;
 };
 
 export function selectAgentEvalQuestions(
@@ -112,6 +116,7 @@ export type AgentEvalResult = {
     sourceEvidence: string[];
     passed: boolean;
     trace: AgentTraceMetrics;
+    verification?: VerificationReport;
 };
 
 const RAG_TOOL_NAMES = new Set(['search_notes', 'grep_notes', 'read_note', 'related_notes']);
@@ -188,7 +193,12 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
     };
 }
 
-export function scoreAgentAnswer(question: AgentEvalQuestion, answer: string, trace: AgentTraceMetrics): AgentEvalResult {
+export function scoreAgentAnswer(
+    question: AgentEvalQuestion,
+    answer: string,
+    trace: AgentTraceMetrics,
+    verification?: VerificationReport
+): AgentEvalResult {
     const expectedTerms = question.expectedTerms ?? [];
     const normalizedAnswer = answer.toLowerCase();
     const matchedTerms = expectedTerms.filter(term => normalizedAnswer.includes(term.toLowerCase()));
@@ -211,8 +221,11 @@ export function scoreAgentAnswer(question: AgentEvalQuestion, answer: string, tr
         ...(expectedSources.length ? { expectedSources } : {}),
         sourceHit,
         sourceEvidence,
-        passed: sourceHit && termCoverage >= 0.6,
-        trace
+        passed: sourceHit
+            && termCoverage >= (question.contract?.answer?.minTermCoverage ?? 0.6)
+            && (question.contract?.strictness === 'hard' ? verification?.passed === true : true),
+        trace,
+        ...(verification ? { verification } : {})
     };
 }
 

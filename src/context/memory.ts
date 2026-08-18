@@ -3,16 +3,18 @@ import { getActiveSpan } from '../trace/telemetry.js';
 import { IMemory } from '../types.js';
 import { estimateMessagesSize } from '../utils/tokenBudget.js';
 import { LongTermMemoryItem, LongTermMemoryKind, MemoryStore, SessionListItem, SessionOverview } from './memoryStore.js';
+import { ContextSnapshot, TrajectoryStepRecord, buildContextSnapshot, renderContextSnapshots } from './contextSnapshot.js';
+import { EvidenceEntry } from './evidenceSufficiency.js';
+import {
+    CreateMemoryProposalInput,
+    MemoryProposal,
+    MemoryProposalStatus,
+    createMemoryProposal,
+    transitionMemoryProposal
+} from './memoryProposal.js';
+import { submitVerifiedProposal, verifyMemoryProposal } from './memoryVerifier.js';
 
-type FunctionToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall & {
-    type: 'function';
-    function: { name: string };
-};
 type MemoryMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
-
-function isFunctionToolCall(toolCall: OpenAI.Chat.Completions.ChatCompletionMessageToolCall): toolCall is FunctionToolCall {
-    return toolCall.type === 'function' && 'function' in toolCall;
-}
 
 class ShortTermMemory {
     private messages: MemoryMessage[] = [];
@@ -35,22 +37,46 @@ class ShortTermMemory {
 }
 
 class MidTermMemory {
-    private entries: string[] = [];
+    private snapshots: ContextSnapshot[] = [];
+    private evidence: EvidenceEntry[] = [];
+    private trajectorySteps: TrajectoryStepRecord[] = [];
+    private memoryProposalIds: string[] = [];
 
     mergeMessages(messages: MemoryMessage[]): void {
-        this.entries.push(...messages.map(summarizeMessage));
+        this.snapshots.push(buildContextSnapshot({
+            messages,
+            evidence: this.evidence,
+            trajectorySteps: this.trajectorySteps,
+            memoryProposalIds: this.memoryProposalIds
+        }));
+        this.snapshots = this.snapshots.slice(-4);
+        this.evidence = [];
+        this.trajectorySteps = [];
+        this.memoryProposalIds = [];
+    }
+
+    recordStep(record: TrajectoryStepRecord, evidence: readonly EvidenceEntry[]): void {
+        this.trajectorySteps.push(record);
+        this.evidence.push(...evidence);
+    }
+
+    recordMemoryProposal(proposalId: string): void {
+        this.memoryProposalIds.push(proposalId);
     }
 
     toMessage(): MemoryMessage | undefined {
-        if (this.entries.length === 0) return undefined;
+        if (this.snapshots.length === 0) return undefined;
         return {
             role: 'system',
-            content: `以下是较早上下文的自动压缩摘要，用于保持任务连续性：\n${this.entries.map((entry, index) => `${index + 1}. ${entry}`).join('\n')}`
+            content: `以下是较早上下文的自动压缩摘要（确定性结构化快照），用于保持任务连续性；被截断的正文必须重新读取来源后再引用：\n${renderContextSnapshots(this.snapshots)}`
         };
     }
 
     clear(): void {
-        this.entries = [];
+        this.snapshots = [];
+        this.evidence = [];
+        this.trajectorySteps = [];
+        this.memoryProposalIds = [];
     }
 }
 
@@ -174,6 +200,14 @@ export class MemoryManager implements IMemory {
         return this.shortTerm.getMessages().filter(msg => msg.role === 'user').length;
     }
 
+    recordTrajectoryStep(record: TrajectoryStepRecord, evidence: readonly EvidenceEntry[] = []): void {
+        this.midTerm.recordStep(record, evidence);
+    }
+
+    recordMemoryProposal(proposalId: string): void {
+        this.midTerm.recordMemoryProposal(proposalId);
+    }
+
     remember(content: string, kind: LongTermMemoryKind = 'fact'): LongTermMemoryItem {
         if (!this.store) {
             throw new Error('persistent memory store is not configured');
@@ -181,6 +215,43 @@ export class MemoryManager implements IMemory {
         const item = this.store.remember(content, kind);
         this.longTerm.add(item);
         return item;
+    }
+
+    proposeMemory(input: CreateMemoryProposalInput): MemoryProposal {
+        if (!this.store) throw new Error('persistent memory store is not configured');
+        const proposed = createMemoryProposal({ ...input, sessionId: input.sessionId ?? this.sessionId });
+        this.store.saveMemoryProposal(proposed);
+        const verified = verifyMemoryProposal(proposed, this.longTerm.getItems());
+        this.store.saveMemoryProposal(verified);
+        const result = verified.status === 'verified'
+            ? submitVerifiedProposal(verified)
+            : verified;
+        this.store.saveMemoryProposal(result);
+        this.recordMemoryProposal(result.id);
+        return result;
+    }
+
+    listMemoryProposals(status?: MemoryProposalStatus): MemoryProposal[] {
+        return this.store?.listMemoryProposals(status) ?? [];
+    }
+
+    approveMemoryProposal(proposalId: string): MemoryProposal {
+        if (!this.store) throw new Error('persistent memory store is not configured');
+        const proposal = this.store.getMemoryProposal(proposalId);
+        if (!proposal) throw new Error(`memory proposal not found: ${proposalId}`);
+        const approved = transitionMemoryProposal(proposal, 'approved');
+        this.store.saveMemoryProposal(approved);
+        const committed = this.store.commitApprovedProposal(proposalId);
+        this.longTerm.add(committed.memory);
+        return committed.proposal;
+    }
+
+    rejectMemoryProposal(proposalId: string): MemoryProposal {
+        if (!this.store) throw new Error('persistent memory store is not configured');
+        const proposal = this.store.getMemoryProposal(proposalId);
+        if (!proposal) throw new Error(`memory proposal not found: ${proposalId}`);
+        const rejected = transitionMemoryProposal(proposal, 'rejected_user');
+        return this.store.saveMemoryProposal(rejected);
     }
 
     getLongTermMemories(): LongTermMemoryItem[] {
@@ -233,14 +304,6 @@ export class MemoryManager implements IMemory {
         });
         console.log('🧹 [MemoryManager] 历史上下文已自动压缩，保留近期关键消息。');
     }
-}
-
-function summarizeMessage(message: MemoryMessage): string {
-    const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? '');
-    const toolCalls = 'tool_calls' in message && message.tool_calls
-        ? ` tool_calls=${message.tool_calls.filter(isFunctionToolCall).map(call => call.function.name).join(',')}`
-        : '';
-    return `role=${message.role}${toolCalls} content=${content.replace(/\s+/g, ' ').slice(0, 240)}`;
 }
 
 function readRetentionDays(name: string, fallback: number): number {

@@ -13,6 +13,7 @@
     "index:knowledge": "tsx scripts/rag/indexKnowledgeBase.ts",
     "eval:recall": "tsx scripts/evaluation/evaluateRecall.ts",
     "eval:agent": "tsx scripts/evaluation/evaluateAgent.ts",
+    "eval:verify": "tsx scripts/evaluation/verifyTrajectory.ts",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc",
     "start": "node dist/src/main.js",

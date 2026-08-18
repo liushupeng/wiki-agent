@@ -175,6 +175,29 @@ const stream = await this.client.chat.completions.create({
 
 真正的参数解析、权限决策、审批和工具执行都在 `ToolExecutor` 中。同一 run 中，同一工具的等价参数连续失败两次后，第三次调用会被 `retry_limit_reached` observation 拦截，避免无效重试耗尽循环与上下文预算。
 
+### Harness 契约与结构化上下文
+
+四个模块共同把“模型说完成了”提升为“可以离线证明过程满足合同”：
+
+```text
+JSONL v2 -> trajectoryModel -> TrajectoryVerifier -> result/process/safety report
+RAG ToolResult -> EvidenceLedger -> evidence.sufficiency trace event
+messages + evidence + steps -> ContextSnapshot -> mid-term system message
+propose_memory -> verify -> pending approval -> approve -> SQLite commit
+```
+
+- `evaluation/taskContract.ts` 校验声明式任务约束；`trajectoryModel.ts` 把 span start/event/end 折叠成统一轨迹；`trajectoryVerifier.ts` 检查来源、工具、预算、终止、重试和权限。`scripts/evaluation/verifyTrajectory.ts` 只读取已有文件。
+- `context/evidenceSufficiency.ts` 从兼容的 RAG `ToolResult.data` 提取 source、chunkId、citation 和截断信息。三态默认只指导继续检索、说明缺口或停止检索；合同显式要求时才成为硬门槛。
+- `context/contextSnapshot.ts` 与 `trajectoryBudget.ts` 执行无模型、可重复的压缩。Snapshot 保留 call ID 和失败/未完成状态，因此不会破坏 OpenAI tool-call 配对，也不会把截断正文伪装成完整事实。
+- `context/memoryProposal.ts` 定义唯一合法状态迁移；`memoryVerifier.ts` 拒绝敏感凭据、无用户明确意图、无来源事实、重复和明显冲突。`MemoryStore.commitApprovedProposal()` 在单个 SQLite 事务中提交长期记忆和 proposal 最终状态。
+
+兼容边界：
+
+- `WikiAgent.run()`、`IMemory` 和原 RAG `data` 外形不变。
+- 没有 TaskContract 的旧 Agent Eval 不增加硬门槛。
+- `remember` 保持直接提交语义，只用于用户已经明确批准的 CLI 操作。
+- 核心 verifier、snapshot、sufficiency 与 memory verifier 均不调用 LLM；未来主观质量或模型压缩必须通过可选 adapter 接入。
+
 ## `src/tools/base.ts`
 
 所有工具继承 `BaseAgentTool`。

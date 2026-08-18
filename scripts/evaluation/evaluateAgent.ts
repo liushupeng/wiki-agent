@@ -12,6 +12,8 @@ import { ToolExposureController } from '../../src/tools/exposure.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { AgentEvalQuestion, collectAgentTraceMetrics, parseJsonlV2, scoreAgentAnswer } from '../../src/evaluation/agent.js';
 import { selectAgentEvalQuestions, summarizeAgentResults, summarizeAgentResultsByCategory } from '../../src/evaluation/agent.js';
+import { validateTaskContract } from '../../src/evaluation/taskContract.js';
+import { verifyTrajectory } from '../../src/evaluation/trajectoryVerifier.js';
 import { getEvaluationExperiment, parseEvaluationMode, getSourceConfigIdentity } from '../../src/evaluation/experiments.js';
 import { agentUsage, parseAgentEvalCommand } from '../../src/evaluation/cli.js';
 import { createCliProgressReporter } from '../../src/evaluation/cliProgress.js';
@@ -109,11 +111,15 @@ async function main(): Promise<void> {
                     } satisfies AgentConfig, memory, registry);
                     const answer = await agent.run(question.question, () => {});
                     const trace = await readOnlyTrace(traceDir);
-                    const result = scoreAgentAnswer(question, answer, collectAgentTraceMetrics(parseJsonlV2(trace)));
+                    const records = parseJsonlV2(trace);
+                    const verification = question.contract
+                        ? verifyTrajectory({ contract: question.contract, question, answer, records })
+                        : undefined;
+                    const result = scoreAgentAnswer(question, answer, collectAgentTraceMetrics(records), verification);
                     results.push(result);
                     const pair = pairs.get(question.id) ?? { question };
                     if (mode === 'raw-only') pair.rawOnly = result; else pair.rawWiki = result;
-                    pair.traceId = parseJsonlV2(trace)[0]?.traceId;
+                    pair.traceId = records[0]?.traceId;
                     pair.traceFile = path.relative(outputDirectory, traceDir);
                     pairs.set(question.id, pair);
                     progress.update(`${progressMessage} ${result.passed ? 'PASS' : 'FAIL'}，耗时 ${Math.round(performance.now() - questionStartedAt)} ms。`);
@@ -160,7 +166,8 @@ async function main(): Promise<void> {
             runs,
             summary: Object.fromEntries(Object.entries(runs).map(([mode, run]) => [mode, {
                 overall: summarizeAgentResults(run.results),
-                byCategory: summarizeAgentResultsByCategory(run.results)
+                byCategory: summarizeAgentResultsByCategory(run.results),
+                verification: summarizeVerification(run.results)
             }])),
             comparisons,
             reviewArtifacts: artifacts
@@ -197,6 +204,7 @@ function validateQuestions(value: unknown): AgentEvalQuestion[] {
             ...(question.expectedSource ? { expectedSource: question.expectedSource } : {}),
             ...(question.expectedSources ? { expectedSources: question.expectedSources } : {}),
             ...(question.expectedTerms ? { expectedTerms: question.expectedTerms } : {})
+            ,...(question.contract ? { contract: validateTaskContract(question.contract, `question ${question.id}.contract`) } : {})
         };
     });
 }
@@ -215,6 +223,23 @@ async function readGitCommit(): Promise<string | undefined> {
 
 function safePathSegment(value: string): string {
     return value.replace(/[^a-zA-Z0-9._-]/g, '-');
+}
+
+function summarizeVerification(results: ReturnType<typeof scoreAgentAnswer>[]) {
+    const verified = results.filter(result => result.verification);
+    const passed = verified.filter(result => result.verification?.passed).length;
+    const failures = new Map<string, number>();
+    for (const result of verified) {
+        for (const dimension of result.verification?.summary.failedDimensions ?? []) {
+            failures.set(dimension, (failures.get(dimension) ?? 0) + 1);
+        }
+    }
+    return {
+        total: verified.length,
+        passed,
+        passRate: verified.length ? Number((passed / verified.length).toFixed(4)) : 0,
+        failedDimensions: Object.fromEntries(failures)
+    };
 }
 
 function printSummary(

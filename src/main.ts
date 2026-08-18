@@ -5,6 +5,7 @@ import { AgentConfig } from './types.js';
 import { askToolApproval } from './cli/approvalPrompt.js';
 import { getApprovalMode } from './config.js';
 import { MemoryManager } from './context/memory.js';
+import type { MemoryProposalStatus } from './context/memoryProposal.js';
 import { WikiAgent } from './agent.js';
 import { registerConfiguredMcpTools } from './mcp/register.js';
 import { WIKI_AGENT_SYSTEM_PROMPT } from './prompts/systemPrompt.js';
@@ -56,6 +57,7 @@ async function main() {
     for (const tool of await createDefaultTools({
         skipToolNames: localToolNamesCoveredByMcp,
         exposureController: toolExposureController,
+        memoryProposalService: memory,
         rag: process.env.RAG_RETRIEVAL_PROFILE
             ? {
                 retrievalProfile: process.env.RAG_RETRIEVAL_PROFILE,
@@ -78,7 +80,7 @@ async function main() {
             return;
         }
 
-        console.log('进入多轮 REPL。输入 exit / quit 退出，输入 clear 清空会话历史；输入 sessions [数量] [预览字符数] 列出会话，输入 session <ID> [预览字符数] 查看会话概览；输入 remember <内容> 保存长期记忆，输入 memories / forget <ID> 查看或删除长期记忆。');
+        console.log('进入多轮 REPL。输入 exit / quit 退出，输入 clear 清空会话历史；输入 sessions [数量] [预览字符数] 列出会话，输入 session <ID> [预览字符数] 查看会话概览；输入 remember <内容> 直接保存已明确批准的长期记忆；输入 propose [kind] <内容> 创建提案，proposals / approve <ID> / reject <ID> 管理提案；输入 memories / forget <ID> 查看或删除长期记忆。');
 
         while (true) {
             const instruction = (await rl.question('\n你 > ')).trim();
@@ -167,6 +169,55 @@ function handleSessionCommand(instruction: string, memory: MemoryManager): boole
 
 function handleLongTermMemoryCommand(instruction: string, memory: MemoryManager): boolean {
     const normalized = instruction.toLowerCase();
+    if (normalized.startsWith('propose ')) {
+        const raw = instruction.slice('propose '.length).trim();
+        const [first, ...rest] = raw.split(/\s+/);
+        const hasKind = ['preference', 'constraint', 'fact'].includes(first?.toLowerCase());
+        const content = hasKind ? rest.join(' ') : raw;
+        if (!content) {
+            console.log('请输入提案内容，例如：propose preference 我偏好中文回答。');
+        } else {
+            const proposal = memory.proposeMemory({
+                content,
+                kind: hasKind ? first.toLowerCase() as 'preference' | 'constraint' | 'fact' : 'fact',
+                userRequest: instruction,
+                sourceMessageRefs: [`repl:${memory.sessionId ?? 'ephemeral'}`]
+            });
+            console.log(`📝 [记忆提案] ${proposal.id} 状态=${proposal.status}${proposal.verification?.reasons.length ? `：${proposal.verification.reasons.join('；')}` : ''}`);
+        }
+        return true;
+    }
+    if (normalized === 'proposals' || normalized.startsWith('proposals ')) {
+        const status = instruction.slice('proposals'.length).trim() || undefined;
+        const allowed = ['proposed', 'verified', 'rejected_verify', 'pending_approval', 'approved', 'committed', 'rejected_user'];
+        if (status && !allowed.includes(status)) {
+            console.log(`未知提案状态：${status}`);
+            return true;
+        }
+        const proposals = memory.listMemoryProposals(status as MemoryProposalStatus | undefined);
+        if (!proposals.length) console.log('当前没有匹配的记忆提案。');
+        for (const proposal of proposals) {
+            console.log(`- ${proposal.id} [${proposal.status}/${proposal.kind}] ${proposal.content}`);
+        }
+        return true;
+    }
+    if (normalized.startsWith('approve ') || normalized.startsWith('reject ')) {
+        const approve = normalized.startsWith('approve ');
+        const proposalId = instruction.slice(approve ? 'approve '.length : 'reject '.length).trim();
+        if (!proposalId) {
+            console.log(`请输入提案 ID，例如：${approve ? 'approve' : 'reject'} <ID>`);
+        } else {
+            try {
+                const proposal = approve
+                    ? memory.approveMemoryProposal(proposalId)
+                    : memory.rejectMemoryProposal(proposalId);
+                console.log(`📝 [记忆提案] ${proposal.id} 状态=${proposal.status}`);
+            } catch (error: any) {
+                console.log(`记忆提案操作失败：${error.message}`);
+            }
+        }
+        return true;
+    }
     if (normalized.startsWith('remember ')) {
         const content = instruction.slice('remember '.length).trim();
         if (!content) {

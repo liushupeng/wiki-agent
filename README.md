@@ -85,6 +85,22 @@ flowchart LR
 - **MCP 优先，本地工具兜底**：Filesystem/Git/SQLite 等成熟能力通过 MCP 接入；MCP 覆盖的本地等价工具会跳过，避免重复暴露。需要更严格策略的本地工具可通过 MCP 配置排除同名远端能力。
 - **先沉淀数据，再谈训练**：检索 Reranker 已落地；当前继续沉淀 trace、eval、bad case、wiki schema 和 skill，为 tool routing、泛化评测与后训练准备数据资产。
 
+### 四项 offline-first Harness 契约
+
+- **TaskContract + TrajectoryVerifier**：题目可声明必须/禁止工具、预算、终止原因、证据与安全条件；验证器直接重放 JSONL v2，不创建 Agent、不调用模型。未配置 contract 的旧题继续使用原判分。
+- **EvidenceLedger**：成功的 RAG observation 会写入结构化证据账本，并产生 `insufficient | partial | sufficient` 三态和 `evidence.sufficiency` trace event。默认仅作可观测决策信号；只有 TaskContract 明确要求时才硬判分。
+- **ContextSnapshot**：中期记忆不再逐消息截断，而是确定性保留目标、工具 call ID、已确认事实、source/chunk/citation、失败尝试和未完成项。被裁掉的长正文会标记为需要重新读取。
+- **MemoryProposal**：模型只能通过 `propose_memory` 创建提案。提案经确定性核验、用户审批后，才由 SQLite 事务写入长期记忆；现有 `remember` 仍表示用户已经明确批准的快捷提交。
+
+记忆提案 REPL 命令：
+
+```text
+propose [preference|constraint|fact] <内容>
+proposals [status]
+approve <proposal-id>
+reject <proposal-id>
+```
+
 ## wiki-agent VS 普通 RAG
 
 普通 RAG 通常是：
@@ -725,6 +741,15 @@ npm run eval:agent -- -- --variant both --random-count 5 --seed baseline-1
 npm run eval:agent -- -- --variant raw-only --question-ids investment-pillars,raft-components
 npm run eval:agent -- -- --profile bm25-v1 --variant both --random-count 3 --seed bm25-baseline-1
 ```
+
+已有 trace 可用同一 TaskContract 完全离线复核；`--answer-file` 仅在 contract 配置答案关键词覆盖率时需要：
+
+```powershell
+npm run eval:verify -- -- --trace var/traces/<trace>.jsonl --question-id <id>
+npm run eval:verify -- -- --trace var/traces/<trace>.jsonl --question-id <id> --questions evaluation/questions.json --answer-file var/evals/<answer>.txt
+```
+
+`strictness: "hard"` 的 contract 失败时命令返回非零退出码；`soft` 仍输出所有 result/process/safety 检查，但不用于 CI 硬门禁。主观答案质量预留独立 judge seam，核心复核不依赖付费模型。
 
 `--profile` 选择索引 profile（默认 `bm25-v1`）。`--all`、`--random-count` 与 `--question-ids` 互斥；`--seed` 仅可与 `--random-count` 一起使用。全量 Agent 评测必须明确传入 `--all`。`--help` 可显示三条命令的完整用法；非法参数会同时输出错误和 usage。旧的 `RAG_EVAL_MODE`、`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 和 `AGENT_EVAL_QUESTION_IDS` 环境变量不再作为评测入口读取。
 

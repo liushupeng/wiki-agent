@@ -60,8 +60,37 @@ function formatIndexedChunk(chunk: IndexedChunk) {
         titlePath: chunk.titlePath ?? [],
         tags: chunk.tags ?? [],
         links: chunk.links ?? [],
+        citation: [chunk.source, ...(chunk.titlePath ?? [])].join(' > ') || `${chunk.source}:${chunk.start}-${chunk.end}`,
         span: { start: chunk.start, end: chunk.end },
         text: chunk.text
+    };
+}
+
+function withEvidenceMetadata(
+    data: Record<string, unknown>,
+    metadata: Record<string, unknown>
+): Record<string, unknown> {
+    const items = [
+        ...(Array.isArray(data.matches) ? data.matches : []),
+        ...(Array.isArray(data.chunks) ? data.chunks : [])
+    ].filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object');
+    const sources = items.flatMap(item => typeof item.source === 'string' ? [item.source] : []);
+    const citations = items.flatMap(item => typeof item.citation === 'string'
+        ? [item.citation]
+        : typeof item.source === 'string'
+            ? [item.source]
+            : []);
+    const chunkIds = items.flatMap(item => typeof item.chunkId === 'string' ? [item.chunkId] : []);
+    return {
+        ...metadata,
+        query: typeof data.query === 'string' ? data.query : undefined,
+        source: sources[0],
+        sources,
+        citation: citations[0],
+        citations,
+        chunkId: chunkIds[0],
+        chunkIds,
+        truncated: metadata.truncated === true
     };
 }
 
@@ -229,16 +258,17 @@ export class SearchNotesTool extends BaseAgentTool {
                         ?? evidence.chunkRerankScore
                         ?? evidence.fusionScore
                 }));
-                return this.ok({
+                const data = {
                     query: args.query,
                     matches: matches.map(formatChunk),
                     stages: run.elapsedMs
-                }, {
+                };
+                return this.ok(data, withEvidenceMetadata(data, {
                     count: matches.length,
                     retrievalProfile: run.profile,
                     scope: await getSearchScopeDescription(this.options),
                     elapsedMs: performance.now() - startedAtMs
-                });
+                }));
             }
             const index = await openActiveIndex(this.options.indexProfile, this.options.indexVariant);
             const candidateLimit = Math.min(topK * 4, 48);
@@ -278,10 +308,11 @@ export class SearchNotesTool extends BaseAgentTool {
                 status: 'ok'
             });
 
-            return this.ok({
+            const data = {
                 query: args.query,
                 matches: matches.map(formatChunk)
-            }, { count: matches.length, indexProfile: index.profile.id, indexVariant: index.variant.id, scope: await getSearchScopeDescription(this.options) });
+            };
+            return this.ok(data, withEvidenceMetadata(data, { count: matches.length, indexProfile: index.profile.id, indexVariant: index.variant.id, scope: await getSearchScopeDescription(this.options) }));
         } catch (error: any) {
             await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message, {
@@ -374,11 +405,12 @@ export class GrepNotesTool extends BaseAgentTool {
                 status: 'ok'
             });
 
-            return this.ok({
+            const data = {
                 query: args.query,
                 regex: effectiveRegex,
                 matches
-            }, { count: matches.length, scope: await getSearchScopeDescription(this.options), maxResults, contextLines, autoRegex: args.regex === undefined && effectiveRegex });
+            };
+            return this.ok(data, withEvidenceMetadata(data, { count: matches.length, scope: await getSearchScopeDescription(this.options), maxResults, contextLines, autoRegex: args.regex === undefined && effectiveRegex }));
         } catch (error: any) {
             await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message, {
@@ -444,12 +476,13 @@ export class ReadNoteTool extends BaseAgentTool {
                 }
             });
 
-            return this.ok({
+            const data = {
                 notePath: args.notePath,
                 query: args.query,
                 titlePath: args.titlePath,
                 chunks: chunks.map(formatIndexedChunk)
-            }, { count: chunks.length, totalChunks: allChunks.length, maxChunks, truncated: chunks.length < titleFilteredChunks.length });
+            };
+            return this.ok(data, withEvidenceMetadata(data, { count: chunks.length, totalChunks: allChunks.length, maxChunks, truncated: chunks.length < titleFilteredChunks.length }));
         } catch (error: any) {
             await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message);
@@ -516,11 +549,12 @@ export class RelatedNotesTool extends BaseAgentTool {
                 }
             });
 
-            return this.ok({
+            const data = {
                 notePath: args.notePath,
                 scope,
                 matches: matches.map(formatChunk)
-            }, { count: matches.length, scope, candidateCount: candidates.length });
+            };
+            return this.ok(data, withEvidenceMetadata(data, { count: matches.length, scope, candidateCount: candidates.length }));
         } catch (error: any) {
             await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message);
