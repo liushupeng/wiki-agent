@@ -25,7 +25,7 @@ async function main() {
 
     // 初始化 Agent 运行时配置
     const config: AgentConfig = {
-        modelName: process.env.MODEL_NAME ?? "deepseek-v4-pro",
+        modelName: process.env.MODEL_NAME ?? "deepseek-v4-flash",
         temperature: 0.1,
         maxLoopSteps: Number(process.env.MAX_LOOP_STEPS ?? 20),
         traceDir: process.env.TRACE_DIR ?? 'var/traces',
