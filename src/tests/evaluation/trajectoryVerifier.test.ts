@@ -94,6 +94,37 @@ test('verifyTrajectory detects circular identical failures without a model judge
     ]);
 });
 
+test('verifyTrajectory validates abstention phrases and all expected sources', () => {
+    const abstained = verifyTrajectory({
+        contract: {
+            schemaVersion: 1,
+            answer: {
+                requiredPhrasesAny: ['没有找到', '证据不足'],
+                forbiddenPhrases: ['预算为']
+            }
+        },
+        question: {},
+        answer: '知识库中没有找到相关预算，证据不足。',
+        records: happyTrace()
+    });
+    assert.equal(abstained.passed, true);
+
+    const missingSource = verifyTrajectory({
+        contract: {
+            schemaVersion: 1,
+            evidence: {
+                expectedSources: ['agent.md', 'second.md'],
+                requireAllExpectedSources: true
+            }
+        },
+        question: {},
+        answer: '',
+        records: happyTrace()
+    });
+    assert.equal(missingSource.passed, false);
+    assert.deepEqual(missingSource.summary.failedDimensions, ['evidence.all_sources']);
+});
+
 function happyTrace(): JsonlV2Record[] {
     return [
         start('run', 'wiki_agent.run'),

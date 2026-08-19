@@ -90,6 +90,25 @@ test('parseAgentEvalArgs supports deterministic samples or explicit IDs', () => 
         parseAgentEvalArgs(['--question-ids', 'investment-pillars, raft-components']),
         { profile: 'bm25-v1', variant: 'both', questionIds: ['investment-pillars', 'raft-components'] }
     );
+    assert.deepEqual(
+        parseAgentEvalArgs([
+            '--all',
+            '--preflight',
+            '--resume', 'var/evals/agent/run-1',
+            '--max-steps', '8',
+            '--max-output-tokens', '2048',
+            '--max-new-questions', '1'
+        ]),
+        {
+            profile: 'bm25-v1',
+            variant: 'both',
+            preflight: true,
+            resumeDirectory: 'var/evals/agent/run-1',
+            maxSteps: 8,
+            maxOutputTokens: 2048,
+            maxNewQuestions: 1
+        }
+    );
 });
 
 test('parseAgentEvalArgs rejects ambiguous question selection', () => {
@@ -100,4 +119,5 @@ test('parseAgentEvalArgs rejects ambiguous question selection', () => {
     assert.throws(() => parseAgentEvalArgs(['--seed', 'baseline']), /--seed requires --random-count/);
     assert.throws(() => parseAgentEvalArgs(['--question-ids', 'one,one']), /without duplicates/);
     assert.throws(() => parseAgentEvalArgs(['--random-count', '0']), /positive integer/);
+    assert.throws(() => parseAgentEvalArgs(['--all', '--max-output-tokens', '0']), /positive integer/);
 });

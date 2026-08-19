@@ -10,15 +10,22 @@ import { buildSkillManifestPrompt, loadSkillManifests } from '../../src/skills.j
 import { createDefaultTools, getLocalToolNamesCoveredByMcp } from '../../src/tools/defaultTools.js';
 import { ToolExposureController } from '../../src/tools/exposure.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
-import { AgentEvalQuestion, collectAgentTraceMetrics, parseJsonlV2, scoreAgentAnswer } from '../../src/evaluation/agent.js';
+import { AgentEvalQuestion, collectAgentTraceMetrics, parseJsonlV2, scoreAgentAnswer, validateAgentEvalQuestions } from '../../src/evaluation/agent.js';
 import { selectAgentEvalQuestions, summarizeAgentResults, summarizeAgentResultsByCategory } from '../../src/evaluation/agent.js';
-import { validateTaskContract } from '../../src/evaluation/taskContract.js';
 import { verifyTrajectory } from '../../src/evaluation/trajectoryVerifier.js';
 import { getEvaluationExperiment, parseEvaluationMode, getSourceConfigIdentity } from '../../src/evaluation/experiments.js';
 import { agentUsage, parseAgentEvalCommand } from '../../src/evaluation/cli.js';
 import { createCliProgressReporter } from '../../src/evaluation/cliProgress.js';
 import { FileReviewArtifactWriter, NoopReviewTracePublisher, ReviewPair } from '../../src/evaluation/reviewArtifacts.js';
+import {
+    EvalQuestionCheckpoint,
+    EvalRunManifest,
+    loadEvalQuestionCheckpoint,
+    validateEvalResumeManifest,
+    writeJsonAtomic
+} from '../../src/evaluation/evalCheckpoint.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } from '../../src/rag/indexProfiles.js';
+import { openActiveIndex } from '../../src/rag/indexRuntime.js';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -30,15 +37,20 @@ import { promisify } from 'node:util';
  * --all、--random-count 或 --question-ids 显式选择题目，避免意外全量评测。
  */
 type AgentEvalRun = {
-    status: 'success';
+    status: 'success' | 'partial';
     questionsFile: string;
     outputDirectory: string;
     total: number;
     passed: number;
     passRate: number;
+    selectedTotal: number;
     results: ReturnType<typeof scoreAgentAnswer>[];
 };
+type AgentEvalResult = ReturnType<typeof scoreAgentAnswer>;
 const execFileAsync = promisify(execFile);
+const DEFAULT_EVAL_MAX_STEPS = 8;
+const DEFAULT_EVAL_MAX_OUTPUT_TOKENS = 2_048;
+const EVAL_REQUEST_TIMEOUT_MS = 120_000;
 
 async function main(): Promise<void> {
     const command = parseAgentEvalCommand(process.argv.slice(2));
@@ -49,27 +61,61 @@ async function main(): Promise<void> {
     const startedAt = performance.now();
     const arguments_ = command.args;
     const questionsFile = path.resolve(arguments_.questionsFile ?? 'evaluation/questions.json');
-    const questions = validateQuestions(JSON.parse(await fs.readFile(questionsFile, 'utf-8')));
+    const questions = validateAgentEvalQuestions(JSON.parse(await fs.readFile(questionsFile, 'utf-8')));
     const selectedQuestions = selectAgentEvalQuestions(questions, {
         randomCount: arguments_.randomCount,
         seed: arguments_.seed,
         questionIds: arguments_.questionIds
     });
-    const outputDirectory = path.resolve('var/evals/agent', new Date().toISOString().replace(/[:.]/g, '-'));
     const experimentModes = parseEvaluationMode(arguments_.variant);
+    const maxSteps = arguments_.maxSteps ?? DEFAULT_EVAL_MAX_STEPS;
+    const maxOutputTokens = arguments_.maxOutputTokens ?? DEFAULT_EVAL_MAX_OUTPUT_TOKENS;
+    const indexesConfig = await loadRagIndexesConfig();
+    const gitCommit = await readGitCommit();
+    const gitStatus = await readGitStatus();
+    if (!gitCommit) throw new Error('agent evaluation requires a Git commit for reproducibility');
+    if (gitStatus) {
+        throw new Error(`agent evaluation requires a clean Git worktree; commit or stash these changes first:\n${gitStatus}`);
+    }
+    const manifest: EvalRunManifest = {
+        schemaVersion: 1,
+        questionsFile,
+        questionSetSha256: await sha256File(questionsFile),
+        selectedQuestionIds: selectedQuestions.map(question => question.id),
+        modes: experimentModes,
+        profile: arguments_.profile,
+        model: process.env.MODEL_NAME ?? 'deepseek-v4-pro',
+        maxSteps,
+        maxOutputTokens,
+        gitCommit,
+        createdAt: new Date().toISOString()
+    };
+    await runPreflight({ manifest, questions: selectedQuestions, indexesConfig });
+    if (arguments_.preflight) return;
+
+    const outputDirectory = arguments_.resumeDirectory
+        ? path.resolve(arguments_.resumeDirectory)
+        : path.resolve('var/evals/agent', new Date().toISOString().replace(/[:.]/g, '-'));
+    if (arguments_.resumeDirectory) {
+        await validateEvalResumeManifest(outputDirectory, manifest);
+    } else {
+        await fs.mkdir(outputDirectory, { recursive: true });
+        await writeJsonAtomic(path.join(outputDirectory, 'run-manifest.json'), manifest);
+    }
     console.log([
         `[agent] 已选 ${selectedQuestions.length}/${questions.length} 道题；变体：${experimentModes.join(', ')}。`,
         `[agent] Profile：${arguments_.profile}。`,
-        `[agent] 模型：${process.env.MODEL_NAME ?? 'deepseek-v4-pro'}；最大步骤：${process.env.MAX_LOOP_STEPS ?? 20}。`,
-        `[agent] 输出目录：${outputDirectory}`
-    ].join('\n'));
+        `[agent] 模型：${manifest.model}；全局最大步骤：${maxSteps}；最大输出：${maxOutputTokens} tokens；API 自动重试：0。`,
+        `[agent] 输出目录：${outputDirectory}`,
+        arguments_.resumeDirectory ? '[agent] 断点续跑：已完成题目将从 result.json 恢复，不会再次调用模型。' : ''
+    ].filter(Boolean).join('\n'));
     const skillManifestPrompt = buildSkillManifestPrompt(await loadSkillManifests());
     const systemPrompt = skillManifestPrompt
         ? `${WIKI_AGENT_SYSTEM_PROMPT}\n\n${skillManifestPrompt}`
         : WIKI_AGENT_SYSTEM_PROMPT;
-    const indexesConfig = await loadRagIndexesConfig();
     const runs: Record<string, AgentEvalRun> = {};
     const pairs = new Map<string, { question: AgentEvalQuestion; rawOnly?: ReturnType<typeof scoreAgentAnswer>; rawWiki?: ReturnType<typeof scoreAgentAnswer>; traceFile?: string; traceId?: string }>();
+    let newQuestionsExecuted = 0;
         for (const mode of experimentModes) {
             const experiment = getEvaluationExperiment(mode);
             const profile = resolveRagIndexProfile(indexesConfig, arguments_.profile);
@@ -98,31 +144,73 @@ async function main(): Promise<void> {
                 if (index === 0) progress.start(progressMessage);
                 else progress.update(progressMessage, true);
                 const questionDirectory = path.join(outputDirectory, mode, `${String(index + 1).padStart(3, '0')}-${safePathSegment(question.id)}`);
-                const traceDir = path.join(questionDirectory, 'traces');
+                const checkpointPath = path.join(questionDirectory, 'result.json');
+                const checkpoint = await loadEvalQuestionCheckpoint(checkpointPath, mode, question.id);
+                if (checkpoint) {
+                    results.push(checkpoint.result);
+                    updateReviewPair(pairs, question, mode, checkpoint.result, checkpoint.traceId, checkpoint.traceFile);
+                    progress.update(`${progressMessage} RESTORED，不调用模型。`);
+                    continue;
+                }
+                if (arguments_.maxNewQuestions !== undefined && newQuestionsExecuted >= arguments_.maxNewQuestions) {
+                    progress.update(`${progressMessage} DEFERRED，已达到 --max-new-questions ${arguments_.maxNewQuestions}。`);
+                    break;
+                }
+
+                const attemptDirectory = path.join(questionDirectory, 'attempts', new Date().toISOString().replace(/[:.]/g, '-'));
+                const traceDir = path.join(attemptDirectory, 'traces');
                 await fs.mkdir(questionDirectory, { recursive: true });
                 exposureController.resetToCore();
-                const memory = new MemoryManager(systemPrompt, { memoryDirectory: path.join(questionDirectory, 'memory') });
+                const memory = new MemoryManager(systemPrompt, { memoryDirectory: path.join(attemptDirectory, 'memory') });
+                const effectiveMaxSteps = Math.min(maxSteps, question.contract?.trajectory?.maxSteps ?? maxSteps);
+                newQuestionsExecuted += 1;
                 try {
                     const agent = new WikiAgent({
-                        modelName: process.env.MODEL_NAME ?? 'deepseek-v4-pro', temperature: 0.1,
-                        maxLoopSteps: Number(process.env.MAX_LOOP_STEPS ?? 20), traceDir, telemetryBackend: 'file',
-                        capturePromptArtifacts: false, traceArtifactDir: path.join(questionDirectory, 'prompt-artifacts'),
+                        modelName: manifest.model, temperature: 0.1,
+                        maxLoopSteps: effectiveMaxSteps,
+                        maxOutputTokens,
+                        maxRetries: 0,
+                        requestTimeoutMs: EVAL_REQUEST_TIMEOUT_MS,
+                        traceDir, telemetryBackend: 'file',
+                        capturePromptArtifacts: false, traceArtifactDir: path.join(attemptDirectory, 'prompt-artifacts'),
                         autoExportFileTrace: false, approvalMode: 'auto', requestApproval: async () => true
                     } satisfies AgentConfig, memory, registry);
                     const answer = await agent.run(question.question, () => {});
                     const trace = await readOnlyTrace(traceDir);
                     const records = parseJsonlV2(trace);
+                    const traceMetrics = collectAgentTraceMetrics(records);
+                    if (traceMetrics.terminationReason === 'system_error') {
+                        throw new Error(`agent run terminated with system_error for ${question.id}; checkpoint was not committed`);
+                    }
                     const verification = question.contract
                         ? verifyTrajectory({ contract: question.contract, question, answer, records })
                         : undefined;
-                    const result = scoreAgentAnswer(question, answer, collectAgentTraceMetrics(records), verification);
+                    const result = scoreAgentAnswer(question, answer, traceMetrics, verification);
                     results.push(result);
-                    const pair = pairs.get(question.id) ?? { question };
-                    if (mode === 'raw-only') pair.rawOnly = result; else pair.rawWiki = result;
-                    pair.traceId = records[0]?.traceId;
-                    pair.traceFile = path.relative(outputDirectory, traceDir);
-                    pairs.set(question.id, pair);
+                    const traceFile = path.relative(outputDirectory, traceDir);
+                    const checkpoint: EvalQuestionCheckpoint = {
+                        schemaVersion: 1,
+                        mode,
+                        questionId: question.id,
+                        ...(records[0]?.traceId ? { traceId: records[0].traceId } : {}),
+                        traceFile,
+                        completedAt: new Date().toISOString(),
+                        result
+                    };
+                    await writeJsonAtomic(checkpointPath, checkpoint);
+                    await fs.rm(path.join(questionDirectory, 'failure.json'), { force: true });
+                    updateReviewPair(pairs, question, mode, result, checkpoint.traceId, traceFile);
                     progress.update(`${progressMessage} ${result.passed ? 'PASS' : 'FAIL'}，耗时 ${Math.round(performance.now() - questionStartedAt)} ms。`);
+                } catch (error) {
+                    await writeJsonAtomic(path.join(questionDirectory, 'failure.json'), {
+                        schemaVersion: 1,
+                        mode,
+                        questionId: question.id,
+                        failedAt: new Date().toISOString(),
+                        attemptDirectory: path.relative(outputDirectory, attemptDirectory),
+                        error: error instanceof Error ? error.message : String(error)
+                    });
+                    throw error;
                 } finally {
                     memory.close();
                 }
@@ -132,8 +220,9 @@ async function main(): Promise<void> {
                 await mcpRegistration.close();
             }
             const passed = results.filter(result => result.passed).length;
-            runs[mode] = { status: 'success', questionsFile, outputDirectory, total: results.length, passed, passRate: results.length ? Number((passed / results.length).toFixed(4)) : 0, results };
-            console.log(`[agent] [${mode}] 完成：${passed}/${results.length} 通过，耗时 ${Math.round(performance.now() - modeStartedAt)} ms。`);
+            const status = results.length === selectedQuestions.length ? 'success' : 'partial';
+            runs[mode] = { status, questionsFile, outputDirectory, selectedTotal: selectedQuestions.length, total: results.length, passed, passRate: results.length ? Number((passed / results.length).toFixed(4)) : 0, results };
+            console.log(`[agent] [${mode}] ${status === 'success' ? '完成' : '部分完成'}：${passed}/${results.length} 通过，已保存 ${results.length}/${selectedQuestions.length}，耗时 ${Math.round(performance.now() - modeStartedAt)} ms。`);
         }
         const reviewPairs: ReviewPair[] = Array.from(pairs.values()).map(pair => ({ id: pair.question.id, question: pair.question.question, category: pair.question.category, rawOnly: pair.rawOnly, rawWiki: pair.rawWiki, traceId: pair.traceId, traceFile: pair.traceFile }));
         console.log('[agent] 正在生成复核评测包与报告…');
@@ -150,11 +239,12 @@ async function main(): Promise<void> {
                 : 'single-mode'
         }));
         const report = {
-            status: 'success', questionsFile, outputDirectory,
+            status: Object.values(runs).every(run => run.status === 'success') ? 'success' : 'partial',
+            questionsFile, outputDirectory,
             metadata: {
-                gitCommit: await readGitCommit(), questionSetSha256: await sha256File(questionsFile),
+                gitCommit: manifest.gitCommit, questionSetSha256: manifest.questionSetSha256,
                 profile: arguments_.profile,
-                model: process.env.MODEL_NAME ?? 'deepseek-v4-pro', temperature: 0.1, maxSteps: Number(process.env.MAX_LOOP_STEPS ?? 20),
+                model: manifest.model, temperature: 0.1, maxSteps, maxOutputTokens, maxRetries: 0,
                 selectedQuestionIds: selectedQuestions.map(question => question.id), executedAt: new Date().toISOString(),
                 experiments: await Promise.all(Object.keys(runs).map(async mode => {
                     const experiment = getEvaluationExperiment(mode as 'raw-only' | 'raw-wiki');
@@ -167,13 +257,80 @@ async function main(): Promise<void> {
             summary: Object.fromEntries(Object.entries(runs).map(([mode, run]) => [mode, {
                 overall: summarizeAgentResults(run.results),
                 byCategory: summarizeAgentResultsByCategory(run.results),
-                verification: summarizeVerification(run.results)
+                verification: summarizeVerification(run.results),
+                tokenUsage: summarizeTokenUsage(run.results)
             }])),
             comparisons,
             reviewArtifacts: artifacts
         };
-        await fs.writeFile(path.join(outputDirectory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
+        await writeJsonAtomic(path.join(outputDirectory, 'report.json'), report);
         printSummary(runs, comparisons, artifacts, outputDirectory, performance.now() - startedAt);
+}
+
+async function runPreflight(input: {
+    manifest: EvalRunManifest;
+    questions: AgentEvalQuestion[];
+    indexesConfig: Awaited<ReturnType<typeof loadRagIndexesConfig>>;
+}): Promise<void> {
+    console.log('[agent] Preflight：验证题集、精确索引身份与模型端点；不会生成 token。');
+    const checkedVariants = new Set<string>();
+    for (const mode of input.manifest.modes) {
+        const experiment = getEvaluationExperiment(mode as 'raw-only' | 'raw-wiki');
+        const profile = resolveRagIndexProfile(input.indexesConfig, input.manifest.profile);
+        const variant = resolveRagIndexVariant(profile, experiment.indexVariant);
+        const key = `${profile.id}/${variant.id}`;
+        if (checkedVariants.has(key)) continue;
+        const runtime = await openActiveIndex(profile.id, variant.id);
+        checkedVariants.add(key);
+        console.log(`[agent] Preflight 索引通过：${key}，构建于 ${runtime.manifest.createdAt}，chunks=${runtime.manifest.chunkCount ?? 'unknown'}。`);
+    }
+    await verifyModelEndpoint(input.manifest.model);
+    const maximumModelCalls = input.manifest.modes.length * input.questions.reduce((sum, question) =>
+        sum + Math.min(input.manifest.maxSteps, question.contract?.trajectory?.maxSteps ?? input.manifest.maxSteps), 0);
+    console.log([
+        `[agent] Preflight 模型通过：${input.manifest.model} @ ${new URL(process.env.BASE_URL!).origin}。`,
+        `[agent] 付费任务数：${input.questions.length * input.manifest.modes.length}；模型调用硬上限：${maximumModelCalls}。`,
+        `[agent] 单次最大输出：${input.manifest.maxOutputTokens} tokens；SDK 自动重试：0。`
+    ].join('\n'));
+}
+
+async function verifyModelEndpoint(model: string): Promise<void> {
+    const baseUrl = process.env.BASE_URL?.trim();
+    const apiKey = process.env.API_KEY?.trim();
+    if (!baseUrl || !apiKey) throw new Error('preflight requires BASE_URL and API_KEY');
+    const endpoint = new URL('models', `${baseUrl.replace(/\/+$/, '')}/`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+        const response = await fetch(endpoint, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+            signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`model endpoint returned ${response.status} ${response.statusText}`);
+        const payload = await response.json() as { data?: Array<{ id?: unknown }> };
+        const modelIds = (payload.data ?? []).flatMap(item => typeof item.id === 'string' ? [item.id] : []);
+        if (!modelIds.includes(model)) {
+            throw new Error(`configured model "${model}" was not returned by ${endpoint}; available: ${modelIds.join(', ') || 'none'}`);
+        }
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function updateReviewPair(
+    pairs: Map<string, { question: AgentEvalQuestion; rawOnly?: AgentEvalResult; rawWiki?: AgentEvalResult; traceFile?: string; traceId?: string }>,
+    question: AgentEvalQuestion,
+    mode: string,
+    result: AgentEvalResult,
+    traceId: string | undefined,
+    traceFile: string
+): void {
+    const pair = pairs.get(question.id) ?? { question };
+    if (mode === 'raw-only') pair.rawOnly = result;
+    else pair.rawWiki = result;
+    pair.traceId = traceId;
+    pair.traceFile = traceFile;
+    pairs.set(question.id, pair);
 }
 
 async function readOnlyTrace(traceDir: string): Promise<string> {
@@ -186,29 +343,6 @@ async function readOnlyTrace(traceDir: string): Promise<string> {
     return fs.readFile(path.join(traceDir, traceFiles[0]!), 'utf-8');
 }
 
-function validateQuestions(value: unknown): AgentEvalQuestion[] {
-    if (!Array.isArray(value)) throw new Error('agent eval questions must be a JSON array');
-    return value.map((item, index) => {
-        if (!item || typeof item !== 'object') throw new Error(`question ${index + 1} must be an object`);
-        const question = item as Partial<AgentEvalQuestion>;
-        if (!question.id?.trim() || !question.question?.trim()) {
-            throw new Error(`question ${index + 1} requires non-empty id and question`);
-        }
-        return {
-            id: question.id,
-            question: question.question,
-            ...(question.category ? { category: question.category } : {}),
-            ...(question.queryType ? { queryType: question.queryType } : {}),
-            ...(question.primaryStage ? { primaryStage: question.primaryStage } : {}),
-            ...(question.difficulty ? { difficulty: question.difficulty } : {}),
-            ...(question.expectedSource ? { expectedSource: question.expectedSource } : {}),
-            ...(question.expectedSources ? { expectedSources: question.expectedSources } : {}),
-            ...(question.expectedTerms ? { expectedTerms: question.expectedTerms } : {})
-            ,...(question.contract ? { contract: validateTaskContract(question.contract, `question ${question.id}.contract`) } : {})
-        };
-    });
-}
-
 async function sha256File(file: string): Promise<string> {
     return createHash('sha256').update(await fs.readFile(file)).digest('hex');
 }
@@ -216,6 +350,14 @@ async function sha256File(file: string): Promise<string> {
 async function readGitCommit(): Promise<string | undefined> {
     try {
         return (await execFileAsync('git', ['rev-parse', 'HEAD'])).stdout.trim() || undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+async function readGitStatus(): Promise<string | undefined> {
+    try {
+        return (await execFileAsync('git', ['status', '--short'])).stdout.trim() || undefined;
     } catch {
         return undefined;
     }
@@ -240,6 +382,19 @@ function summarizeVerification(results: ReturnType<typeof scoreAgentAnswer>[]) {
         passRate: verified.length ? Number((passed / verified.length).toFixed(4)) : 0,
         failedDimensions: Object.fromEntries(failures)
     };
+}
+
+function summarizeTokenUsage(results: ReturnType<typeof scoreAgentAnswer>[]) {
+    return results.reduce((total, result) => {
+        const usage = result.trace.tokenUsage;
+        return {
+            inputTokens: total.inputTokens + (usage?.inputTokens ?? 0),
+            outputTokens: total.outputTokens + (usage?.outputTokens ?? 0),
+            totalTokens: total.totalTokens + (usage?.totalTokens ?? 0),
+            estimatedInputTokens: total.estimatedInputTokens + (usage?.estimatedInputTokens ?? 0),
+            estimatedOutputTokens: total.estimatedOutputTokens + (usage?.estimatedOutputTokens ?? 0)
+        };
+    }, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedInputTokens: 0, estimatedOutputTokens: 0 });
 }
 
 function printSummary(

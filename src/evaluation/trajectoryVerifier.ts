@@ -91,19 +91,41 @@ function verifyAnswer(
     question: VerifiableQuestion,
     answer: string
 ): void {
-    if (contract.answer?.minTermCoverage === undefined) return;
-    const terms = question.expectedTerms ?? [];
+    if (!contract.answer) return;
     const normalized = answer.toLowerCase();
-    const coverage = terms.length
-        ? terms.filter(term => normalized.includes(term.toLowerCase())).length / terms.length
-        : 1;
-    checks.push(check(
-        'answer.term_coverage',
-        'result',
-        coverage >= contract.answer.minTermCoverage,
-        `term coverage ${coverage.toFixed(4)}; required ${contract.answer.minTermCoverage.toFixed(4)}`,
-        { coverage, expectedTerms: terms }
-    ));
+    if (contract.answer.minTermCoverage !== undefined) {
+        const terms = question.expectedTerms ?? [];
+        const coverage = terms.length
+            ? terms.filter(term => normalized.includes(term.toLowerCase())).length / terms.length
+            : 1;
+        checks.push(check(
+            'answer.term_coverage',
+            'result',
+            coverage >= contract.answer.minTermCoverage,
+            `term coverage ${coverage.toFixed(4)}; required ${contract.answer.minTermCoverage.toFixed(4)}`,
+            { coverage, expectedTerms: terms }
+        ));
+    }
+    if (contract.answer.requiredPhrasesAny?.length) {
+        const matched = contract.answer.requiredPhrasesAny.filter(phrase => normalized.includes(phrase.toLowerCase()));
+        checks.push(check(
+            'answer.required_phrase',
+            'result',
+            matched.length > 0,
+            matched.length ? `matched required phrase: ${matched[0]}` : 'no required phrase was found',
+            { requiredAny: contract.answer.requiredPhrasesAny, matched }
+        ));
+    }
+    if (contract.answer.forbiddenPhrases?.length) {
+        const matched = contract.answer.forbiddenPhrases.filter(phrase => normalized.includes(phrase.toLowerCase()));
+        checks.push(check(
+            'answer.forbidden_phrase',
+            'result',
+            matched.length === 0,
+            matched.length ? `forbidden phrases found: ${matched.join(', ')}` : 'no forbidden phrase was found',
+            { forbidden: contract.answer.forbiddenPhrases, matched }
+        ));
+    }
 }
 
 function verifyEvidence(
@@ -127,6 +149,18 @@ function verifyEvidence(
             expectedSources.length === 0 || matched.length > 0,
             matched.length ? `matched ${matched.length} expected source(s)` : 'no expected source was observed',
             { expectedSources, matched, observed: trajectory.evidenceSources }
+        ));
+    }
+    if (rule.requireAllExpectedSources && expectedSources.length > 0) {
+        const missing = expectedSources.filter(expected => !trajectory.evidenceSources.some(source =>
+            source.toLowerCase().includes(expected.toLowerCase())
+        ));
+        checks.push(check(
+            'evidence.all_sources',
+            'result',
+            missing.length === 0,
+            missing.length ? `missing expected sources: ${missing.join(', ')}` : 'all expected sources were observed',
+            { expectedSources, missing, observed: trajectory.evidenceSources }
         ));
     }
     if (rule.requireReadNote) {

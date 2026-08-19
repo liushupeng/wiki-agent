@@ -1,5 +1,13 @@
-import { TaskContract } from './taskContract.js';
+import { TaskContract, validateTaskContract } from './taskContract.js';
 import { VerificationReport } from './trajectoryVerifier.js';
+
+export type AgentEvalRubric = {
+    requiredFacts: string[];
+    forbiddenClaims: string[];
+    expectedBehavior: 'answer' | 'insufficient-evidence';
+    citationRequired: boolean;
+    failureTags: string[];
+};
 
 export type AgentEvalQuestion = {
     id: string;
@@ -12,7 +20,48 @@ export type AgentEvalQuestion = {
     expectedSources?: string[];
     expectedTerms?: string[];
     contract?: TaskContract;
+    rubric?: AgentEvalRubric;
 };
+
+export function validateAgentEvalQuestions(value: unknown): AgentEvalQuestion[] {
+    if (!Array.isArray(value)) throw new Error('agent eval questions must be a JSON array');
+    return value.map((item, index) => {
+        if (!item || typeof item !== 'object') throw new Error(`question ${index + 1} must be an object`);
+        const question = item as Partial<AgentEvalQuestion>;
+        if (!question.id?.trim() || !question.question?.trim()) {
+            throw new Error(`question ${index + 1} requires non-empty id and question`);
+        }
+        return {
+            id: question.id,
+            question: question.question,
+            ...(question.category ? { category: question.category } : {}),
+            ...(question.queryType ? { queryType: question.queryType } : {}),
+            ...(question.primaryStage ? { primaryStage: question.primaryStage } : {}),
+            ...(question.difficulty ? { difficulty: question.difficulty } : {}),
+            ...(question.expectedSource ? { expectedSource: question.expectedSource } : {}),
+            ...(question.expectedSources ? { expectedSources: validateStringArray(question.expectedSources, `question ${question.id}.expectedSources`) } : {}),
+            ...(question.expectedTerms ? { expectedTerms: validateStringArray(question.expectedTerms, `question ${question.id}.expectedTerms`) } : {}),
+            ...(question.contract ? { contract: validateTaskContract(question.contract, `question ${question.id}.contract`) } : {}),
+            ...(question.rubric ? { rubric: validateAgentEvalRubric(question.rubric, `question ${question.id}.rubric`) } : {})
+        };
+    });
+}
+
+export function validateAgentEvalRubric(value: unknown, label = 'agent eval rubric'): AgentEvalRubric {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
+    const rubric = value as Partial<AgentEvalRubric>;
+    if (rubric.expectedBehavior !== 'answer' && rubric.expectedBehavior !== 'insufficient-evidence') {
+        throw new Error(`${label}.expectedBehavior must be answer or insufficient-evidence`);
+    }
+    if (typeof rubric.citationRequired !== 'boolean') throw new Error(`${label}.citationRequired must be boolean`);
+    return {
+        requiredFacts: validateStringArray(rubric.requiredFacts, `${label}.requiredFacts`),
+        forbiddenClaims: validateStringArray(rubric.forbiddenClaims, `${label}.forbiddenClaims`),
+        expectedBehavior: rubric.expectedBehavior,
+        citationRequired: rubric.citationRequired,
+        failureTags: validateStringArray(rubric.failureTags, `${label}.failureTags`)
+    };
+}
 
 export function selectAgentEvalQuestions(
     questions: AgentEvalQuestion[],
@@ -100,6 +149,13 @@ export type AgentTraceMetrics = {
     toolFailures: ToolFailure[];
     terminationReason?: string;
     evidenceSources: string[];
+    tokenUsage?: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+        estimatedInputTokens: number;
+        estimatedOutputTokens: number;
+    };
 };
 
 export type AgentEvalResult = {
@@ -117,6 +173,7 @@ export type AgentEvalResult = {
     passed: boolean;
     trace: AgentTraceMetrics;
     verification?: VerificationReport;
+    rubric?: AgentEvalRubric;
 };
 
 const RAG_TOOL_NAMES = new Set(['search_notes', 'grep_notes', 'read_note', 'related_notes']);
@@ -145,6 +202,13 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
     let ragToolCallCount = 0;
     let runStart: JsonlV2Record | undefined;
     let runEnd: JsonlV2Record | undefined;
+    const tokenUsage = {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedInputTokens: 0,
+        estimatedOutputTokens: 0
+    };
 
     for (const record of records) {
         if (record.type === 'span_start') {
@@ -169,6 +233,13 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
         if (record.type !== 'span_end') continue;
         const start = starts.get(record.spanId);
         if (start?.name === 'wiki_agent.run') runEnd = record;
+        if (start?.name === 'gen_ai.chat') {
+            tokenUsage.inputTokens += numberAttribute(record, 'gen_ai.usage.input_tokens');
+            tokenUsage.outputTokens += numberAttribute(record, 'gen_ai.usage.output_tokens');
+            tokenUsage.totalTokens += numberAttribute(record, 'gen_ai.usage.total_tokens');
+            tokenUsage.estimatedInputTokens += numberAttribute(record, 'gen_ai.usage.input_tokens.estimated');
+            tokenUsage.estimatedOutputTokens += numberAttribute(record, 'gen_ai.usage.output_tokens.estimated');
+        }
         if (start?.name === 'rag.read_note') addSource(evidenceSources, stringAttribute(start, 'wiki_agent.rag.note_path'));
         if (start?.name === 'tool.execute' && record.status !== 'ok') {
             toolFailures.push({
@@ -189,7 +260,8 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
         ragToolUsageRate: totalToolCallCount === 0 ? 0 : round(ragToolCallCount / totalToolCallCount),
         toolFailures,
         ...(stringAttribute(runEnd, 'wiki_agent.termination_reason') ? { terminationReason: stringAttribute(runEnd, 'wiki_agent.termination_reason') } : {}),
-        evidenceSources: Array.from(evidenceSources)
+        evidenceSources: Array.from(evidenceSources),
+        tokenUsage
     };
 }
 
@@ -225,6 +297,7 @@ export function scoreAgentAnswer(
             && termCoverage >= (question.contract?.answer?.minTermCoverage ?? 0.6)
             && (question.contract?.strictness === 'hard' ? verification?.passed === true : true),
         trace,
+        ...(question.rubric ? { rubric: question.rubric } : {}),
         ...(verification ? { verification } : {})
     };
 }
@@ -251,6 +324,11 @@ function isJsonlV2Record(value: unknown): value is JsonlV2Record {
 
 function isRagTool(name: string): boolean {
     return RAG_TOOL_NAMES.has(name) || name.endsWith('_search_notes') || name.endsWith('_grep_notes') || name.endsWith('_read_note') || name.endsWith('_related_notes');
+}
+
+function numberAttribute(record: JsonlV2Record, key: string): number {
+    const value = record.attributes?.[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 function addRetrievedDocumentSources(target: Set<string>, serialized: string): void {
@@ -286,4 +364,11 @@ function timestampOf(value: string | undefined): number | undefined {
 
 function round(value: number): number {
     return Number(value.toFixed(4));
+}
+
+function validateStringArray(value: unknown, label: string): string[] {
+    if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || !item.trim())) {
+        throw new Error(`${label} must contain only non-empty strings`);
+    }
+    return value;
 }

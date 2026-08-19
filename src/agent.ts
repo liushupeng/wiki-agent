@@ -43,7 +43,9 @@ export class WikiAgent implements IAgent {
         );
         this.client = new OpenAI({
             baseURL: process.env.BASE_URL,
-            apiKey: process.env.API_KEY
+            apiKey: process.env.API_KEY,
+            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+            ...(config.requestTimeoutMs !== undefined ? { timeout: config.requestTimeoutMs } : {})
         });
     }
 
@@ -217,6 +219,7 @@ export class WikiAgent implements IAgent {
             messages: messages as any,
             temperature: this.config.temperature,
             reasoning_effort: "high",
+            ...(this.config.maxOutputTokens !== undefined ? { max_tokens: this.config.maxOutputTokens } : {}),
             tools: toolSchemas.length > 0 ? toolSchemas : undefined,
             stream: true,
             ...(shouldRequestDeepSeekUsage(process.env.BASE_URL)

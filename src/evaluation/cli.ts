@@ -18,6 +18,11 @@ export type AgentEvalArgs = {
     randomCount?: number;
     seed?: string;
     questionIds?: string[];
+    preflight?: boolean;
+    resumeDirectory?: string;
+    maxSteps?: number;
+    maxOutputTokens?: number;
+    maxNewQuestions?: number;
 };
 
 export type EvaluationCommand<T> =
@@ -110,6 +115,26 @@ export function parseAgentEvalArgs(args: string[]): AgentEvalArgs {
             runAll = true;
             continue;
         }
+        if (argument === '--preflight') {
+            result.preflight = true;
+            continue;
+        }
+        if (argument === '--resume') {
+            result.resumeDirectory = requireValue(args, ++index, '--resume');
+            continue;
+        }
+        if (argument === '--max-steps') {
+            result.maxSteps = parsePositiveInteger(requireValue(args, ++index, '--max-steps'), '--max-steps');
+            continue;
+        }
+        if (argument === '--max-output-tokens') {
+            result.maxOutputTokens = parsePositiveInteger(requireValue(args, ++index, '--max-output-tokens'), '--max-output-tokens');
+            continue;
+        }
+        if (argument === '--max-new-questions') {
+            result.maxNewQuestions = parsePositiveInteger(requireValue(args, ++index, '--max-new-questions'), '--max-new-questions');
+            continue;
+        }
         if (!argument?.startsWith('--') && !result.questionsFile) {
             result.questionsFile = argument;
             continue;
@@ -143,9 +168,9 @@ export function agentUsage(): string {
     return [
         'usage:',
         '  npm run eval:agent',
-        '  npm run eval:agent -- -- --profile <profileId> --variant raw-only|raw-wiki|both (--all | --random-count <n> [--seed <seed>] | --question-ids <id1,id2,...>) [questionsFile]',
+        '  npm run eval:agent -- -- --profile <profileId> --variant raw-only|raw-wiki|both (--all | --random-count <n> [--seed <seed>] | --question-ids <id1,id2,...>) [--preflight] [--resume <outputDir>] [--max-steps <n>] [--max-output-tokens <n>] [--max-new-questions <n>] [questionsFile]',
         '',
-        'Default profile: bm25-v1. Run without arguments prints this help and never calls an LLM. --all explicitly permits the full evaluation.'
+        'Default profile: bm25-v1. --preflight validates the exact index and model endpoint without generation. --max-new-questions 1 supports a one-question paid smoke run followed by --resume.'
     ].join('\n');
 }
 

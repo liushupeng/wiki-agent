@@ -204,7 +204,7 @@ wiki-agent/
 ├── config/              # RAG 索引/检索、知识源、MCP、write scopes 与评测配置
 ├── models/              # 本地 Transformers.js / ONNX 模型缓存
 ├── var/                 # 运行产物：索引、trace 等，不进入 Git
-├── docs/                # 代码导读
+├── docs/                # 外部设计参考资料
 ├── .env.example         # 运行配置模板
 └── package.json
 ```
@@ -740,6 +740,47 @@ Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，必须�
 npm run eval:agent -- -- --variant both --random-count 5 --seed baseline-1
 npm run eval:agent -- -- --variant raw-only --question-ids investment-pillars,raft-components
 npm run eval:agent -- -- --profile bm25-v1 --variant both --random-count 3 --seed bm25-baseline-1
+```
+
+### 12 题小型端到端闭环
+
+`evaluation/e2e/questions.json` 是独立于检索开发集和 Holdout 的小型 Agent 题集：10 道可回答题覆盖单来源事实、多条件、跨来源综合和指定来源解释，2 道负例要求在证据不足时明确说明缺口。每题同时包含确定性 `TaskContract` 和人工 rubric；不使用 LLM Judge。
+
+首次只运行当前 `raw-wiki` 配置，共 12 个 Agent 任务。一个任务可能包含多轮“规划—工具—回答”，所以不能把 12 题误写成 12 次 API 调用。当前合同与 `--max-steps 8` 共同给出的全题模型调用硬上限为 76；正常题通常低于上限。
+
+```powershell
+npm run build
+npm test
+
+# source config 改动后先免费重建本地索引
+npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
+
+# 免费 preflight：验证题集、精确索引和 /models，不生成 token
+npm run eval:agent -- -- --profile bm25-v1 --variant raw-wiki --all --preflight --max-steps 8 --max-output-tokens 2048 evaluation/e2e/questions.json
+
+# 波谷期只付费跑第一道；终端会打印本次输出目录
+npm run eval:agent -- -- --profile bm25-v1 --variant raw-wiki --all --max-steps 8 --max-output-tokens 2048 --max-new-questions 1 evaluation/e2e/questions.json
+
+# 检查第一题后，从同一目录继续剩余题目；已完成 result.json 不会重复调用模型
+npm run eval:agent -- -- --profile bm25-v1 --variant raw-wiki --all --max-steps 8 --max-output-tokens 2048 --resume var/evals/agent/<timestamp> evaluation/e2e/questions.json
+```
+
+付费评测固定 `SDK maxRetries=0`、请求超时 120 秒，并在每题成功后原子写入 `result.json`。API 或系统错误写入 `failure.json` 后立即停止；再次使用完全相同的题集、Git commit、模型和预算参数执行 `--resume` 即可。每次失败尝试保留在 `attempts/`，不会覆盖诊断 Trace。`run-manifest.json` 防止把不同代码、题集或模型的结果混入同一报告。
+
+`eval:agent` 执行模式（包括 `--preflight`）要求 Git 工作区干净；请先提交本轮实现，再运行上述命令。这样 `run-manifest.json` 中的 commit 才能准确代表实际执行代码。
+
+运行后打开 `var/evals/agent/<timestamp>/review/review.html`，按 rubric 在 `annotation-template.csv` 中填写：`correctness`、`completeness`、`groundedness`、`citationAccuracy`、`abstention` 和 `overallPass`。维度值使用 `1`、`0` 或 `na`；失败行必须填写一个或多个 `failureTag`。
+
+人工填写后执行完全离线的汇总：
+
+```powershell
+npm run eval:review -- -- --review-dir var/evals/agent/<timestamp>/review
+```
+
+该命令生成 `review-summary.json`，包含总体/分维度通过率、可回答题与负例的分组结果、失败类型分布及失败题重跑命令。完成代码修复后应创建新评测目录，只重跑失败题，避免把不同 Git commit 混进原断点目录：
+
+```powershell
+npm run eval:agent -- -- --profile bm25-v1 --variant raw-wiki --question-ids <失败ID列表> evaluation/e2e/questions.json
 ```
 
 已有 trace 可用同一 TaskContract 完全离线复核；`--answer-file` 仅在 contract 配置答案关键词覆盖率时需要：

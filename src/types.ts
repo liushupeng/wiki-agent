@@ -11,6 +11,9 @@ export interface AgentConfig {
     modelName: string;
     temperature: number;
     maxLoopSteps: number; // 熔断步数
+    maxOutputTokens?: number;
+    maxRetries?: number;
+    requestTimeoutMs?: number;
     traceDir?: string;
     telemetryBackend?: 'file' | 'otlp';
     otlpTracesEndpoint?: string;

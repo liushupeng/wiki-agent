@@ -6,10 +6,13 @@ export type TaskContract = {
     strictness?: ContractStrictness;
     answer?: {
         minTermCoverage?: number;
+        requiredPhrasesAny?: string[];
+        forbiddenPhrases?: string[];
     };
     evidence?: {
         expectedSources?: string[];
         requireSourceHit?: boolean;
+        requireAllExpectedSources?: boolean;
         requireReadNote?: boolean;
         minDistinctSources?: number;
         minimumSufficiency?: RequiredEvidenceSufficiency;
@@ -45,6 +48,8 @@ export function validateTaskContract(value: unknown, label = 'task contract'): T
         throw new Error(`${label}.strictness must be soft or hard`);
     }
     validateUnitInterval(contract.answer?.minTermCoverage, `${label}.answer.minTermCoverage`);
+    validateStringArray(contract.answer?.requiredPhrasesAny, `${label}.answer.requiredPhrasesAny`);
+    validateStringArray(contract.answer?.forbiddenPhrases, `${label}.answer.forbiddenPhrases`);
     validateStringArray(contract.evidence?.expectedSources, `${label}.evidence.expectedSources`);
     validatePositiveInteger(contract.evidence?.minDistinctSources, `${label}.evidence.minDistinctSources`);
     if (contract.evidence?.minimumSufficiency !== undefined

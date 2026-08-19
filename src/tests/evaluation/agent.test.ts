@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import test from 'node:test';
-import { collectAgentTraceMetrics, parseJsonlV2, scoreAgentAnswer, selectAgentEvalQuestions, summarizeAgentResultsByCategory } from '../../evaluation/agent.js';
+import { collectAgentTraceMetrics, parseJsonlV2, scoreAgentAnswer, selectAgentEvalQuestions, summarizeAgentResultsByCategory, validateAgentEvalQuestions } from '../../evaluation/agent.js';
 
 const traceId = 'a'.repeat(32);
 
@@ -8,6 +9,14 @@ test('collectAgentTraceMetrics reads JSONL v2 evidence, latency, tool metrics, a
     const records = parseJsonlV2([
         start('run', 'wiki_agent.run', '2026-01-01T00:00:00.000Z'),
         start('step', 'wiki_agent.step.1', '2026-01-01T00:00:01.000Z'),
+        start('model', 'gen_ai.chat', '2026-01-01T00:00:01.100Z'),
+        end('model', 'ok', '2026-01-01T00:00:01.900Z', {
+            'gen_ai.usage.input_tokens': 100,
+            'gen_ai.usage.output_tokens': 25,
+            'gen_ai.usage.total_tokens': 125,
+            'gen_ai.usage.input_tokens.estimated': 110,
+            'gen_ai.usage.output_tokens.estimated': 30
+        }),
         start('search', 'rag.search', '2026-01-01T00:00:02.000Z'),
         event('search', 'retrieval.result', '2026-01-01T00:00:03.000Z', {
             'gen_ai.retrieval.documents': JSON.stringify([
@@ -42,6 +51,13 @@ test('collectAgentTraceMetrics reads JSONL v2 evidence, latency, tool metrics, a
     assert.deepEqual(metrics.evidenceSources, ['raw/expected.md', 'raw/other.md', 'raw/read.md']);
     assert.deepEqual(metrics.toolFailures, [{ name: 'read_file', status: 'execution_failed', error: 'permission denied' }]);
     assert.equal(metrics.terminationReason, 'completed');
+    assert.deepEqual(metrics.tokenUsage, {
+        inputTokens: 100,
+        outputTokens: 25,
+        totalTokens: 125,
+        estimatedInputTokens: 110,
+        estimatedOutputTokens: 30
+    });
 });
 
 test('scoreAgentAnswer requires source evidence and 60 percent term coverage', () => {
@@ -108,6 +124,18 @@ test('summarizeAgentResultsByCategory groups latency and failure metrics', () =>
     const summary = summarizeAgentResultsByCategory([sample('a', true), sample('b', false)]);
     assert.equal(summary.a?.total, 1);
     assert.equal(summary.b?.averageSteps, 2);
+});
+
+test('validateAgentEvalQuestions preserves E2E rubrics and keeps legacy questions compatible', async () => {
+    const questions = validateAgentEvalQuestions(JSON.parse(
+        await fs.readFile('evaluation/e2e/questions.json', 'utf-8')
+    ));
+    assert.equal(questions.length, 12);
+    assert.equal(questions.filter(question => question.rubric?.expectedBehavior === 'insufficient-evidence').length, 2);
+    assert.equal(questions.filter(question => question.contract?.evidence?.requireAllExpectedSources).length, 2);
+    assert.deepEqual(validateAgentEvalQuestions([{ id: 'legacy', question: 'legacy question' }]), [
+        { id: 'legacy', question: 'legacy question' }
+    ]);
 });
 
 function start(spanId: string, name: string, at: string, attributes: Record<string, unknown> = {}) {
