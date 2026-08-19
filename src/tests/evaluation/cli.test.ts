@@ -24,13 +24,13 @@ test('CLI command parsers require explicit execution intent', () => {
     );
     assert.deepEqual(
         parseAgentEvalCommand(['--variant', 'both', '--random-count', '3', '--seed', '20260805']),
-        { action: 'run', args: { profile: 'bm25-v1', variant: 'both', randomCount: 3, seed: '20260805' } }
+        { action: 'run', args: { variant: 'both', randomCount: 3, seed: '20260805' } }
     );
     assert.throws(() => parseIndexKnowledgeCommand(['--variant', 'raw-only']), /--profile is required/);
     assert.throws(() => parseAgentEvalCommand(['--variant', 'both']), /choose --all/);
     assert.deepEqual(
         parseAgentEvalCommand(['--all']),
-        { action: 'run', args: { profile: 'bm25-v1', variant: 'both' } }
+        { action: 'run', args: { variant: 'both' } }
     );
 });
 
@@ -83,12 +83,18 @@ test('parseRecallEvalArgs defaults and separates variant from retriever', () => 
 
 test('parseAgentEvalArgs supports deterministic samples or explicit IDs', () => {
     assert.deepEqual(
-        parseAgentEvalArgs(['questions.json', '--profile', 'bm25-v1', '--variant', 'raw-only', '--random-count', '3', '--seed', 'baseline-1']),
-        { questionsFile: 'questions.json', profile: 'bm25-v1', variant: 'raw-only', randomCount: 3, seed: 'baseline-1' }
+        parseAgentEvalArgs(['questions.json', '--retrieval-profile', 'hybrid-bge-m3-rerank-v1', '--variant', 'raw-only', '--random-count', '3', '--seed', 'baseline-1']),
+        {
+            questionsFile: 'questions.json',
+            retrievalProfile: 'hybrid-bge-m3-rerank-v1',
+            variant: 'raw-only',
+            randomCount: 3,
+            seed: 'baseline-1'
+        }
     );
     assert.deepEqual(
         parseAgentEvalArgs(['--question-ids', 'investment-pillars, raft-components']),
-        { profile: 'bm25-v1', variant: 'both', questionIds: ['investment-pillars', 'raft-components'] }
+        { variant: 'both', questionIds: ['investment-pillars', 'raft-components'] }
     );
     assert.deepEqual(
         parseAgentEvalArgs([
@@ -100,7 +106,6 @@ test('parseAgentEvalArgs supports deterministic samples or explicit IDs', () => 
             '--max-new-questions', '1'
         ]),
         {
-            profile: 'bm25-v1',
             variant: 'both',
             preflight: true,
             resumeDirectory: 'var/evals/agent/run-1',
@@ -112,6 +117,7 @@ test('parseAgentEvalArgs supports deterministic samples or explicit IDs', () => 
 });
 
 test('parseAgentEvalArgs rejects ambiguous question selection', () => {
+    assert.throws(() => parseAgentEvalArgs(['--all', '--profile', 'bm25-v1']), /usage:/);
     assert.throws(
         () => parseAgentEvalArgs(['--random-count', '3', '--question-ids', 'one,two']),
         /--all, --random-count, and --question-ids cannot be used together/

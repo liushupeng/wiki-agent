@@ -186,7 +186,7 @@ npm run ask -- "检索我的 Agent 笔记"
 npm run ask -- --session <sessionId> "继续上一会话的任务"
 npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
 npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector
-npm run eval:agent -- -- --variant both --random-count 3 --seed demo
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant both --random-count 3 --seed demo
 npm run check:mcp
 npm test
 ```
@@ -737,9 +737,9 @@ Hit@5 78%、Hit@1 58%、34/50）计算。召回阶段的迭代路径是：
 Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，必须通过显式 CLI 参数选择可复现样本、指定题目，或用 `--all` 明确允许全量运行；无参数只显示帮助且绝不调用 LLM：
 
 ```powershell
-npm run eval:agent -- -- --variant both --random-count 5 --seed baseline-1
-npm run eval:agent -- -- --variant raw-only --question-ids investment-pillars,raft-components
-npm run eval:agent -- -- --profile bm25-v1 --variant both --random-count 3 --seed bm25-baseline-1
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant both --random-count 5 --seed baseline-1
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --question-ids investment-pillars,raft-components
+npm run eval:agent -- -- --retrieval-profile bm25-v1 --variant both --random-count 3 --seed bm25-baseline-1
 ```
 
 ### 12 题小型端到端闭环
@@ -752,17 +752,18 @@ npm run eval:agent -- -- --profile bm25-v1 --variant both --random-count 3 --see
 npm run build
 npm test
 
-# source config 改动后先免费重建本地索引
+# source config 改动后先免费重建 Hybrid 管线所需的两个本地索引
 npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
+npm run index:knowledge -- -- --profile bge-m3-v1 --variant raw-wiki
 
-# 免费 preflight：验证题集、精确索引和 /models，不生成 token
-npm run eval:agent -- -- --profile bm25-v1 --variant raw-wiki --all --preflight --max-steps 8 --max-output-tokens 2048 evaluation/e2e/questions.json
+# 免费 preflight：实际执行一次完整 Hybrid 检索并验证 /models，不生成 token
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --all --preflight --max-steps 8 --max-output-tokens 2048 evaluation/e2e/questions.json
 
 # 波谷期只付费跑第一道；终端会打印本次输出目录
-npm run eval:agent -- -- --profile bm25-v1 --variant raw-wiki --all --max-steps 8 --max-output-tokens 2048 --max-new-questions 1 evaluation/e2e/questions.json
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --all --max-steps 8 --max-output-tokens 2048 --max-new-questions 1 evaluation/e2e/questions.json
 
 # 检查第一题后，从同一目录继续剩余题目；已完成 result.json 不会重复调用模型
-npm run eval:agent -- -- --profile bm25-v1 --variant raw-wiki --all --max-steps 8 --max-output-tokens 2048 --resume var/evals/agent/<timestamp> evaluation/e2e/questions.json
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --all --max-steps 8 --max-output-tokens 2048 --resume var/evals/agent/<timestamp> evaluation/e2e/questions.json
 ```
 
 付费评测固定 `SDK maxRetries=0`、请求超时 120 秒，并在每题成功后原子写入 `result.json`。API 或系统错误写入 `failure.json` 后立即停止；再次使用完全相同的题集、Git commit、模型和预算参数执行 `--resume` 即可。每次失败尝试保留在 `attempts/`，不会覆盖诊断 Trace。`run-manifest.json` 防止把不同代码、题集或模型的结果混入同一报告。
@@ -780,7 +781,7 @@ npm run eval:review -- -- --review-dir var/evals/agent/<timestamp>/review
 该命令生成 `review-summary.json`，包含总体/分维度通过率、可回答题与负例的分组结果、失败类型分布及失败题重跑命令。完成代码修复后应创建新评测目录，只重跑失败题，避免把不同 Git commit 混进原断点目录：
 
 ```powershell
-npm run eval:agent -- -- --profile bm25-v1 --variant raw-wiki --question-ids <失败ID列表> evaluation/e2e/questions.json
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --question-ids <失败ID列表> evaluation/e2e/questions.json
 ```
 
 已有 trace 可用同一 TaskContract 完全离线复核；`--answer-file` 仅在 contract 配置答案关键词覆盖率时需要：
@@ -792,7 +793,7 @@ npm run eval:verify -- -- --trace var/traces/<trace>.jsonl --question-id <id> --
 
 `strictness: "hard"` 的 contract 失败时命令返回非零退出码；`soft` 仍输出所有 result/process/safety 检查，但不用于 CI 硬门禁。主观答案质量预留独立 judge seam，核心复核不依赖付费模型。
 
-`--profile` 选择索引 profile（默认 `bm25-v1`）。`--all`、`--random-count` 与 `--question-ids` 互斥；`--seed` 仅可与 `--random-count` 一起使用。全量 Agent 评测必须明确传入 `--all`。`--help` 可显示三条命令的完整用法；非法参数会同时输出错误和 usage。旧的 `RAG_EVAL_MODE`、`AGENT_EVAL_RANDOM_COUNT`、`AGENT_EVAL_RANDOM_SEED` 和 `AGENT_EVAL_QUESTION_IDS` 环境变量不再作为评测入口读取。
+`eval:agent` 的 `--retrieval-profile` 选择完整检索管线；省略时使用 `config/rag.retrieval.jsonc` 的 `activeRetrievalProfile`。资料范围只由 `--variant raw-only|raw-wiki|both` 决定。`--all`、`--random-count` 与 `--question-ids` 互斥；`--seed` 仅可与 `--random-count` 一起使用。全量 Agent 评测必须明确传入 `--all`。
 
 双组 Agent 输出写入 `var/evals/agent/<time>/`：`report.json` 含 Git/题库 SHA、模型和 source/profile/variant identity、总体与分类汇总及 raw/wiki lift；`review/` 含匿名 A/B 的 `review.jsonl`、CSV、HTML 与 `annotation-template.csv`。盲测映射只保存在 `blind-mapping.internal.json`，勿交给标注者。`npm run build` 与 `node --test` 均不调用 LLM。
 

@@ -29,7 +29,7 @@ async function main(): Promise<void> {
         ...summary,
         rerunQuestionIds: summary.failedQuestionIds.join(','),
         rerunCommand: summary.failedQuestionIds.length
-            ? `npm run eval:agent -- -- --profile bm25-v1 --variant raw-wiki --question-ids ${summary.failedQuestionIds.join(',')} evaluation/e2e/questions.json`
+            ? `npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --question-ids ${summary.failedQuestionIds.join(',')} evaluation/e2e/questions.json`
             : undefined
     };
     const outputPath = path.join(reviewDirectory, 'review-summary.json');

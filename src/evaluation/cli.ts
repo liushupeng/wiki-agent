@@ -13,7 +13,7 @@ export type RecallEvalArgs = {
 
 export type AgentEvalArgs = {
     questionsFile?: string;
-    profile: string;
+    retrievalProfile?: string;
     variant: 'raw-only' | 'raw-wiki' | 'both';
     randomCount?: number;
     seed?: string;
@@ -84,13 +84,13 @@ export function parseAgentEvalCommand(args: string[]): EvaluationCommand<AgentEv
 }
 
 export function parseAgentEvalArgs(args: string[]): AgentEvalArgs {
-    const result: AgentEvalArgs = { profile: 'bm25-v1', variant: 'both' };
+    const result: AgentEvalArgs = { variant: 'both' };
     let runAll = false;
     for (let index = 0; index < args.length; index += 1) {
         const argument = args[index];
         if (argument === '--') continue;
-        if (argument === '--profile') {
-            result.profile = requireValue(args, ++index, '--profile');
+        if (argument === '--retrieval-profile') {
+            result.retrievalProfile = requireValue(args, ++index, '--retrieval-profile');
             continue;
         }
         if (argument === '--variant') {
@@ -168,9 +168,9 @@ export function agentUsage(): string {
     return [
         'usage:',
         '  npm run eval:agent',
-        '  npm run eval:agent -- -- --profile <profileId> --variant raw-only|raw-wiki|both (--all | --random-count <n> [--seed <seed>] | --question-ids <id1,id2,...>) [--preflight] [--resume <outputDir>] [--max-steps <n>] [--max-output-tokens <n>] [--max-new-questions <n>] [questionsFile]',
+        '  npm run eval:agent -- -- [--retrieval-profile <retrievalProfileId>] --variant raw-only|raw-wiki|both (--all | --random-count <n> [--seed <seed>] | --question-ids <id1,id2,...>) [--preflight] [--resume <outputDir>] [--max-steps <n>] [--max-output-tokens <n>] [--max-new-questions <n>] [questionsFile]',
         '',
-        'Default profile: bm25-v1. --preflight validates the exact index and model endpoint without generation. --max-new-questions 1 supports a one-question paid smoke run followed by --resume.'
+        'Default retrieval profile: activeRetrievalProfile from config/rag.retrieval.jsonc. --preflight validates every index required by the retrieval pipeline and the model endpoint without generation.'
     ].join('\n');
 }
 

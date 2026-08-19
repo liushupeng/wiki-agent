@@ -42,7 +42,7 @@ function sampleManifest(): EvalRunManifest {
         questionSetSha256: 'hash',
         selectedQuestionIds: ['question'],
         modes: ['raw-wiki'],
-        profile: 'bm25-v1',
+        retrievalProfile: 'hybrid-bge-m3-metadata-source-aggregate-v1',
         model: 'deepseek-v4-pro',
         maxSteps: 8,
         maxOutputTokens: 2048,

@@ -25,7 +25,8 @@ import {
     writeJsonAtomic
 } from '../../src/evaluation/evalCheckpoint.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } from '../../src/rag/indexProfiles.js';
-import { openActiveIndex } from '../../src/rag/indexRuntime.js';
+import { loadRetrievalProfilesConfig, resolveRetrievalProfile } from '../../src/rag/retrievalProfiles.js';
+import { openRetriever } from '../../src/rag/retrievalPipeline.js';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -71,6 +72,11 @@ async function main(): Promise<void> {
     const maxSteps = arguments_.maxSteps ?? DEFAULT_EVAL_MAX_STEPS;
     const maxOutputTokens = arguments_.maxOutputTokens ?? DEFAULT_EVAL_MAX_OUTPUT_TOKENS;
     const indexesConfig = await loadRagIndexesConfig();
+    const retrievalProfilesConfig = await loadRetrievalProfilesConfig();
+    const retrievalProfile = resolveRetrievalProfile(retrievalProfilesConfig, arguments_.retrievalProfile);
+    const variantProfileId = retrievalProfile.mode === 'single'
+        ? retrievalProfile.indexProfile
+        : retrievalProfile.sparseProfile;
     const gitCommit = await readGitCommit();
     const gitStatus = await readGitStatus();
     if (!gitCommit) throw new Error('agent evaluation requires a Git commit for reproducibility');
@@ -83,14 +89,14 @@ async function main(): Promise<void> {
         questionSetSha256: await sha256File(questionsFile),
         selectedQuestionIds: selectedQuestions.map(question => question.id),
         modes: experimentModes,
-        profile: arguments_.profile,
+        retrievalProfile: retrievalProfile.id,
         model: process.env.MODEL_NAME ?? 'deepseek-v4-flash',
         maxSteps,
         maxOutputTokens,
         gitCommit,
         createdAt: new Date().toISOString()
     };
-    await runPreflight({ manifest, questions: selectedQuestions, indexesConfig });
+    await runPreflight({ manifest, questions: selectedQuestions, indexesConfig, variantProfileId });
     if (arguments_.preflight) return;
 
     const outputDirectory = arguments_.resumeDirectory
@@ -104,7 +110,7 @@ async function main(): Promise<void> {
     }
     console.log([
         `[agent] 已选 ${selectedQuestions.length}/${questions.length} 道题；变体：${experimentModes.join(', ')}。`,
-        `[agent] Profile：${arguments_.profile}。`,
+        `[agent] 检索 Profile：${manifest.retrievalProfile}。`,
         `[agent] 模型：${manifest.model}；全局最大步骤：${maxSteps}；最大输出：${maxOutputTokens} tokens；API 自动重试：0。`,
         `[agent] 输出目录：${outputDirectory}`,
         arguments_.resumeDirectory ? '[agent] 断点续跑：已完成题目将从 result.json 恢复，不会再次调用模型。' : ''
@@ -118,10 +124,10 @@ async function main(): Promise<void> {
     let newQuestionsExecuted = 0;
         for (const mode of experimentModes) {
             const experiment = getEvaluationExperiment(mode);
-            const profile = resolveRagIndexProfile(indexesConfig, arguments_.profile);
+            const profile = resolveRagIndexProfile(indexesConfig, variantProfileId);
             const variant = resolveRagIndexVariant(profile, experiment.indexVariant);
             const modeStartedAt = performance.now();
-            console.log(`[agent] [${mode}] 正在初始化 ${profile.id}/${variant.id}（MCP、工具与索引）…`);
+            console.log(`[agent] [${mode}] 正在初始化 ${manifest.retrievalProfile}/${variant.id}（MCP、工具与索引）…`);
             const registry = new ToolRegistry();
             const exposureController = new ToolExposureController();
             const mcpRegistration = await registerConfiguredMcpTools(registry);
@@ -129,7 +135,12 @@ async function main(): Promise<void> {
             for (const tool of await createDefaultTools({
                 skipToolNames: localToolNamesCoveredByMcp,
                 exposureController,
-                rag: { indexProfile: profile.id, indexVariant: variant.id, sourceConfigPath: variant.sourceConfigPath }
+                rag: {
+                    indexProfile: profile.id,
+                    retrievalProfile: manifest.retrievalProfile,
+                    indexVariant: variant.id,
+                    sourceConfigPath: variant.sourceConfigPath
+                }
             })) {
                 registry.register(tool);
             }
@@ -243,14 +254,19 @@ async function main(): Promise<void> {
             questionsFile, outputDirectory,
             metadata: {
                 gitCommit: manifest.gitCommit, questionSetSha256: manifest.questionSetSha256,
-                profile: arguments_.profile,
+                retrievalProfile: manifest.retrievalProfile,
                 model: manifest.model, temperature: 0.1, maxSteps, maxOutputTokens, maxRetries: 0,
                 selectedQuestionIds: selectedQuestions.map(question => question.id), executedAt: new Date().toISOString(),
                 experiments: await Promise.all(Object.keys(runs).map(async mode => {
                     const experiment = getEvaluationExperiment(mode as 'raw-only' | 'raw-wiki');
-                    const profile = resolveRagIndexProfile(indexesConfig, arguments_.profile);
+                    const profile = resolveRagIndexProfile(indexesConfig, variantProfileId);
                     const variant = resolveRagIndexVariant(profile, experiment.indexVariant);
-                    return { mode, indexProfile: profile.id, indexVariant: variant.id, sourceConfig: await getSourceConfigIdentity(variant.sourceConfigPath) };
+                    return {
+                        mode,
+                        retrievalProfile: manifest.retrievalProfile,
+                        indexVariant: variant.id,
+                        sourceConfig: await getSourceConfigIdentity(variant.sourceConfigPath)
+                    };
                 }))
             },
             runs,
@@ -271,18 +287,20 @@ async function runPreflight(input: {
     manifest: EvalRunManifest;
     questions: AgentEvalQuestion[];
     indexesConfig: Awaited<ReturnType<typeof loadRagIndexesConfig>>;
+    variantProfileId: string;
 }): Promise<void> {
-    console.log('[agent] Preflight：验证题集、精确索引身份与模型端点；不会生成 token。');
+    console.log('[agent] Preflight：验证题集、完整检索管线与模型端点；不会生成 token。');
     const checkedVariants = new Set<string>();
     for (const mode of input.manifest.modes) {
         const experiment = getEvaluationExperiment(mode as 'raw-only' | 'raw-wiki');
-        const profile = resolveRagIndexProfile(input.indexesConfig, input.manifest.profile);
+        const profile = resolveRagIndexProfile(input.indexesConfig, input.variantProfileId);
         const variant = resolveRagIndexVariant(profile, experiment.indexVariant);
-        const key = `${profile.id}/${variant.id}`;
+        const key = `${input.manifest.retrievalProfile}/${variant.id}`;
         if (checkedVariants.has(key)) continue;
-        const runtime = await openActiveIndex(profile.id, variant.id);
+        const retriever = await openRetriever(input.manifest.retrievalProfile, variant.id);
+        const probe = await retriever.retrieve(input.questions[0]!.question, { topK: 3 });
         checkedVariants.add(key);
-        console.log(`[agent] Preflight 索引通过：${key}，构建于 ${runtime.manifest.createdAt}，chunks=${runtime.manifest.chunkCount ?? 'unknown'}。`);
+        console.log(`[agent] Preflight 检索通过：${key}，返回 ${probe.evidences.length} 条证据，管线耗时 ${Math.round(probe.elapsedMs.total)} ms。`);
     }
     await verifyModelEndpoint(input.manifest.model);
     const maximumModelCalls = input.manifest.modes.length * input.questions.reduce((sum, question) =>

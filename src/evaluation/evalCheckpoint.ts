@@ -8,7 +8,7 @@ export type EvalRunManifest = {
     questionSetSha256: string;
     selectedQuestionIds: string[];
     modes: string[];
-    profile: string;
+    retrievalProfile: string;
     model: string;
     maxSteps: number;
     maxOutputTokens: number;
@@ -70,7 +70,7 @@ export async function validateEvalResumeManifest(
         questionSetSha256: manifest.questionSetSha256,
         selectedQuestionIds: manifest.selectedQuestionIds,
         modes: manifest.modes,
-        profile: manifest.profile,
+        retrievalProfile: manifest.retrievalProfile,
         model: manifest.model,
         maxSteps: manifest.maxSteps,
         maxOutputTokens: manifest.maxOutputTokens,
