@@ -179,6 +179,7 @@ async function main(): Promise<void> {
                     const agent = new WikiAgent({
                         modelName: manifest.model, temperature: 0.1,
                         maxLoopSteps: effectiveMaxSteps,
+                        maxRagCalls: question.contract?.tools?.maxRagCalls,
                         maxOutputTokens,
                         maxRetries: 0,
                         requestTimeoutMs: EVAL_REQUEST_TIMEOUT_MS,

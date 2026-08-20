@@ -6,6 +6,7 @@ import test from 'node:test';
 import { TfEmbedder, embedText } from '../../rag/embeddings.js';
 import { getIndexPaths, parseRagIndexesConfig, resolveRagIndexProfile } from '../../rag/indexProfiles.js';
 import { writeIndexManifest } from '../../rag/indexRuntime.js';
+import type { RetrievalRuntime } from '../../rag/retrievalRuntime.js';
 import { IndexedChunk } from '../../rag/types.js';
 import { JsonVectorStore } from '../../rag/vectorStore.js';
 import { GrepNotesTool, ReadNoteTool, RelatedNotesTool, SearchNotesTool } from '../../tools/ragTool.js';
@@ -119,6 +120,76 @@ test('SearchNotesTool validates arguments', () => {
 
     assert.deepEqual(tool.validateArgs({}), ['query must be a non-empty string']);
     assert.deepEqual(tool.validateArgs({ query: 'agent', topK: 0 }), ['topK must be a positive number']);
+});
+
+test('SearchNotesTool escalates to its fallback profile only when the primary returns no evidence', async () => {
+    const calls: string[] = [];
+    const retrievalRuntime: RetrievalRuntime = {
+        async retrieve(request) {
+            calls.push(request.retrievalProfile!);
+            const evidence = request.retrievalProfile === 'deep-v1'
+                ? [{
+                    id: 'source.md#1',
+                    source: 'source.md',
+                    text: 'grounded answer',
+                    start: 0,
+                    end: 15,
+                    vector: [],
+                    chunkIds: ['source.md#1'],
+                    anchorId: 'source.md#1',
+                    fusionScore: 1
+                }]
+                : [];
+            return {
+                profile: {
+                    id: request.retrievalProfile!,
+                    mode: 'single',
+                    indexProfile: 'bm25-v1',
+                    candidateLimit: 20
+                },
+                run: {
+                    profile: request.retrievalProfile!,
+                    query: request.query,
+                    sparseCandidates: [],
+                    denseCandidates: [],
+                    fusedCandidates: [],
+                    rerankedCandidates: [],
+                    sourceLocalCandidates: [],
+                    anchorCandidates: [],
+                    assembledEvidences: evidence,
+                    rerankedEvidences: evidence,
+                    evidences: evidence,
+                    elapsedMs: {
+                        sparse: 0, dense: 0, candidateCache: 0, fusion: 0, chunkRerank: 0,
+                        sourceLocal: 0, evidenceAssembly: 0, evidenceRerank: 0, total: 0
+                    },
+                    diagnostics: {
+                        candidateCounts: {
+                            sparse: 0, dense: 0, fusion: 0, chunkRerank: 0,
+                            sourceLocalRerankDocuments: 0, sourceLocal: 0, anchors: 0,
+                            evidenceAssembly: evidence.length, evidenceRerank: 0, final: evidence.length
+                        },
+                        cache: {
+                            candidates: { requests: 0, hits: 0, misses: 0 },
+                            reranker: { requests: 0, hits: 0, misses: 0 }
+                        }
+                    }
+                },
+                metrics: { retrieverCacheHit: false, retrieverOpenMs: 0, queueWaitMs: 0 }
+            };
+        }
+    };
+
+    const result = await new SearchNotesTool({
+        retrievalProfile: 'balanced-v1',
+        fallbackRetrievalProfile: 'deep-v1',
+        retrievalRuntime
+    }).execute({ query: 'answer', topK: 1 });
+
+    assert.equal(result.status, 'success');
+    assert.deepEqual(calls, ['balanced-v1', 'deep-v1']);
+    assert.equal(result.metadata?.fallbackUsed, true);
+    assert.equal(result.metadata?.retrievalProfile, 'deep-v1');
 });
 
 test('GrepNotesTool validates arguments', () => {

@@ -49,7 +49,7 @@ class TestMemory implements IMemory {
 }
 
 class TestRegistry implements IToolRegistry {
-    readonly tool = new SafeTool();
+    constructor(readonly tool: IAgentTool = new SafeTool()) {}
     readonly executeCalls: Array<{ name: string; argsStr: string }> = [];
     nextResult?: ToolResult;
 
@@ -78,8 +78,10 @@ function createAgent(options: {
     memory?: TestMemory;
     registry?: TestRegistry;
     maxLoopSteps?: number;
+    maxRagCalls?: number;
     capturePromptArtifacts?: boolean;
     traceArtifactDir?: string;
+    autoExportFileTrace?: boolean;
     traceExporter?: (options: TraceExportOptions) => Promise<TraceExportReport>;
 }): WikiAgent {
     process.env.API_KEY = process.env.API_KEY ?? 'test-api-key';
@@ -88,9 +90,11 @@ function createAgent(options: {
         modelName: 'test-model',
         temperature: 0,
         maxLoopSteps: options.maxLoopSteps ?? 5,
+        maxRagCalls: options.maxRagCalls,
         traceDir: options.traceDir,
         capturePromptArtifacts: options.capturePromptArtifacts,
         traceArtifactDir: options.traceArtifactDir,
+        autoExportFileTrace: options.autoExportFileTrace,
         approvalMode: 'auto'
     };
 
@@ -111,12 +115,15 @@ function createAgent(options: {
     );
 }
 
-function attachFakeClient(agent: WikiAgent, streams: ChatChunk[][]): void {
+function attachFakeClient(agent: WikiAgent, streams: ChatChunk[][], requests: unknown[] = []): void {
     let callIndex = 0;
     const fakeClient = {
         chat: {
             completions: {
-                create: async () => toAsyncIterable(streams[callIndex++] ?? [])
+                create: async (request: unknown) => {
+                    requests.push(request);
+                    return toAsyncIterable(streams[callIndex++] ?? []);
+                }
             }
         }
     };
@@ -161,6 +168,22 @@ test('WikiAgent.run returns final streamed content without tool calls', async ()
     const events = await readTraceEvents(traceDir);
     const runEnd = events.find(event => event.type === 'span_end' && event.spanId === events.find(start => start.name === 'wiki_agent.run')?.spanId);
     assert.equal(runEnd?.status, 'ok');
+});
+
+test('WikiAgent logs an explicit completion marker after the final step', async () => {
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-completion-log-'));
+    const agent = createAgent({ traceDir, autoExportFileTrace: false });
+    attachFakeClient(agent, [[{ choices: [{ delta: { content: 'done' } }] }]]);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...values: unknown[]) => logs.push(values.map(String).join(' '));
+    try {
+        await agent.run('finish visibly', () => {});
+    } finally {
+        console.log = originalLog;
+    }
+
+    assert.match(logs.at(-1) ?? '', /任务完成.*Step 1/);
 });
 
 test('WikiAgent records streamed cache usage on the model span', async () => {
@@ -292,6 +315,92 @@ test('WikiAgent.run executes tool calls and continues replanning', async () => {
     assert.equal((toolSpan?.attributes as Record<string, unknown>)?.['tool.arguments.preview'], '{"value":"ok"}');
     assert.match((toolSpan?.attributes as Record<string, unknown>)?.['tool.arguments.sha256'] as string, /^[a-f0-9]{64}$/);
     assert.equal(events.filter(event => event.type === 'span_end').length > 0, true);
+});
+
+test('WikiAgent hides RAG tools and reports evidence budget after the runtime limit', async () => {
+    class RagSafeTool extends SafeTool {
+        readonly name = 'search_notes';
+        readonly permission = 'rag' as const;
+        readonly schema = {
+            type: 'function' as const,
+            function: {
+                name: 'search_notes',
+                description: 'test RAG tool',
+                parameters: { type: 'object', properties: {}, required: [] }
+            }
+        };
+    }
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-rag-budget-'));
+    const memory = new TestMemory();
+    const registry = new TestRegistry(new RagSafeTool());
+    registry.nextResult = {
+        status: 'success',
+        data: { matches: [{ source: 'notes/evidence.md', chunkId: 'evidence#1', citation: 'notes/evidence.md' }] }
+    };
+    const agent = createAgent({ traceDir, memory, registry, maxRagCalls: 1, autoExportFileTrace: false });
+    const requests: Array<{ tools?: unknown[] }> = [];
+    attachFakeClient(agent, [
+        [{
+            choices: [{
+                delta: {
+                    tool_calls: [{
+                        index: 0,
+                        id: 'call_rag',
+                        function: { name: 'search_notes', arguments: '{}' }
+                    }]
+                }
+            }]
+        }],
+        [{ choices: [{ delta: { content: 'done' } }] }]
+    ], requests);
+
+    assert.equal(await agent.run('use one RAG call', () => {}), 'done');
+    assert.equal(requests[0]?.tools?.length, 1);
+    assert.equal(requests[1]?.tools?.length ?? 0, 0);
+    const toolMessage = memory.messages.find(message => message.role === 'tool');
+    assert.match(String(toolMessage?.content), /RUNTIME_EVIDENCE_POLICY/);
+    assert.match(String(toolMessage?.content), /rag_calls_remaining=0/);
+});
+
+test('WikiAgent replaces an unsupported final claim after an empty RAG search', async () => {
+    class RagSafeTool extends SafeTool {
+        readonly name = 'search_notes';
+        readonly permission = 'rag' as const;
+        readonly schema = {
+            type: 'function' as const,
+            function: {
+                name: 'search_notes',
+                description: 'test RAG tool',
+                parameters: { type: 'object', properties: {}, required: [] }
+            }
+        };
+    }
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-evidence-gate-'));
+    const memory = new TestMemory();
+    const registry = new TestRegistry(new RagSafeTool());
+    const agent = createAgent({ traceDir, memory, registry, maxRagCalls: 2, autoExportFileTrace: false });
+    attachFakeClient(agent, [
+        [{
+            choices: [{
+                delta: {
+                    tool_calls: [{
+                        index: 0,
+                        id: 'call_empty_rag',
+                        function: { name: 'search_notes', arguments: '{}' }
+                    }]
+                }
+            }]
+        }],
+        [{ choices: [{ delta: { content: 'The unsupported answer is 42.' } }] }]
+    ]);
+
+    let visible = '';
+    const result = await agent.run('find a missing fact', chunk => { visible += chunk; });
+
+    assert.match(result, /无法确认/);
+    assert.equal(visible, result);
+    assert.doesNotMatch(visible, /42/);
+    assert.equal(memory.messages.at(-1)?.content, result);
 });
 
 test('WikiAgent records bounded tool error messages in failed tool spans', async () => {

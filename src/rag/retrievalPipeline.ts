@@ -169,16 +169,35 @@ export function linearScoreFusion(priorScores: number[], rerankerScores: number[
 }
 
 export function formatRerankDocument(
-    item: Pick<TextChunk, 'source' | 'text' | 'titlePath' | 'tags'>,
+    item: Pick<TextChunk, 'source' | 'text' | 'titlePath' | 'tags' | 'frontmatter'>,
     mode: 'text' | 'metadata-prefixed' = 'text'
 ): string {
     if (mode === 'text') return item.text;
     const metadata = [
         `source: ${item.source}`,
         ...(item.titlePath?.length ? [`title: ${item.titlePath.join(' > ')}`] : []),
-        ...(item.tags?.length ? [`tags: ${item.tags.join(', ')}`] : [])
+        ...(item.tags?.length ? [`tags: ${item.tags.join(', ')}`] : []),
+        ...(readFrontmatterText(item, 'knowledgeVersion') ? [`version: ${readFrontmatterText(item, 'knowledgeVersion')}`] : []),
+        ...(readFrontmatterText(item, 'knowledgeAuthority') ? [`authority: ${readFrontmatterText(item, 'knowledgeAuthority')}`] : []),
+        ...(readFrontmatterText(item, 'knowledgeQuality') ? [`quality: ${readFrontmatterText(item, 'knowledgeQuality')}`] : []),
+        ...(readFrontmatterText(item, 'knowledgeConsistency') ? [`consistency: ${readFrontmatterText(item, 'knowledgeConsistency')}`] : [])
     ];
     return `${metadata.join('\n')}\n\n${item.text}`;
+}
+
+export function governanceRankingPrior(item: Pick<TextChunk, 'frontmatter'>): number {
+    const authority = readFrontmatterText(item, 'knowledgeAuthority');
+    const quality = Number(readFrontmatterText(item, 'knowledgeQuality'));
+    const consistency = readFrontmatterText(item, 'knowledgeConsistency');
+    const authorityPrior = authority === 'high' ? 0.04 : authority === 'low' ? -0.04 : 0;
+    const qualityPrior = Number.isFinite(quality) ? (quality - 0.5) * 0.06 : 0;
+    const consistencyPrior = consistency === 'conflicted' ? -0.03 : consistency === 'conditional' ? -0.01 : 0;
+    return authorityPrior + qualityPrior + consistencyPrior;
+}
+
+function readFrontmatterText(item: Pick<TextChunk, 'frontmatter'>, key: string): string | undefined {
+    const value = item.frontmatter?.[key];
+    return typeof value === 'string' ? value : value?.join(', ');
 }
 
 export function selectLexicalCandidates(query: string, chunks: TextChunk[], limit: number): TextChunk[] {
@@ -251,8 +270,19 @@ function createSingleRetriever(
                     formatRerankDocument(item, profile.rerankDocumentMode)
                 ));
                 rerankedCandidates = candidates
-                    .map((item, rank) => ({ ...item, chunkRerankScore: scores[rank]! }))
-                    .sort((left, right) => right.chunkRerankScore! - left.chunkRerankScore! || right.fusionScore - left.fusionScore);
+                    .map((item, rank) => {
+                        const prior = governanceRankingPrior(item);
+                        return {
+                            ...item,
+                            chunkRerankScore: scores[rank]!,
+                            ...(prior === 0 ? {} : { chunkRankingScore: scores[rank]! + prior })
+                        };
+                    })
+                    .sort((left, right) =>
+                        (right.chunkRankingScore ?? right.chunkRerankScore!)
+                        - (left.chunkRankingScore ?? left.chunkRerankScore!)
+                        || right.fusionScore - left.fusionScore
+                    );
             }
             const rerankElapsed = performance.now() - rerankStarted;
             const topK = options.topK ?? 5;
@@ -378,9 +408,11 @@ function createHybridRetriever(
                 rerankedCandidates = input.map((item, index) => ({
                     ...item,
                     chunkRerankScore: scores[index]!,
-                    ...(profile.chunkRerankFusionWeight === undefined
-                        ? {}
-                        : { chunkRankingScore: rankingScores[index]! })
+                    ...(
+                        profile.chunkRerankFusionWeight === undefined && governanceRankingPrior(item) === 0
+                            ? {}
+                            : { chunkRankingScore: rankingScores[index]! + governanceRankingPrior(item) }
+                    )
                 })).sort((left, right) =>
                     (right.chunkRankingScore ?? right.chunkRerankScore!)
                     - (left.chunkRankingScore ?? left.chunkRerankScore!)
@@ -436,9 +468,11 @@ function createHybridRetriever(
                 rerankedEvidences = assembledEvidences.map((item, index) => ({
                     ...item,
                     evidenceRerankScore: scores[index]!,
-                    ...(profile.evidenceRerankFusionWeight === undefined
-                        ? {}
-                        : { evidenceRankingScore: rankingScores[index]! })
+                    ...(
+                        profile.evidenceRerankFusionWeight === undefined && governanceRankingPrior(item) === 0
+                            ? {}
+                            : { evidenceRankingScore: rankingScores[index]! + governanceRankingPrior(item) }
+                    )
                 })).sort((left, right) =>
                     (right.evidenceRankingScore ?? right.evidenceRerankScore!)
                     - (left.evidenceRankingScore ?? left.evidenceRerankScore!)
@@ -541,13 +575,14 @@ async function retrieveSourceLocalCandidates(
 
     localInputs.forEach((input, index) => {
         const existing = existingById.get(input.chunk.id);
+        const governancePrior = governanceRankingPrior(existing ?? input.chunk);
         const candidate: CandidateHit = {
             ...(existing ?? input.chunk),
             fusionScore: existing?.fusionScore ?? input.anchor.fusionScore,
             chunkRerankScore: scores[index]!,
-            ...(profile.chunkRerankFusionWeight === undefined
+            ...(profile.chunkRerankFusionWeight === undefined && governancePrior === 0
                 ? {}
-                : { chunkRankingScore: rankingScores[index]! })
+                : { chunkRankingScore: rankingScores[index]! + governancePrior })
         };
         const items = bySource.get(input.sourceKey) ?? [];
         items.push(candidate);

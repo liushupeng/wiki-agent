@@ -29,6 +29,27 @@ test('EvidenceLedger deduplicates evidence and extracts compatible RAG tool resu
     assert.equal(ledger.recordToolResult('read_file', result).length, 0);
 });
 
+test('EvidenceLedger downgrades conflicted or low-authority governed evidence', () => {
+    const ledger = new EvidenceLedger();
+    ledger.recordToolResult('search_notes', {
+        status: 'success',
+        data: {
+            matches: [{
+                source: 'wiki/valuation.md',
+                chunkId: 'valuation#1',
+                citation: 'wiki/valuation.md > 估值',
+                governance: { version: 'valuation@2', authority: 'low', consistency: 'conflicted' }
+            }]
+        }
+    });
+
+    const assessment = ledger.assess();
+    assert.equal(assessment.state, 'partial');
+    assert.equal(assessment.conflictedCount, 1);
+    assert.equal(assessment.lowAuthorityCount, 1);
+    assert.match(assessment.reasons.join(' '), /场景或方法拆分/);
+});
+
 function entry(overrides: Partial<ReturnType<EvidenceLedger['list']>[number]>) {
     return {
         id: 'id',

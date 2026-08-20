@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseRetrievalProfilesConfig, resolveRetrievalProfile } from '../../rag/retrievalProfiles.js';
+import { parseRetrievalProfilesConfig, resolveRetrievalMode, resolveRetrievalProfile } from '../../rag/retrievalProfiles.js';
 
 test('retrieval profiles keep physical indexes separate from hybrid strategy', () => {
     const config = parseRetrievalProfilesConfig({
@@ -72,6 +72,29 @@ test('retrieval profiles reject missing active profile', () => {
             candidateLimit: 20
         }]
     }), /active retrieval profile does not exist/);
+});
+
+test('retrieval modes map product latency choices to concrete profiles', () => {
+    const profiles = [
+        { id: 'bm25-v1', mode: 'single', indexProfile: 'bm25-v1', candidateLimit: 20 },
+        { id: 'balanced-v1', mode: 'single', indexProfile: 'bm25-v1', candidateLimit: 40 },
+        { id: 'deep-v1', mode: 'single', indexProfile: 'bm25-v1', candidateLimit: 100 }
+    ];
+    const config = parseRetrievalProfilesConfig({
+        activeRetrievalProfile: 'deep-v1',
+        activeRetrievalMode: 'balanced',
+        retrievalModes: { fast: 'bm25-v1', balanced: 'balanced-v1', deep: 'deep-v1' },
+        profiles
+    });
+
+    assert.equal(resolveRetrievalMode(config).id, 'balanced-v1');
+    assert.equal(resolveRetrievalMode(config, 'fast').id, 'bm25-v1');
+    assert.throws(() => parseRetrievalProfilesConfig({
+        activeRetrievalProfile: 'deep-v1',
+        activeRetrievalMode: 'balanced',
+        retrievalModes: { fast: 'missing', balanced: 'balanced-v1', deep: 'deep-v1' },
+        profiles
+    }), /references unknown profile/);
 });
 
 test('single retrieval profile supports reranking', () => {

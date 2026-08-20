@@ -88,7 +88,7 @@ flowchart LR
 ### 四项 offline-first Harness 契约
 
 - **TaskContract + TrajectoryVerifier**：题目可声明必须/禁止工具、预算、终止原因、证据与安全条件；验证器直接重放 JSONL v2，不创建 Agent、不调用模型。未配置 contract 的旧题继续使用原判分。
-- **EvidenceLedger**：成功的 RAG observation 会写入结构化证据账本，并产生 `insufficient | partial | sufficient` 三态和 `evidence.sufficiency` trace event。默认仅作可观测决策信号；只有 TaskContract 明确要求时才硬判分。
+- **EvidenceLedger + RuntimeEvidencePolicy**：成功的 RAG observation 会写入结构化证据账本，并产生 `insufficient | partial | sufficient` 三态。运行时会反馈证据库存与剩余 RAG 预算，达到预算后隐藏 RAG 工具；检索完全没有产生可引用证据且模型仍给出断言时，最终回答会被证据闸门降级为明确拒答。
 - **ContextSnapshot**：中期记忆不再逐消息截断，而是确定性保留目标、工具 call ID、已确认事实、source/chunk/citation、失败尝试和未完成项。被裁掉的长正文会标记为需要重新读取。
 - **MemoryProposal**：模型只能通过 `propose_memory` 创建提案。提案经确定性核验、用户审批后，才由 SQLite 事务写入长期记忆；现有 `remember` 仍表示用户已经明确批准的快捷提交。
 
@@ -188,6 +188,8 @@ npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
 npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector
 npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant both --random-count 3 --seed demo
 npm run check:mcp
+npm run check:knowledge-catalog
+npm run ops:summary -- -- --since-hours 24
 npm test
 ```
 
@@ -357,6 +359,8 @@ LanceDB 保存 1024 维稠密向量。物理索引由 profile 隔离，混合检
 变化，构建完成后以对应索引目录中的 `manifest.json` 和命令行摘要为准。
 
 `search_notes` 使用检索 profile 时按该 profile 的融合与重排策略返回结果；未指定检索 profile 的单索引回退路径会优先返回 `wiki/` 命中。`grep_notes` 在 configured knowledge roots 中搜索，并在结果里保留 source prefix。
+
+`config/knowledge.catalog.jsonc` 管理文档 `active / superseded / archived / quarantined / deleted` 生命周期、版本、权威性、质量、有效期、一致性和可选 claim 级来源。新建索引时只有当前有效的 `active` 文档会进入索引；明确标注的 authority/quality/consistency 会进入 Reranker 元数据并提供小幅软排序先验。catalog 指纹写入 manifest，catalog 变化后旧索引会拒绝查询并要求重建。`npm run check:knowledge-catalog` 可检查来源路径、删除状态和可选 content hash。
 
 核心接口在：
 
@@ -646,12 +650,14 @@ npm run check:rag-models -- -- --benchmark --samples 64 --batches 4,8,16 --dtype
 
 稠密 embedding 使用按模型配置和 chunk 文本寻址的磁盘缓存；索引失败后重跑会复用已经完成的向量。混合检索会校验两个索引 manifest 中的 chunk 指纹，避免融合不同语料快照。配置 `candidateCacheDir` 后，相同索引快照、query 和 candidate limit 的 BM25/BGE-M3 候选会冻结并复用；配置 Reranker 的 `scoreCacheDir` 后，相同模型身份、query 和文本的精排分数也会复用，便于快速重复消融。
 
-在线 `ask` 未设置 `RAG_RETRIEVAL_PROFILE` 时仍走 active BM25 单索引和 `raw-wiki`；启用最终混合方案时必须同时指定 retrieval profile 与两个物理索引共有的 variant，避免 BM25 和 BGE-M3 打开不同语料快照：
+在线 `ask` 支持产品化的三档检索模式：`fast` 使用 BM25，`balanced` 使用 40 候选 Hybrid+Reranker，`deep` 使用当前评测最佳的 100 候选完整管线。`fast` 无结果时回退 `balanced`，`balanced` 无结果时回退 `deep`；CPU 模式默认只允许一个完整检索同时执行，并在进程内复用 Retriever、索引与模型实例。`RAG_RETRIEVAL_MODE` 与高级覆盖 `RAG_RETRIEVAL_PROFILE` 互斥：
 
 ```env
 RAG_RETRIEVAL_CONFIG_PATH=config/rag.retrieval.jsonc
-RAG_RETRIEVAL_PROFILE=hybrid-bge-m3-metadata-source-aggregate-v1
-RAG_INDEX_VARIANT=raw-only
+RAG_RETRIEVAL_MODE=balanced
+RAG_INDEX_VARIANT=raw-wiki
+RAG_RETRIEVAL_MAX_CONCURRENCY=1
+MAX_RAG_CALLS=8
 ```
 
 检索评测不调用 LLM，可比较 Recall@20、Recall@100、Hit@1、Hit@5、MRR，并统计阶段内容恢复/回退、各阶段候选规模、p50/p95 耗时及候选/Reranker 缓存命中率（没有人工分级相关性时不会伪造 nDCG）。无参数或 `--help` 只显示帮助；其他合法参数会实际运行：

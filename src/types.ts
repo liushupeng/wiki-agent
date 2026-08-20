@@ -11,6 +11,7 @@ export interface AgentConfig {
     modelName: string;
     temperature: number;
     maxLoopSteps: number; // 熔断步数
+    maxRagCalls?: number;
     maxOutputTokens?: number;
     maxRetries?: number;
     requestTimeoutMs?: number;

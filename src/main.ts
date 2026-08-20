@@ -14,6 +14,7 @@ import { createDefaultTools, getLocalToolNamesCoveredByMcp } from './tools/defau
 import { ToolExposureController } from './tools/exposure.js';
 import { ToolRegistry } from './tools/registry.js';
 import { parsePositiveInteger } from './utils/number.js';
+import { loadRetrievalProfilesConfig, resolveRetrievalMode } from './rag/retrievalProfiles.js';
 
 async function main() {
     console.log("=================================================");
@@ -28,6 +29,7 @@ async function main() {
         modelName: process.env.MODEL_NAME ?? "deepseek-v4-flash",
         temperature: 0.1,
         maxLoopSteps: Number(process.env.MAX_LOOP_STEPS ?? 20),
+        maxRagCalls: readPositiveEnvironmentInteger('MAX_RAG_CALLS', 8),
         traceDir: process.env.TRACE_DIR ?? 'var/traces',
         telemetryBackend: process.env.TELEMETRY_BACKEND === 'otlp' ? 'otlp' : 'file',
         otlpTracesEndpoint: process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
@@ -54,13 +56,18 @@ async function main() {
     const toolExposureController = new ToolExposureController();
     const mcpRegistration = await registerConfiguredMcpTools(registry);
     const localToolNamesCoveredByMcp = getLocalToolNamesCoveredByMcp(mcpRegistration.tools);
+    const retrievalProfiles = await resolveRuntimeRetrievalProfiles();
+    console.log(retrievalProfiles
+        ? `🔎 [检索模式] primary=${retrievalProfiles.primary}${retrievalProfiles.fallback ? `，empty-result fallback=${retrievalProfiles.fallback}` : ''}`
+        : '🔎 [检索模式] active index fallback（未启用 retrieval profile）');
     for (const tool of await createDefaultTools({
         skipToolNames: localToolNamesCoveredByMcp,
         exposureController: toolExposureController,
         memoryProposalService: memory,
-        rag: process.env.RAG_RETRIEVAL_PROFILE
+        rag: retrievalProfiles
             ? {
-                retrievalProfile: process.env.RAG_RETRIEVAL_PROFILE,
+                retrievalProfile: retrievalProfiles.primary,
+                ...(retrievalProfiles.fallback ? { fallbackRetrievalProfile: retrievalProfiles.fallback } : {}),
                 indexVariant: process.env.RAG_INDEX_VARIANT
             }
             : undefined
@@ -98,6 +105,34 @@ async function main() {
         await mcpRegistration.close();
         memory.close();
     }
+}
+
+async function resolveRuntimeRetrievalProfiles(): Promise<{ primary: string; fallback?: string } | undefined> {
+    const explicitProfile = process.env.RAG_RETRIEVAL_PROFILE?.trim();
+    const mode = process.env.RAG_RETRIEVAL_MODE?.trim();
+    if (explicitProfile && mode) {
+        throw new Error('RAG_RETRIEVAL_PROFILE and RAG_RETRIEVAL_MODE cannot be configured together');
+    }
+    if (explicitProfile) return { primary: explicitProfile };
+    if (!mode) return undefined;
+    if (mode !== 'fast' && mode !== 'balanced' && mode !== 'deep') {
+        throw new Error('RAG_RETRIEVAL_MODE must be fast, balanced, or deep');
+    }
+    const config = await loadRetrievalProfilesConfig();
+    const primary = resolveRetrievalMode(config, mode).id;
+    const fallbackMode = mode === 'fast' ? 'balanced' : mode === 'balanced' ? 'deep' : undefined;
+    return {
+        primary,
+        ...(fallbackMode ? { fallback: resolveRetrievalMode(config, fallbackMode).id } : {})
+    };
+}
+
+function readPositiveEnvironmentInteger(name: string, fallback: number): number {
+    const raw = process.env[name]?.trim();
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer`);
+    return parsed;
 }
 
 main();

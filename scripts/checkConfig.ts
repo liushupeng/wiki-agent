@@ -3,6 +3,8 @@ import { loadWriteScopes } from '../src/config/writeScopes.js';
 import { loadMcpServerConfigs } from '../src/mcp/config.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile } from '../src/rag/indexProfiles.js';
 import { getKnowledgeSourceRoots } from '../src/rag/sourceRoots.js';
+import { loadRetrievalProfilesConfig, resolveRetrievalMode } from '../src/rag/retrievalProfiles.js';
+import { loadKnowledgeCatalog } from '../src/rag/knowledgeCatalog.js';
 
 /**
  * 本地配置静态检查入口。
@@ -14,9 +16,11 @@ async function main() {
     const errors: string[] = [];
     validateLlmEnvironment(errors);
 
-    const [sourceRoots, ragConfig, writeScopes] = await Promise.all([
+    const [sourceRoots, ragConfig, retrievalConfig, knowledgeCatalog, writeScopes] = await Promise.all([
         getKnowledgeSourceRoots(),
         loadRagIndexesConfig(),
+        loadRetrievalProfilesConfig(),
+        loadKnowledgeCatalog(),
         loadWriteScopes()
     ]);
     const activeProfile = resolveRagIndexProfile(ragConfig);
@@ -31,6 +35,8 @@ async function main() {
     console.log(`  LLM model:       ${process.env.MODEL_NAME}`);
     console.log(`  Knowledge roots: ${sourceRoots.map(root => root.prefix).join(', ')}`);
     console.log(`  Active profile:  ${activeProfile.id}`);
+    console.log(`  Retrieval mode:  ${resolveRetrievalMode(retrievalConfig).id}`);
+    console.log(`  Catalog records: ${knowledgeCatalog.data.records.length}`);
     console.log(`  Write scopes:    ${writeScopes.scopes.map(scope => scope.name).join(', ')}`);
     console.log(`  MCP servers:     ${mcpConfigs.filter(config => config.enabled !== false).length}`);
 }

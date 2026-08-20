@@ -5,7 +5,7 @@ import { prioritizeWikiMatches } from '../rag/ranking.js';
 import { IndexedChunk, SearchResult } from '../rag/types.js';
 import { getKnowledgeSourceRoots, sourceWithPrefix } from '../rag/sourceRoots.js';
 import { openActiveIndex } from '../rag/indexRuntime.js';
-import { openRetriever } from '../rag/retrievalPipeline.js';
+import { getDefaultRetrievalRuntime, type RetrievalRuntime } from '../rag/retrievalRuntime.js';
 import {
     retrievalCandidatesTraceAttributes,
     retrievalRequestTraceAttributes,
@@ -30,8 +30,10 @@ const REGEX_HINT_PATTERN = /(^|[^\\])(\||\.\*|\.\+|\[[^\]]+\]|\([^)]*\|[^)]*\)|\
 export type RagToolOptions = {
     indexProfile?: string;
     retrievalProfile?: string;
+    fallbackRetrievalProfile?: string;
     indexVariant?: string;
     sourceConfigPath?: string;
+    retrievalRuntime?: RetrievalRuntime;
 };
 
 async function getSearchScopeDescription(options: RagToolOptions = {}): Promise<string> {
@@ -46,6 +48,7 @@ function formatChunk(match: SearchResult) {
         titlePath: match.titlePath ?? [],
         tags: match.tags ?? [],
         links: match.links ?? [],
+        governance: formatGovernance(match.frontmatter),
         score: Number(match.score.toFixed(4)),
         citation: [match.source, ...(match.titlePath ?? [])].join(' > ') || `${match.source}:${match.start}-${match.end}`,
         span: { start: match.start, end: match.end },
@@ -60,10 +63,31 @@ function formatIndexedChunk(chunk: IndexedChunk) {
         titlePath: chunk.titlePath ?? [],
         tags: chunk.tags ?? [],
         links: chunk.links ?? [],
+        governance: formatGovernance(chunk.frontmatter),
         citation: [chunk.source, ...(chunk.titlePath ?? [])].join(' > ') || `${chunk.source}:${chunk.start}-${chunk.end}`,
         span: { start: chunk.start, end: chunk.end },
         text: chunk.text
     };
+}
+
+function formatGovernance(frontmatter?: Record<string, string | string[]>): Record<string, string> | undefined {
+    if (!frontmatter) return undefined;
+    const values = {
+        version: readFrontmatterValue(frontmatter.knowledgeVersion),
+        status: readFrontmatterValue(frontmatter.knowledgeStatus),
+        authority: readFrontmatterValue(frontmatter.knowledgeAuthority),
+        quality: readFrontmatterValue(frontmatter.knowledgeQuality),
+        consistency: readFrontmatterValue(frontmatter.knowledgeConsistency),
+        validFrom: readFrontmatterValue(frontmatter.knowledgeValidFrom),
+        validTo: readFrontmatterValue(frontmatter.knowledgeValidTo),
+        supersededBy: readFrontmatterValue(frontmatter.knowledgeSupersededBy)
+    };
+    const entries = Object.entries(values).filter((entry): entry is [string, string] => entry[1] !== undefined);
+    return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+function readFrontmatterValue(value: string | string[] | undefined): string | undefined {
+    return typeof value === 'string' ? value : value?.join(', ');
 }
 
 function withEvidenceMetadata(
@@ -175,7 +199,11 @@ function isRelatedNotesScope(value: unknown): value is RelatedNotesScope {
 export class SearchNotesTool extends BaseAgentTool {
     readonly name = 'search_notes';
     readonly permission = 'rag' as const;
-    constructor(private readonly options: RagToolOptions = {}) { super(); }
+    private readonly retrievalRuntime: RetrievalRuntime;
+    constructor(private readonly options: RagToolOptions = {}) {
+        super();
+        this.retrievalRuntime = options.retrievalRuntime ?? getDefaultRetrievalRuntime();
+    }
     readonly schema = {
         type: 'function' as const,
         function: {
@@ -206,10 +234,6 @@ export class SearchNotesTool extends BaseAgentTool {
         let ragSpan: SpanHandle | undefined;
         try {
             if (this.options.retrievalProfile) {
-                const retriever = await openRetriever(this.options.retrievalProfile, this.options.indexVariant);
-                const candidateLimit = retriever.profile.mode === 'hybrid'
-                    ? retriever.profile.candidateLimitPerRetriever
-                    : retriever.profile.candidateLimit;
                 const startedAt = new Date();
                 const startedAtMs = performance.now();
                 ragSpan = await getActiveSpan()?.startChild('rag.search', {
@@ -219,13 +243,36 @@ export class SearchNotesTool extends BaseAgentTool {
                         query: args.query,
                         mode: 'vector',
                         topK,
-                        candidateLimit,
-                        profile: retriever.profile.id,
+                        candidateLimit: 0,
+                        profile: this.options.retrievalProfile,
                         variant: this.options.indexVariant,
                         wikiFirst: false
                     })
                 });
-                const run = await retriever.retrieve(args.query, { topK });
+                let managed = await this.retrievalRuntime.retrieve({
+                    retrievalProfile: this.options.retrievalProfile,
+                    variant: this.options.indexVariant,
+                    query: args.query,
+                    topK
+                });
+                let fallbackUsed = false;
+                if (
+                    managed.run.evidences.length === 0
+                    && this.options.fallbackRetrievalProfile
+                    && this.options.fallbackRetrievalProfile !== this.options.retrievalProfile
+                ) {
+                    managed = await this.retrievalRuntime.retrieve({
+                        retrievalProfile: this.options.fallbackRetrievalProfile,
+                        variant: this.options.indexVariant,
+                        query: args.query,
+                        topK
+                    });
+                    fallbackUsed = true;
+                }
+                const run = managed.run;
+                const candidateLimit = managed.profile.mode === 'hybrid'
+                    ? managed.profile.candidateLimitPerRetriever
+                    : managed.profile.candidateLimit;
                 await ragSpan?.addEvent('retrieval.request', retrievalRequestTraceAttributes({
                     query: args.query,
                     mode: 'vector',
@@ -235,6 +282,12 @@ export class SearchNotesTool extends BaseAgentTool {
                     variant: this.options.indexVariant,
                     wikiFirst: false
                 }));
+                await ragSpan?.addEvent('retrieval.runtime', {
+                    'wiki_agent.rag.retriever_cache_hit': managed.metrics.retrieverCacheHit,
+                    'wiki_agent.rag.retriever_open_ms': Math.round(managed.metrics.retrieverOpenMs),
+                    'wiki_agent.rag.queue_wait_ms': Math.round(managed.metrics.queueWaitMs),
+                    'wiki_agent.rag.fallback_used': fallbackUsed
+                });
                 if (run.sparseCandidates.length) {
                     await ragSpan?.addEvent('retrieval.sparse_candidates', retrievalStageTraceAttributes(run.sparseCandidates));
                 }
@@ -266,6 +319,11 @@ export class SearchNotesTool extends BaseAgentTool {
                 return this.ok(data, withEvidenceMetadata(data, {
                     count: matches.length,
                     retrievalProfile: run.profile,
+                    fallbackUsed,
+                    fallbackRetrievalProfile: fallbackUsed ? this.options.fallbackRetrievalProfile : undefined,
+                    retrieverCacheHit: managed.metrics.retrieverCacheHit,
+                    retrieverOpenMs: managed.metrics.retrieverOpenMs,
+                    queueWaitMs: managed.metrics.queueWaitMs,
                     scope: await getSearchScopeDescription(this.options),
                     elapsedMs: performance.now() - startedAtMs
                 }));

@@ -10,6 +10,9 @@ export type EvidenceEntry = {
     source: string;
     chunkId?: string;
     citation?: string;
+    version?: string;
+    authority?: string;
+    consistency?: string;
     truncated: boolean;
     observedAt: string;
 };
@@ -21,6 +24,8 @@ export type EvidenceAssessment = {
     distinctSources: number;
     citedCount: number;
     truncatedCount: number;
+    conflictedCount: number;
+    lowAuthorityCount: number;
 };
 
 export type EvidenceRequirements = {
@@ -52,6 +57,9 @@ export class EvidenceLedger {
             source: normalized.source,
             ...(normalized.chunkId ? { chunkId: normalized.chunkId } : {}),
             ...(normalized.citation ? { citation: normalized.citation } : {}),
+            ...(normalized.version ? { version: normalized.version } : {}),
+            ...(normalized.authority ? { authority: normalized.authority } : {}),
+            ...(normalized.consistency ? { consistency: normalized.consistency } : {}),
             truncated: normalized.truncated,
             observedAt: entry.observedAt ?? this.now().toISOString()
         };
@@ -79,12 +87,16 @@ export class EvidenceLedger {
                     ? data.notePath
                     : undefined;
             if (!source) return [];
+            const governance = isRecord(value.governance) ? value.governance : {};
             return [this.record({
                 toolName,
                 query,
                 source,
                 chunkId: typeof value.chunkId === 'string' ? value.chunkId : undefined,
                 citation: typeof value.citation === 'string' ? value.citation : source,
+                version: typeof governance.version === 'string' ? governance.version : undefined,
+                authority: typeof governance.authority === 'string' ? governance.authority : undefined,
+                consistency: typeof governance.consistency === 'string' ? governance.consistency : undefined,
                 truncated
             })];
         });
@@ -114,6 +126,8 @@ export function assessEvidence(
     const distinctSources = new Set(entries.map(entry => entry.source)).size;
     const citedCount = entries.filter(entry => entry.citation).length;
     const truncatedCount = entries.filter(entry => entry.truncated).length;
+    const conflictedCount = entries.filter(entry => entry.consistency === 'conflicted').length;
+    const lowAuthorityCount = entries.filter(entry => entry.authority === 'low').length;
     const expectedSources = requirements.expectedSources ?? [];
     const expectedHit = expectedSources.length === 0 || entries.some(entry =>
         expectedSources.some(expected => entry.source.toLowerCase().includes(expected.toLowerCase()))
@@ -123,19 +137,34 @@ export function assessEvidence(
     if (distinctSources < minDistinctSources) reasons.push(`需要至少 ${minDistinctSources} 个来源，当前 ${distinctSources} 个`);
     if (requireCitation && citedCount < entries.length) reasons.push('部分证据缺少可引用位置');
     if (!allowTruncated && truncatedCount > 0) reasons.push('存在被截断、需要重新读取的证据');
+    if (conflictedCount > 0) reasons.push(`存在 ${conflictedCount} 条来源内冲突证据，需要按场景或方法拆分`);
+    if (lowAuthorityCount > 0) reasons.push(`存在 ${lowAuthorityCount} 条低权威证据，需要明确限定或寻找更高权威来源`);
     if (!expectedHit) reasons.push('未命中任务要求的来源');
     const state: EvidenceSufficiency = entries.length === 0
         ? 'insufficient'
         : reasons.length === 0
             ? 'sufficient'
             : 'partial';
-    return { state, reasons, evidenceCount: entries.length, distinctSources, citedCount, truncatedCount };
+    return {
+        state,
+        reasons,
+        evidenceCount: entries.length,
+        distinctSources,
+        citedCount,
+        truncatedCount,
+        conflictedCount,
+        lowAuthorityCount
+    };
 }
 
 function isRagTool(toolName: string): boolean {
     return ['search_notes', 'grep_notes', 'read_note', 'related_notes'].some(name =>
         toolName === name || toolName.endsWith(`_${name}`)
     );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function evidenceId(entry: {

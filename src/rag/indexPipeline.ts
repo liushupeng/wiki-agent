@@ -5,6 +5,7 @@ import { iterateSourceDocuments } from './documentLoader.js';
 import { Embedder } from './embeddings.js';
 import { IndexedChunk, SourceDocument } from './types.js';
 import { VectorStore } from './vectorStore.js';
+import type { KnowledgeCatalog } from './knowledgeCatalog.js';
 
 export type IndexPipelineConfig = {
     sourceDir: string;
@@ -13,6 +14,7 @@ export type IndexPipelineConfig = {
     vectorStore: VectorStore;
     embedder: Embedder;
     documents?: AsyncIterable<SourceDocument>;
+    knowledgeCatalog?: KnowledgeCatalog;
     batchSize?: number;
     onProgress?: (progress: IndexPipelineProgress) => void;
 };
@@ -26,6 +28,7 @@ export type IndexPipelineProgress = {
 export type IndexPipelineStats = {
     sourceDir: string;
     documentCount: number;
+    skippedDocumentCount: number;
     chunkCount: number;
     chunkSize: number;
     overlap: number;
@@ -46,6 +49,7 @@ export async function runIndexPipeline(config: IndexPipelineConfig): Promise<Ind
     const embedder = config.embedder;
     const documents = config.documents ?? iterateSourceDocuments(sourceDir);
     let documentCount = 0;
+    let skippedDocumentCount = 0;
     let chunkCount = 0;
     const chunkFingerprint = createHash('sha256');
 
@@ -68,8 +72,13 @@ export async function runIndexPipeline(config: IndexPipelineConfig): Promise<Ind
         }
 
         for await (const document of documents) {
+            if (config.knowledgeCatalog && !config.knowledgeCatalog.shouldIndex(document.source)) {
+                skippedDocumentCount += 1;
+                continue;
+            }
             documentCount += 1;
-            const chunks = chunkDocument(document, config.chunkSize, config.overlap);
+            const chunks = chunkDocument(document, config.chunkSize, config.overlap)
+                .map(chunk => config.knowledgeCatalog?.decorateChunk(chunk) ?? chunk);
             for (const chunk of chunks) {
                 chunkCount += 1;
                 chunkFingerprint.update(JSON.stringify([
@@ -77,7 +86,8 @@ export async function runIndexPipeline(config: IndexPipelineConfig): Promise<Ind
                     chunk.source,
                     chunk.start,
                     chunk.end,
-                    chunk.text
+                    chunk.text,
+                    chunk.frontmatter
                 ]));
                 pending.push(chunk);
                 if (pending.length >= batchSize) yield* flush();
@@ -99,6 +109,7 @@ export async function runIndexPipeline(config: IndexPipelineConfig): Promise<Ind
     return {
         sourceDir,
         documentCount,
+        skippedDocumentCount,
         chunkCount,
         chunkSize: config.chunkSize,
         overlap: config.overlap,

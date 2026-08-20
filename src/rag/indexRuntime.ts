@@ -14,9 +14,10 @@ import {
 import { IndexedChunk, SearchResult } from './types.js';
 import { VectorSearchScoring, VectorStore, createVectorStore } from './vectorStore.js';
 import { getSourceConfigIdentity, SourceConfigIdentity } from '../evaluation/experiments.js';
+import { loadKnowledgeCatalog, type KnowledgeCatalogIdentity } from './knowledgeCatalog.js';
 
 export type IndexManifest = {
-    version: 1 | 2 | 3;
+    version: 1 | 2 | 3 | 4;
     profileId: string;
     variantId?: string;
     profileFingerprint: string;
@@ -27,6 +28,7 @@ export type IndexManifest = {
     overlap: number;
     createdAt: string;
     sourceConfig?: SourceConfigIdentity;
+    knowledgeCatalog?: KnowledgeCatalogIdentity;
     documentCount?: number;
     chunkCount?: number;
     chunkFingerprint?: string;
@@ -53,6 +55,7 @@ export async function openIndexRuntime(profile: RagIndexProfile, variant: RagInd
     const manifest = await loadIndexManifest(paths.manifestPath);
     validateManifest(manifest, profile, variant, paths);
     await validateSourceConfigIdentity(manifest, variant);
+    await validateKnowledgeCatalogIdentity(manifest);
     const embedder = createEmbedder(profile.embedder);
     validateEmbeddingIdentity(manifest.embedding, embedder.identity);
     const store = createVectorStore(
@@ -93,13 +96,14 @@ export async function writeIndexManifest(
     identity: EmbeddingIdentity,
     details?: {
         sourceConfig?: SourceConfigIdentity;
+        knowledgeCatalog?: KnowledgeCatalogIdentity;
         documentCount?: number;
         chunkCount?: number;
         chunkFingerprint?: string;
     }
 ): Promise<IndexManifest> {
     const manifest: IndexManifest = {
-        version: 3,
+        version: 4,
         profileId: profile.id,
         variantId: variant.id,
         profileFingerprint: fingerprintProfile(profile),
@@ -110,6 +114,7 @@ export async function writeIndexManifest(
         overlap: profile.overlap,
         createdAt: new Date().toISOString(),
         ...(details?.sourceConfig ? { sourceConfig: details.sourceConfig } : {}),
+        ...(details?.knowledgeCatalog ? { knowledgeCatalog: details.knowledgeCatalog } : {}),
         ...(details?.documentCount === undefined ? {} : { documentCount: details.documentCount }),
         ...(details?.chunkCount === undefined ? {} : { chunkCount: details.chunkCount }),
         ...(details?.chunkFingerprint === undefined ? {} : { chunkFingerprint: details.chunkFingerprint })
@@ -133,7 +138,7 @@ export async function loadIndexManifest(manifestPath: string): Promise<IndexMani
     } catch (error: any) {
         throw new Error(`cannot open RAG index manifest "${manifestPath}": ${error.message}`);
     }
-    if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3)) throw new Error(`invalid RAG index manifest: ${manifestPath}`);
+    if (!isRecord(value) || ![1, 2, 3, 4].includes(value.version as number)) throw new Error(`invalid RAG index manifest: ${manifestPath}`);
     return value as unknown as IndexManifest;
 }
 
@@ -146,9 +151,18 @@ async function validateSourceConfigIdentity(manifest: IndexManifest, variant: Ra
     }
 }
 
+async function validateKnowledgeCatalogIdentity(manifest: IndexManifest): Promise<void> {
+    // Older indexes predate governance metadata and remain readable until explicitly rebuilt.
+    if (!manifest.knowledgeCatalog) return;
+    const active = await loadKnowledgeCatalog();
+    if (active.identity?.sha256 !== manifest.knowledgeCatalog.sha256) {
+        throw new Error(`RAG knowledge catalog changed; rebuild the index with ${active.identity?.path ?? 'the active catalog'} before querying`);
+    }
+}
+
 function validateManifest(manifest: IndexManifest, profile: RagIndexProfile, variant: RagIndexVariant, paths: IndexPaths): void {
     if (manifest.profileId !== profile.id) throw new Error(`RAG index manifest profile mismatch: expected ${profile.id}, got ${manifest.profileId}`);
-    if (manifest.version === 3 && manifest.variantId !== variant.id) {
+    if (manifest.version >= 3 && manifest.variantId !== variant.id) {
         throw new Error(`RAG index manifest variant mismatch: expected ${variant.id}, got ${manifest.variantId}`);
     }
     if (manifest.profileFingerprint !== fingerprintProfile(profile)) {

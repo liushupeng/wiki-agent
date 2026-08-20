@@ -12,6 +12,7 @@ import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
 import { createVectorStore } from '../../src/rag/vectorStore.js';
 import { getSourceConfigIdentity } from '../../src/evaluation/experiments.js';
 import { indexKnowledgeUsage, parseIndexKnowledgeCommand } from '../../src/rag/indexCli.js';
+import { loadKnowledgeCatalog } from '../../src/rag/knowledgeCatalog.js';
 
 /**
  * RAG 索引入口。
@@ -51,6 +52,7 @@ async function buildVariant(
     const paths = getIndexPaths(profile, variant, indexDirectory);
     const sourceRoots = await getKnowledgeSourceRoots({ KNOWLEDGE_SOURCES_CONFIG_PATH: variant.sourceConfigPath });
     const sourceConfig = await getSourceConfigIdentity(variant.sourceConfigPath);
+    const knowledgeCatalog = await loadKnowledgeCatalog();
     const documents = iterateSourceDocumentsFromRoots(sourceRoots);
     const sourceLabel = sourceRoots.map(sourceRoot => `${sourceRoot.prefix}=${sourceRoot.root}`).join(', ');
     const progress = createProgressReporter(startedAt);
@@ -65,6 +67,7 @@ async function buildVariant(
         stats = await runIndexPipeline({
             sourceDir: process.cwd(),
             documents,
+            knowledgeCatalog,
             chunkSize: profile.chunkSize,
             overlap: profile.overlap,
             embedder,
@@ -74,6 +77,7 @@ async function buildVariant(
         });
         await writeIndexManifest(profile, variant, paths, embedder.identity, {
             sourceConfig,
+            knowledgeCatalog: knowledgeCatalog.identity,
             documentCount: stats.documentCount,
             chunkCount: stats.chunkCount,
             chunkFingerprint: stats.chunkFingerprint

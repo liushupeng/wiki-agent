@@ -2,7 +2,7 @@
 import OpenAI from 'openai';
 import { createHash } from 'node:crypto';
 import './env.js';
-import { IAgent, IMemory, IToolRegistry, AgentConfig } from './types.js';
+import { IAgent, IMemory, IToolRegistry, AgentConfig, ToolResult } from './types.js';
 import { Color } from './cli/colors.js';
 import { PermissionPolicy } from './permissions.js';
 import { appendToolCallDeltas, buildSkippedToolResult, buildToolCalls, FunctionToolCall, isFunctionToolCall, ToolExecutionResult } from './protocol/toolCalls.js';
@@ -14,6 +14,7 @@ import { redactSensitiveValues, writePromptArtifact } from './trace/artifacts.js
 import { exportTrace } from './trace/export.js';
 import { buildToolObservation } from './context/toolObservation.js';
 import { EvidenceLedger } from './context/evidenceSufficiency.js';
+import { RuntimeEvidencePolicy } from './context/runtimeEvidencePolicy.js';
 
 type StepResult =
     | { type: 'continue' }
@@ -28,6 +29,7 @@ const AUTO_TRACE_EXPORT_TIMEOUT_MILLIS = 3_000;
 export class WikiAgent implements IAgent {
     private client: OpenAI;
     private toolExecutor: ToolExecutor;
+    private readonly evidencePolicy: RuntimeEvidencePolicy;
     readonly evidenceLedger = new EvidenceLedger();
 
     constructor(
@@ -41,6 +43,7 @@ export class WikiAgent implements IAgent {
             new PermissionPolicy(config.approvalMode ?? 'prompt'),
             config.requestApproval
         );
+        this.evidencePolicy = new RuntimeEvidencePolicy(config.maxRagCalls);
         this.client = new OpenAI({
             baseURL: process.env.BASE_URL,
             apiKey: process.env.API_KEY,
@@ -84,6 +87,7 @@ export class WikiAgent implements IAgent {
     async run(userInstruction: string, onTextChunk: (text: string) => void): Promise<string> {
         this.toolExecutor.resetFailureCounts();
         this.evidenceLedger.clear();
+        this.evidencePolicy.reset();
         // 将用户的原始长指令压入记忆芯片
         this.memory.append({ role: "user", content: userInstruction });
         const telemetry = createTelemetry({
@@ -126,6 +130,7 @@ export class WikiAgent implements IAgent {
                         );
                         if (stepResult.type === 'final') {
                             finalOutput = stepResult.content;
+                            console.log(Color.green(`\n✅ [任务完成] Agent 已在 Step ${stepCount} 生成最终回答，任务正常结束。`));
                             break;
                         }
                     } catch (error: any) {
@@ -136,9 +141,16 @@ export class WikiAgent implements IAgent {
                 }
             });
         } finally {
+            const evidenceSnapshot = this.evidencePolicy.snapshot(this.evidenceLedger.assess());
             await runSpan.end({
                 status: terminationReason === 'completed' ? 'ok' : 'error',
-                attributes: { 'wiki_agent.termination_reason': terminationReason }
+                attributes: {
+                    'wiki_agent.termination_reason': terminationReason,
+                    'wiki_agent.rag.calls_used': evidenceSnapshot.ragCallsUsed,
+                    'wiki_agent.rag.budget_exhausted': evidenceSnapshot.ragBudgetExhausted,
+                    'evidence.state': evidenceSnapshot.inventoryState,
+                    'evidence.count': evidenceSnapshot.evidenceCount
+                }
             });
             await telemetry.shutdown();
             if (this.config.autoExportFileTrace !== false) {
@@ -173,8 +185,24 @@ export class WikiAgent implements IAgent {
         });
 
         try {
-            const aiMessage = await runWithSpan(stepSpan, () => this.callModel(step, stepSpan, onTextChunk));
-            const assistantText = this.getAssistantText(aiMessage);
+            const aiMessage = await runWithSpan(stepSpan, () => this.callModel(step, stepSpan));
+            let assistantText = this.getAssistantText(aiMessage);
+            if (!aiMessage.tool_calls?.length) {
+                const finalDecision = this.evidencePolicy.finalizeAnswer(assistantText, this.evidenceLedger.assess());
+                assistantText = finalDecision.content;
+                aiMessage.content = assistantText;
+                onTextChunk(assistantText);
+                await stepSpan.addEvent('final_answer.policy', {
+                    'wiki_agent.final_answer.action': finalDecision.action,
+                    'wiki_agent.final_answer.reason': finalDecision.reason,
+                    'wiki_agent.rag.calls_used': finalDecision.snapshot.ragCallsUsed,
+                    'evidence.state': finalDecision.snapshot.inventoryState,
+                    'evidence.count': finalDecision.snapshot.evidenceCount
+                });
+                if (finalDecision.action === 'forced-abstention') {
+                    console.log(Color.yellow('\n⚠️ [证据闸门] 检索未产生可引用证据，最终回答已降级为明确拒答。'));
+                }
+            }
 
         // 必须立刻把大模型的这次决策和思考过程记入历史，否则后续上下文契约会错乱。
             this.memory.append(aiMessage as OpenAI.Chat.Completions.ChatCompletionMessage);
@@ -199,9 +227,13 @@ export class WikiAgent implements IAgent {
         }
     }
 
-    private async callModel(step: number, stepSpan: SpanHandle, onTextChunk: (text: string) => void): Promise<OpenAI.Chat.Completions.ChatCompletionMessage> {
+    private async callModel(step: number, stepSpan: SpanHandle): Promise<OpenAI.Chat.Completions.ChatCompletionMessage> {
         // 让大模型全面审视当前的上下文记忆与前几步工具的回执结果
-        const toolSchemas = this.registry.getSchemas();
+        const toolSchemas = this.registry.getSchemas().filter(schema => {
+            if (schema.type !== 'function') return true;
+            const toolName = schema.function.name;
+            return this.registry.getTool(toolName)?.permission !== 'rag' || this.evidencePolicy.canCallRag();
+        });
         const messages = this.memory.getMessages();
         const modelSpan = await stepSpan.startChild('gen_ai.chat', {
             kind: 'client',
@@ -237,10 +269,9 @@ export class WikiAgent implements IAgent {
             const delta = chunk.choices[0]?.delta;
             const content = delta?.content || "";
 
-            // 将大模型的 Thinking 文本流式打字回终端
+            // 先缓冲模型文本；确认这是最终回答并通过证据策略后，再一次性输出给用户。
             if (content) {
                 currentContent += content;
-                onTextChunk(content);
             }
 
             // 收集潜在的工具调用申请，拼凑成完整的工具调用指令
@@ -401,10 +432,20 @@ export class WikiAgent implements IAgent {
                 ...buildToolArgumentTraceAttributes(toolArgsStr)
             }
         });
-        const observation = await runWithSpan(toolSpan, () => this.toolExecutor.execute(toolName, toolArgsStr));
-        const recordedEvidence = this.evidenceLedger.recordToolResult(toolName, observation);
-        if (recordedEvidence.length > 0) {
-            const assessment = this.evidenceLedger.assess();
+        let observation: ToolResult;
+        if (tool?.permission === 'rag' && !this.evidencePolicy.canCallRag()) {
+            observation = {
+                status: 'retry_limit_reached',
+                error: 'RAG runtime budget exhausted; answer with established evidence and explicit gaps',
+                metadata: { runtimePolicy: 'max_rag_calls' }
+            };
+        } else {
+            if (tool?.permission === 'rag') this.evidencePolicy.recordRagCall();
+            observation = await runWithSpan(toolSpan, () => this.toolExecutor.execute(toolName, toolArgsStr));
+        }
+        this.evidenceLedger.recordToolResult(toolName, observation);
+        const assessment = this.evidenceLedger.assess();
+        if (tool?.permission === 'rag') {
             await toolSpan.addEvent('evidence.sufficiency', {
                 'evidence.state': assessment.state,
                 'evidence.count': assessment.evidenceCount,
@@ -413,6 +454,9 @@ export class WikiAgent implements IAgent {
             });
         }
         const observationForContext = buildToolObservation(observation);
+        const contextContent = tool?.permission === 'rag'
+            ? `${observationForContext.content}\n\n${this.evidencePolicy.buildModelFeedback(assessment)}`
+            : observationForContext.content;
         await toolSpan.end({
             status: observation.status === 'success' ? 'ok' : 'error',
             attributes: {
@@ -430,7 +474,7 @@ export class WikiAgent implements IAgent {
             toolMessage: {
                 role: "tool",
                 tool_call_id: toolCall.id,
-                content: observationForContext.content
+                content: contextContent
             }
         };
     }

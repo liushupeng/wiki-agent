@@ -57,9 +57,12 @@ export type HybridRetrievalProfile = {
 };
 
 export type RetrievalProfile = SingleRetrievalProfile | HybridRetrievalProfile;
+export type RetrievalMode = 'fast' | 'balanced' | 'deep';
 
 export type RetrievalProfilesConfig = {
     activeRetrievalProfile: string;
+    activeRetrievalMode?: RetrievalMode;
+    retrievalModes?: Record<RetrievalMode, string>;
     profiles: RetrievalProfile[];
 };
 
@@ -84,13 +87,48 @@ export function parseRetrievalProfilesConfig(value: unknown): RetrievalProfilesC
     if (!ids.has(activeRetrievalProfile)) {
         throw new Error(`active retrieval profile does not exist: ${activeRetrievalProfile}`);
     }
-    return { activeRetrievalProfile, profiles };
+    const retrievalModes = value.retrievalModes === undefined ? undefined : parseRetrievalModes(value.retrievalModes, ids);
+    const activeRetrievalMode = value.activeRetrievalMode === undefined
+        ? undefined
+        : readChoice(value.activeRetrievalMode, ['fast', 'balanced', 'deep'], 'activeRetrievalMode') as RetrievalMode;
+    if (activeRetrievalMode && !retrievalModes) {
+        throw new Error('activeRetrievalMode requires retrievalModes');
+    }
+    return {
+        activeRetrievalProfile,
+        ...(activeRetrievalMode ? { activeRetrievalMode } : {}),
+        ...(retrievalModes ? { retrievalModes } : {}),
+        profiles
+    };
 }
 
 export function resolveRetrievalProfile(config: RetrievalProfilesConfig, id = config.activeRetrievalProfile): RetrievalProfile {
     const profile = config.profiles.find(item => item.id === id);
     if (!profile) throw new Error(`unknown retrieval profile: ${id}`);
     return profile;
+}
+
+export function resolveRetrievalMode(
+    config: RetrievalProfilesConfig,
+    mode = config.activeRetrievalMode
+): RetrievalProfile {
+    if (!mode) throw new Error('no retrieval mode configured; choose fast, balanced, or deep');
+    const profileId = config.retrievalModes?.[mode];
+    if (!profileId) throw new Error(`retrieval mode is not configured: ${mode}`);
+    return resolveRetrievalProfile(config, profileId);
+}
+
+function parseRetrievalModes(value: unknown, profileIds: Set<string>): Record<RetrievalMode, string> {
+    if (!isRecord(value)) throw new Error('retrievalModes must be an object');
+    const modes = {
+        fast: readId(value.fast, 'retrievalModes.fast'),
+        balanced: readId(value.balanced, 'retrievalModes.balanced'),
+        deep: readId(value.deep, 'retrievalModes.deep')
+    };
+    for (const [mode, profileId] of Object.entries(modes)) {
+        if (!profileIds.has(profileId)) throw new Error(`retrieval mode "${mode}" references unknown profile: ${profileId}`);
+    }
+    return modes;
 }
 
 function parseProfile(value: unknown, index: number): RetrievalProfile {

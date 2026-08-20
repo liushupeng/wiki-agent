@@ -1,0 +1,10 @@
+{
+  // 初始本地 CPU SLO。获得至少 30 次生产式运行样本后再收紧阈值。
+  "minimumSampleRuns": 30,
+  "completionRateMin": 0.95,
+  "p95LatencyMsMax": 600000,
+  "toolFailureRateMax": 0.05,
+  "ragRetrieverCacheHitRateMin": 0.60,
+  "ragBudgetExhaustionRateMax": 0.10,
+  "averageTotalTokensMax": 200000
+}
