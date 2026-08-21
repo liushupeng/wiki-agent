@@ -315,7 +315,29 @@ Pass criteria:
 
 ### Round 4 — Fresh private GitHub clone
 
-Status: pending.
+```text
+Date: 2026-08-21
+Audited remote commit: bc097a3
+Previous remote commit: 7fb04b6
+Push mode: explicit force-with-lease
+Fresh clone HEAD: bc097a3
+Fresh clone origin/master: bc097a3
+Repository state: content clean; six executable-bit differences caused by MobaXterm on Windows, zero blob differences
+Scanner and version: Gitleaks 8.30.1 + repository-specific privacy searches
+All-history scan: pass; 88 commits, 1.72 MB, no Gitleaks finding
+Commit metadata: pass; accepted Foxmail identity, no target noreply address or Cursor co-author trailer
+Sensitive-path reachability: pass
+Tracked-tree privacy scan: pass
+Recovery artifacts in clone: none
+npm ci: pass
+Build and tests: pass; 271/271 tests
+Configuration and knowledge catalog checks: pass
+Public BM25 development recall: pass; strict 50/50, Hit@1 100%
+Public BM25 Holdout recall: pass; strict 15/15, Hit@1 100%
+GitHub non-Git resources: pass; repository owner manually reviewed issues, pull requests, releases, Actions logs/artifacts, and description
+Result: pass for the private GitHub phase
+Open findings: 11 recorded upstream dependency advisories; anonymous page check follows the visibility change
+```
 
 Pass criteria:
 
@@ -328,10 +350,10 @@ Pass criteria:
 
 ## Final publication checklist
 
-- [ ] Rounds 1–4 are recorded as `pass`.
-- [ ] The private recovery bundle is stored outside any synchronized public
+- [x] Rounds 1–4 are recorded as `pass`.
+- [x] The private recovery bundle is stored outside any synchronized public
       directory.
-- [ ] Old clones are treated as sensitive and are not pushed.
-- [ ] README links, CI, evaluation summary, and MIT license are valid.
-- [ ] GitHub description contains no private project or company terminology.
-- [ ] Repository visibility remains private until the final explicit decision.
+- [x] Old clones are treated as sensitive and are not pushed.
+- [x] README links, CI, evaluation summary, and MIT license are valid.
+- [x] GitHub description contains no private project or company terminology.
+- [x] Repository visibility remains private until the final explicit decision.
