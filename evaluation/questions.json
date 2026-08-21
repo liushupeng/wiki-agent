@@ -1,0 +1,805 @@
+[
+  {
+    "id": "http-cache-max-age",
+    "category": "http",
+    "question": "Cache-Control 的 max-age=300 表示什么？",
+    "grepTerms": [
+      "Cache-Control",
+      "max-age=300"
+    ],
+    "expectedSource": "dev/http-caching.md",
+    "expectedTerms": [
+      "300 秒",
+      "新鲜"
+    ]
+  },
+  {
+    "id": "http-no-store-no-cache",
+    "category": "http",
+    "question": "no-store 与 no-cache 的主要区别是什么？",
+    "grepTerms": [
+      "no-store",
+      "no-cache",
+      "验证"
+    ],
+    "expectedSource": "dev/http-caching.md",
+    "expectedTerms": [
+      "不得存储",
+      "允许存储",
+      "验证"
+    ]
+  },
+  {
+    "id": "http-etag-validation",
+    "category": "http",
+    "question": "ETag 条件请求使用哪个请求头，内容未变化时返回什么状态？",
+    "grepTerms": [
+      "ETag",
+      "If-None-Match",
+      "304"
+    ],
+    "expectedSource": "dev/http-caching.md",
+    "expectedTerms": [
+      "If-None-Match",
+      "304 Not Modified"
+    ]
+  },
+  {
+    "id": "http-vary-key",
+    "category": "http",
+    "question": "Vary: Accept-Encoding 对缓存键有什么影响？",
+    "grepTerms": [
+      "Vary",
+      "Accept-Encoding",
+      "缓存键"
+    ],
+    "expectedSource": "dev/http-caching.md",
+    "expectedTerms": [
+      "缓存键",
+      "Accept-Encoding"
+    ]
+  },
+  {
+    "id": "http-s-maxage",
+    "category": "http",
+    "question": "共享缓存中 s-maxage 与 max-age 谁优先？",
+    "grepTerms": [
+      "s-maxage",
+      "max-age",
+      "共享缓存"
+    ],
+    "expectedSource": "dev/http-caching.md",
+    "expectedTerms": [
+      "s-maxage",
+      "优先"
+    ]
+  },
+  {
+    "id": "sql-acid",
+    "category": "database",
+    "question": "ACID 四个性质分别是什么？",
+    "grepTerms": [
+      "ACID",
+      "原子性",
+      "一致性",
+      "隔离性",
+      "持久性"
+    ],
+    "expectedSource": "dev/sql-transactions.md",
+    "expectedTerms": [
+      "原子性",
+      "一致性",
+      "隔离性",
+      "持久性"
+    ]
+  },
+  {
+    "id": "sql-read-committed",
+    "category": "database",
+    "question": "READ COMMITTED 阻止哪类读问题，又可能出现什么现象？",
+    "grepTerms": [
+      "READ COMMITTED",
+      "脏读",
+      "重复查询"
+    ],
+    "expectedSource": "dev/sql-transactions.md",
+    "expectedTerms": [
+      "脏读",
+      "不同",
+      "已提交"
+    ]
+  },
+  {
+    "id": "sql-repeatable-read",
+    "category": "database",
+    "question": "REPEATABLE READ 对已读取行提供什么保证？",
+    "grepTerms": [
+      "REPEATABLE READ",
+      "可重复读取"
+    ],
+    "expectedSource": "dev/sql-transactions.md",
+    "expectedTerms": [
+      "已读取行",
+      "可重复读取"
+    ]
+  },
+  {
+    "id": "sql-savepoint",
+    "category": "database",
+    "question": "如何创建 checkout_started 保存点并回退到它？",
+    "grepTerms": [
+      "SAVEPOINT checkout_started",
+      "ROLLBACK TO SAVEPOINT"
+    ],
+    "expectedSource": "dev/sql-transactions.md",
+    "expectedTerms": [
+      "SAVEPOINT checkout_started",
+      "ROLLBACK TO SAVEPOINT checkout_started"
+    ]
+  },
+  {
+    "id": "sql-deadlock-retry",
+    "category": "database",
+    "question": "应用遇到数据库死锁时应采用怎样的重试策略？",
+    "grepTerms": [
+      "死锁",
+      "有限次数",
+      "退避"
+    ],
+    "expectedSource": "dev/sql-transactions.md",
+    "expectedTerms": [
+      "中止",
+      "有限次数",
+      "退避",
+      "整个事务"
+    ]
+  },
+  {
+    "id": "git-fetch",
+    "category": "version-control",
+    "question": "git fetch 会更新什么，又不会自动改写什么？",
+    "grepTerms": [
+      "git fetch",
+      "远端跟踪引用",
+      "工作分支"
+    ],
+    "expectedSource": "dev/git-workflows.md",
+    "expectedTerms": [
+      "远端跟踪引用",
+      "不会",
+      "当前工作分支"
+    ]
+  },
+  {
+    "id": "git-merge-rebase",
+    "category": "version-control",
+    "question": "merge 与 rebase 对提交历史的主要影响有何不同？",
+    "grepTerms": [
+      "git merge",
+      "git rebase",
+      "合并提交",
+      "重放"
+    ],
+    "expectedSource": "dev/git-workflows.md",
+    "expectedTerms": [
+      "保留分叉历史",
+      "合并提交",
+      "重放",
+      "新的提交标识"
+    ]
+  },
+  {
+    "id": "git-revert",
+    "category": "version-control",
+    "question": "为什么撤销已共享历史通常使用 git revert？",
+    "grepTerms": [
+      "git revert",
+      "反向提交",
+      "共享"
+    ],
+    "expectedSource": "dev/git-workflows.md",
+    "expectedTerms": [
+      "反向提交",
+      "共享的历史"
+    ]
+  },
+  {
+    "id": "git-cherry-pick",
+    "category": "version-control",
+    "question": "git cherry-pick 的用途是什么？",
+    "grepTerms": [
+      "git cherry-pick",
+      "指定提交",
+      "当前分支"
+    ],
+    "expectedSource": "dev/git-workflows.md",
+    "expectedTerms": [
+      "指定提交",
+      "当前分支"
+    ]
+  },
+  {
+    "id": "git-conflict-checks",
+    "category": "version-control",
+    "question": "解决 Git 冲突后建议执行哪两类检查？",
+    "grepTerms": [
+      "冲突",
+      "测试",
+      "git diff --check"
+    ],
+    "expectedSource": "dev/git-workflows.md",
+    "expectedTerms": [
+      "运行测试",
+      "git diff --check",
+      "冲突标记",
+      "空白错误"
+    ]
+  },
+  {
+    "id": "docker-multistage",
+    "category": "containers",
+    "question": "Docker 多阶段构建如何减小最终镜像内容？",
+    "grepTerms": [
+      "多阶段构建",
+      "FROM",
+      "最终镜像"
+    ],
+    "expectedSource": "dev/docker-containers.md",
+    "expectedTerms": [
+      "多个 FROM",
+      "运行时需要",
+      "最终镜像"
+    ]
+  },
+  {
+    "id": "docker-ignore",
+    "category": "containers",
+    "question": ".dockerignore 的两个主要作用是什么？",
+    "grepTerms": [
+      ".dockerignore",
+      "构建上下文",
+      "敏感文件"
+    ],
+    "expectedSource": "dev/docker-containers.md",
+    "expectedTerms": [
+      "减少传输量",
+      "避免",
+      "敏感文件"
+    ]
+  },
+  {
+    "id": "docker-entrypoint-cmd",
+    "category": "containers",
+    "question": "ENTRYPOINT 和 CMD 通常分别承担什么职责？",
+    "grepTerms": [
+      "ENTRYPOINT",
+      "CMD",
+      "默认参数"
+    ],
+    "expectedSource": "dev/docker-containers.md",
+    "expectedTerms": [
+      "主要可执行程序",
+      "默认参数"
+    ]
+  },
+  {
+    "id": "docker-reproducible-base",
+    "category": "containers",
+    "question": "为什么固定基础镜像摘要比只用标签更可复现？",
+    "grepTerms": [
+      "镜像层",
+      "摘要",
+      "标签"
+    ],
+    "expectedSource": "dev/docker-containers.md",
+    "expectedTerms": [
+      "摘要",
+      "可变标签",
+      "更确定"
+    ]
+  },
+  {
+    "id": "docker-sigterm",
+    "category": "containers",
+    "question": "容器主进程为什么要正确处理 SIGTERM？",
+    "grepTerms": [
+      "主进程",
+      "SIGTERM",
+      "优雅停止"
+    ],
+    "expectedSource": "dev/docker-containers.md",
+    "expectedTerms": [
+      "SIGTERM",
+      "编排系统",
+      "优雅停止"
+    ]
+  },
+  {
+    "id": "k8s-deployment",
+    "category": "kubernetes",
+    "question": "Deployment 管理什么对象并支持哪种更新？",
+    "grepTerms": [
+      "Deployment",
+      "ReplicaSet",
+      "滚动更新"
+    ],
+    "expectedSource": "dev/kubernetes-basics.md",
+    "expectedTerms": [
+      "ReplicaSet",
+      "滚动更新",
+      "无状态"
+    ]
+  },
+  {
+    "id": "k8s-clusterip",
+    "category": "kubernetes",
+    "question": "ClusterIP Service 提供什么能力？",
+    "grepTerms": [
+      "Service",
+      "ClusterIP",
+      "稳定虚拟地址"
+    ],
+    "expectedSource": "dev/kubernetes-basics.md",
+    "expectedTerms": [
+      "集群内部",
+      "稳定虚拟地址"
+    ]
+  },
+  {
+    "id": "k8s-readiness",
+    "category": "kubernetes",
+    "question": "readiness probe 失败后 Pod 会怎样？",
+    "grepTerms": [
+      "readiness probe",
+      "Service",
+      "端点"
+    ],
+    "expectedSource": "dev/kubernetes-basics.md",
+    "expectedTerms": [
+      "从 Service 端点中移除",
+      "不会直接重启"
+    ]
+  },
+  {
+    "id": "k8s-liveness",
+    "category": "kubernetes",
+    "question": "liveness probe 持续失败会触发什么动作？",
+    "grepTerms": [
+      "liveness probe",
+      "kubelet",
+      "重启"
+    ],
+    "expectedSource": "dev/kubernetes-basics.md",
+    "expectedTerms": [
+      "kubelet",
+      "重启容器"
+    ]
+  },
+  {
+    "id": "k8s-config-secret",
+    "category": "kubernetes",
+    "question": "ConfigMap 与 Secret 分别适合哪类配置？",
+    "grepTerms": [
+      "ConfigMap",
+      "Secret",
+      "静态加密",
+      "访问控制"
+    ],
+    "expectedSource": "dev/kubernetes-basics.md",
+    "expectedTerms": [
+      "非机密配置",
+      "敏感值",
+      "静态加密",
+      "访问控制"
+    ]
+  },
+  {
+    "id": "ts-unknown",
+    "category": "typescript",
+    "question": "为什么 unknown 通常比 any 更安全？",
+    "grepTerms": [
+      "unknown",
+      "any",
+      "缩小类型"
+    ],
+    "expectedSource": "dev/typescript-safety.md",
+    "expectedTerms": [
+      "先缩小类型",
+      "更安全"
+    ]
+  },
+  {
+    "id": "ts-discriminated-union",
+    "category": "typescript",
+    "question": "判别联合通常依靠什么字段区分成员？",
+    "grepTerms": [
+      "判别联合",
+      "字面量字段",
+      "kind"
+    ],
+    "expectedSource": "dev/typescript-safety.md",
+    "expectedTerms": [
+      "字面量字段",
+      "kind",
+      "success",
+      "error"
+    ]
+  },
+  {
+    "id": "ts-never-exhaustive",
+    "category": "typescript",
+    "question": "never 如何帮助完成穷尽性检查？",
+    "grepTerms": [
+      "never",
+      "穷尽性检查",
+      "switch"
+    ],
+    "expectedSource": "dev/typescript-safety.md",
+    "expectedTerms": [
+      "never",
+      "switch",
+      "每个成员"
+    ]
+  },
+  {
+    "id": "ts-strict-null",
+    "category": "typescript",
+    "question": "strictNullChecks 会怎样改变 null 和 undefined 的兼容性？",
+    "grepTerms": [
+      "strictNullChecks",
+      "null",
+      "undefined"
+    ],
+    "expectedSource": "dev/typescript-safety.md",
+    "expectedTerms": [
+      "不再自动兼容",
+      "其他类型"
+    ]
+  },
+  {
+    "id": "ts-satisfies",
+    "category": "typescript",
+    "question": "satisfies 同时提供哪两项类型能力？",
+    "grepTerms": [
+      "satisfies",
+      "目标类型",
+      "推断类型"
+    ],
+    "expectedSource": "dev/typescript-safety.md",
+    "expectedTerms": [
+      "符合目标类型",
+      "保留",
+      "更精确的推断类型"
+    ]
+  },
+  {
+    "id": "node-high-water-mark",
+    "category": "nodejs",
+    "question": "Readable 的 highWaterMark 是否是严格内存上限？",
+    "grepTerms": [
+      "Readable",
+      "highWaterMark",
+      "缓冲阈值"
+    ],
+    "expectedSource": "dev/node-streams.md",
+    "expectedTerms": [
+      "内部缓冲阈值",
+      "不是",
+      "严格的内存上限"
+    ]
+  },
+  {
+    "id": "node-backpressure",
+    "category": "nodejs",
+    "question": "Writable.write() 返回 false 时生产者应怎么做？",
+    "grepTerms": [
+      "Writable",
+      "write()",
+      "false",
+      "drain"
+    ],
+    "expectedSource": "dev/node-streams.md",
+    "expectedTerms": [
+      "暂停",
+      "drain"
+    ]
+  },
+  {
+    "id": "node-pipeline",
+    "category": "nodejs",
+    "question": "stream.pipeline() 负责处理哪些连接问题？",
+    "grepTerms": [
+      "stream.pipeline()",
+      "错误",
+      "关闭信号"
+    ],
+    "expectedSource": "dev/node-streams.md",
+    "expectedTerms": [
+      "连接多个流",
+      "传播错误",
+      "关闭信号"
+    ]
+  },
+  {
+    "id": "node-object-mode",
+    "category": "nodejs",
+    "question": "object mode 中的块按什么单位计数？",
+    "grepTerms": [
+      "object mode",
+      "对象",
+      "字节"
+    ],
+    "expectedSource": "dev/node-streams.md",
+    "expectedTerms": [
+      "对象计数",
+      "不是按字节"
+    ]
+  },
+  {
+    "id": "node-transform",
+    "category": "nodejs",
+    "question": "Transform 流的读写特性和典型用途是什么？",
+    "grepTerms": [
+      "Transform",
+      "可读可写",
+      "压缩",
+      "解析"
+    ],
+    "expectedSource": "dev/node-streams.md",
+    "expectedTerms": [
+      "同时可读可写",
+      "压缩",
+      "解析",
+      "格式转换"
+    ]
+  },
+  {
+    "id": "test-unit",
+    "category": "testing",
+    "question": "单元测试的范围和外部依赖处理方式是什么？",
+    "grepTerms": [
+      "单元测试",
+      "替身",
+      "外部依赖"
+    ],
+    "expectedSource": "dev/testing-strategy.md",
+    "expectedTerms": [
+      "小范围逻辑",
+      "替身",
+      "隔离"
+    ]
+  },
+  {
+    "id": "test-integration",
+    "category": "testing",
+    "question": "集成测试主要验证什么？",
+    "grepTerms": [
+      "集成测试",
+      "真实组件",
+      "契约"
+    ],
+    "expectedSource": "dev/testing-strategy.md",
+    "expectedTerms": [
+      "多个真实组件",
+      "契约",
+      "数据库"
+    ]
+  },
+  {
+    "id": "test-e2e",
+    "category": "testing",
+    "question": "端到端测试从哪里验证什么？",
+    "grepTerms": [
+      "端到端测试",
+      "用户可见入口",
+      "关键路径"
+    ],
+    "expectedSource": "dev/testing-strategy.md",
+    "expectedTerms": [
+      "用户可见入口",
+      "完整关键路径",
+      "少于单元测试"
+    ]
+  },
+  {
+    "id": "test-contract",
+    "category": "testing",
+    "question": "契约测试验证哪两方的共同约定？",
+    "grepTerms": [
+      "契约测试",
+      "提供者",
+      "消费者"
+    ],
+    "expectedSource": "dev/testing-strategy.md",
+    "expectedTerms": [
+      "服务提供者",
+      "消费者",
+      "接口格式"
+    ]
+  },
+  {
+    "id": "test-flaky",
+    "category": "testing",
+    "question": "应如何处理不稳定测试，为什么不能无限重试？",
+    "grepTerms": [
+      "不稳定测试",
+      "隔离",
+      "无限重试",
+      "竞态"
+    ],
+    "expectedSource": "dev/testing-strategy.md",
+    "expectedTerms": [
+      "隔离",
+      "记录原因",
+      "不能",
+      "竞态",
+      "环境问题"
+    ]
+  },
+  {
+    "id": "obs-three-signals",
+    "category": "observability",
+    "question": "指标、日志和追踪分别适合表达什么？",
+    "grepTerms": [
+      "metrics",
+      "logs",
+      "traces"
+    ],
+    "expectedSource": "dev/observability.md",
+    "expectedTerms": [
+      "聚合趋势",
+      "离散事件",
+      "跨组件路径"
+    ]
+  },
+  {
+    "id": "obs-red",
+    "category": "observability",
+    "question": "RED 方法的三个关注点是什么？",
+    "grepTerms": [
+      "RED",
+      "Rate",
+      "Errors",
+      "Duration"
+    ],
+    "expectedSource": "dev/observability.md",
+    "expectedTerms": [
+      "请求速率",
+      "错误率",
+      "持续时间"
+    ]
+  },
+  {
+    "id": "obs-use",
+    "category": "observability",
+    "question": "USE 方法的三个关注点是什么？",
+    "grepTerms": [
+      "USE",
+      "Utilization",
+      "Saturation",
+      "Errors"
+    ],
+    "expectedSource": "dev/observability.md",
+    "expectedTerms": [
+      "资源利用率",
+      "饱和度",
+      "错误"
+    ]
+  },
+  {
+    "id": "obs-trace-id",
+    "category": "observability",
+    "question": "分布式追踪如何关联同一请求的多个 span？",
+    "grepTerms": [
+      "trace ID",
+      "span",
+      "关联"
+    ],
+    "expectedSource": "dev/observability.md",
+    "expectedTerms": [
+      "trace ID",
+      "同一请求",
+      "多个 span"
+    ]
+  },
+  {
+    "id": "obs-alerts",
+    "category": "observability",
+    "question": "一个可操作告警应包含哪些上下文？",
+    "grepTerms": [
+      "告警",
+      "负责人",
+      "影响",
+      "排障入口"
+    ],
+    "expectedSource": "dev/observability.md",
+    "expectedTerms": [
+      "可操作症状",
+      "负责人",
+      "影响",
+      "排障入口"
+    ]
+  },
+  {
+    "id": "security-sqli",
+    "category": "security",
+    "question": "防御 SQL 注入应采用什么方式？",
+    "grepTerms": [
+      "SQL 注入",
+      "参数化查询",
+      "拼接"
+    ],
+    "expectedSource": "dev/web-security.md",
+    "expectedTerms": [
+      "参数化查询",
+      "不应拼接",
+      "不可信输入"
+    ]
+  },
+  {
+    "id": "security-xss",
+    "category": "security",
+    "question": "降低 XSS 风险时输出到 HTML 应如何处理？",
+    "grepTerms": [
+      "HTML",
+      "上下文编码",
+      "XSS"
+    ],
+    "expectedSource": "dev/web-security.md",
+    "expectedTerms": [
+      "按上下文编码",
+      "跨站脚本"
+    ]
+  },
+  {
+    "id": "security-csrf-samesite",
+    "category": "security",
+    "question": "SameSite Cookie 如何参与 CSRF 防护？",
+    "grepTerms": [
+      "SameSite Cookie",
+      "CSRF",
+      "跨站请求"
+    ],
+    "expectedSource": "dev/web-security.md",
+    "expectedTerms": [
+      "减少",
+      "跨站请求",
+      "Cookie",
+      "一层"
+    ]
+  },
+  {
+    "id": "security-csp",
+    "category": "security",
+    "question": "CSP 的主要限制对象是什么？",
+    "grepTerms": [
+      "Content Security Policy",
+      "CSP",
+      "资源"
+    ],
+    "expectedSource": "dev/web-security.md",
+    "expectedTerms": [
+      "脚本",
+      "样式",
+      "允许来源"
+    ]
+  },
+  {
+    "id": "security-password-hash",
+    "category": "security",
+    "question": "密码应使用哪类哈希，为什么不使用通用快速哈希？",
+    "grepTerms": [
+      "密码",
+      "Argon2id",
+      "带盐",
+      "成本可调"
+    ],
+    "expectedSource": "dev/web-security.md",
+    "expectedTerms": [
+      "带盐",
+      "成本可调",
+      "Argon2id",
+      "不是通用快速哈希"
+    ]
+  }
+]

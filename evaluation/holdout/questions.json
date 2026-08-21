@@ -1,0 +1,302 @@
+[
+  {
+    "id": "holdout-dns-records",
+    "category": "networking",
+    "queryType": "fact-retrieval",
+    "primaryStage": "candidate-retrieval",
+    "difficulty": "easy",
+    "question": "DNS 中 A 与 AAAA 记录分别映射哪类地址？",
+    "grepTerms": [
+      "A 记录",
+      "AAAA 记录",
+      "IPv4",
+      "IPv6"
+    ],
+    "expectedSource": "holdout/dns-resolution.md",
+    "expectedTerms": [
+      "IPv4",
+      "IPv6"
+    ]
+  },
+  {
+    "id": "holdout-tls-verification",
+    "category": "security",
+    "queryType": "fact-retrieval",
+    "primaryStage": "evidence",
+    "difficulty": "medium",
+    "question": "TLS 客户端验证服务器证书时应检查哪三项？",
+    "grepTerms": [
+      "证书链",
+      "主机名",
+      "有效期"
+    ],
+    "expectedSource": "holdout/tls-handshake.md",
+    "expectedTerms": [
+      "证书链",
+      "主机名",
+      "有效期"
+    ]
+  },
+  {
+    "id": "holdout-oauth-pkce-s256",
+    "category": "identity",
+    "queryType": "fact-retrieval",
+    "primaryStage": "rerank",
+    "difficulty": "medium",
+    "question": "PKCE 的 S256 challenge 如何从 verifier 派生？",
+    "grepTerms": [
+      "PKCE",
+      "S256",
+      "SHA-256",
+      "base64url"
+    ],
+    "expectedSource": "holdout/oauth-pkce.md",
+    "expectedTerms": [
+      "SHA-256",
+      "base64url"
+    ]
+  },
+  {
+    "id": "holdout-grpc-rpc-types",
+    "category": "distributed-systems",
+    "queryType": "fact-retrieval",
+    "primaryStage": "candidate-retrieval",
+    "difficulty": "hard",
+    "question": "gRPC 支持哪四类 RPC？",
+    "grepTerms": [
+      "一元",
+      "服务端流",
+      "客户端流",
+      "双向流"
+    ],
+    "expectedSource": "holdout/grpc-basics.md",
+    "expectedTerms": [
+      "一元",
+      "服务端流",
+      "客户端流",
+      "双向流"
+    ]
+  },
+  {
+    "id": "holdout-postgres-index-types",
+    "category": "database",
+    "queryType": "fact-retrieval",
+    "primaryStage": "evidence",
+    "difficulty": "easy",
+    "question": "PostgreSQL 中 B-tree、GIN 和部分索引各适合什么场景？",
+    "grepTerms": [
+      "B-tree",
+      "GIN",
+      "部分索引"
+    ],
+    "expectedSource": "holdout/postgres-indexes.md",
+    "expectedTerms": [
+      "等值",
+      "范围",
+      "数组",
+      "全文检索",
+      "WHERE"
+    ]
+  },
+  {
+    "id": "holdout-redis-structures",
+    "category": "database",
+    "queryType": "fact-retrieval",
+    "primaryStage": "rerank",
+    "difficulty": "medium",
+    "question": "Redis 的 Set 与 Sorted Set 在唯一性和排序上有何区别？",
+    "grepTerms": [
+      "Set",
+      "Sorted Set",
+      "唯一成员",
+      "分数"
+    ],
+    "expectedSource": "holdout/redis-data-structures.md",
+    "expectedTerms": [
+      "无序唯一成员",
+      "分数",
+      "排序"
+    ]
+  },
+  {
+    "id": "holdout-queue-delivery",
+    "category": "messaging",
+    "queryType": "fact-retrieval",
+    "primaryStage": "candidate-retrieval",
+    "difficulty": "medium",
+    "question": "at-least-once 语义对消费者设计提出什么要求？",
+    "grepTerms": [
+      "at-least-once",
+      "重复",
+      "幂等性"
+    ],
+    "expectedSource": "holdout/message-queues.md",
+    "expectedTerms": [
+      "允许重复",
+      "幂等性"
+    ]
+  },
+  {
+    "id": "holdout-linux-signals",
+    "category": "operating-systems",
+    "queryType": "fact-retrieval",
+    "primaryStage": "evidence",
+    "difficulty": "hard",
+    "question": "SIGTERM 与 SIGKILL 在可处理性上有何区别？",
+    "grepTerms": [
+      "SIGTERM",
+      "SIGKILL",
+      "捕获"
+    ],
+    "expectedSource": "holdout/linux-processes.md",
+    "expectedTerms": [
+      "SIGTERM",
+      "可被捕获",
+      "SIGKILL",
+      "不能被捕获"
+    ]
+  },
+  {
+    "id": "holdout-python-taskgroup",
+    "category": "python",
+    "queryType": "fact-retrieval",
+    "primaryStage": "rerank",
+    "difficulty": "easy",
+    "question": "asyncio 的 await、Task 和 TaskGroup 分别承担什么角色？",
+    "grepTerms": [
+      "await",
+      "Task",
+      "TaskGroup",
+      "事件循环"
+    ],
+    "expectedSource": "holdout/python-asyncio.md",
+    "expectedTerms": [
+      "暂停当前协程",
+      "并发执行",
+      "结构化并发",
+      "等待组内任务"
+    ]
+  },
+  {
+    "id": "holdout-rust-borrowing",
+    "category": "rust",
+    "queryType": "fact-retrieval",
+    "primaryStage": "candidate-retrieval",
+    "difficulty": "medium",
+    "question": "Rust 的不可变借用和可变借用分别有什么并发约束？",
+    "grepTerms": [
+      "不可变借用",
+      "可变借用",
+      "排他性"
+    ],
+    "expectedSource": "holdout/rust-ownership.md",
+    "expectedTerms": [
+      "多个",
+      "排他性"
+    ]
+  },
+  {
+    "id": "holdout-react-keys",
+    "category": "frontend",
+    "queryType": "fact-retrieval",
+    "primaryStage": "evidence",
+    "difficulty": "medium",
+    "question": "React 列表中的 key 有什么作用，稳定 key 应来自哪里？",
+    "grepTerms": [
+      "React",
+      "key",
+      "元素身份",
+      "数据"
+    ],
+    "expectedSource": "holdout/react-rendering.md",
+    "expectedTerms": [
+      "同级列表",
+      "元素身份",
+      "来自数据",
+      "不是随机值"
+    ]
+  },
+  {
+    "id": "holdout-ci-stages",
+    "category": "devops",
+    "queryType": "fact-retrieval",
+    "primaryStage": "rerank",
+    "difficulty": "hard",
+    "question": "典型 CI 流水线包含哪些连续阶段？",
+    "grepTerms": [
+      "持续集成",
+      "依赖安装",
+      "静态检查",
+      "构建",
+      "测试"
+    ],
+    "expectedSource": "holdout/ci-pipelines.md",
+    "expectedTerms": [
+      "依赖安装",
+      "静态检查",
+      "构建",
+      "测试"
+    ]
+  },
+  {
+    "id": "holdout-api-cursor-pagination",
+    "category": "api-design",
+    "queryType": "fact-retrieval",
+    "primaryStage": "candidate-retrieval",
+    "difficulty": "easy",
+    "question": "cursor 分页相对 offset 分页的主要优势是什么？",
+    "grepTerms": [
+      "offset",
+      "cursor",
+      "稳定排序键",
+      "next_cursor"
+    ],
+    "expectedSource": "holdout/api-pagination.md",
+    "expectedTerms": [
+      "并发变化",
+      "稳定排序键",
+      "不透明 next_cursor"
+    ]
+  },
+  {
+    "id": "holdout-feature-flag-lifecycle",
+    "category": "delivery",
+    "queryType": "fact-retrieval",
+    "primaryStage": "evidence",
+    "difficulty": "medium",
+    "question": "功能开关为什么要有负责人、到期时间和清理计划？",
+    "grepTerms": [
+      "功能开关",
+      "负责人",
+      "到期时间",
+      "清理计划"
+    ],
+    "expectedSource": "holdout/feature-flags.md",
+    "expectedTerms": [
+      "控制长期复杂度",
+      "负责人",
+      "到期时间",
+      "清理计划"
+    ]
+  },
+  {
+    "id": "holdout-backup-rpo-rto",
+    "category": "reliability",
+    "queryType": "fact-retrieval",
+    "primaryStage": "rerank",
+    "difficulty": "medium",
+    "question": "RPO 与 RTO 分别表示什么？",
+    "grepTerms": [
+      "RPO",
+      "RTO",
+      "数据丢失",
+      "恢复"
+    ],
+    "expectedSource": "holdout/backup-recovery.md",
+    "expectedTerms": [
+      "数据丢失时间窗口",
+      "服务恢复",
+      "目标时间"
+    ]
+  }
+]

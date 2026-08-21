@@ -1,0 +1,31 @@
+{
+  "$schema": "../knowledge.sources.schema.json",
+  "sources": [
+    {
+      "name": "wiki",
+      "root": "wiki",
+      "kind": "wiki",
+      "enabled": true,
+      "index": true,
+      "priority": 100,
+      "ignore": []
+    },
+    {
+      "name": "raw",
+      "root": "examples/public-knowledge",
+      "kind": "raw",
+      "enabled": true,
+      "index": true,
+      "priority": 50,
+      "ignore": [
+        "**/.git/**",
+        "**/node_modules/**",
+        "**/__pycache__/**",
+        "**/dist/**",
+        "**/build/**",
+        "**/.next/**",
+        "**/.cache/**"
+      ]
+    }
+  ]
+}
