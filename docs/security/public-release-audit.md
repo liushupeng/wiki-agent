@@ -336,7 +336,7 @@ Public BM25 development recall: pass; strict 50/50, Hit@1 100%
 Public BM25 Holdout recall: pass; strict 15/15, Hit@1 100%
 GitHub non-Git resources: pass; repository owner manually reviewed issues, pull requests, releases, Actions logs/artifacts, and description
 Result: pass for the private GitHub phase
-Open findings: 11 recorded upstream dependency advisories; anonymous page check follows the visibility change
+Open findings: 11 recorded upstream dependency advisories; anonymous verification is recorded below
 ```
 
 Pass criteria:
@@ -348,6 +348,30 @@ Pass criteria:
 - anonymous public-page verification is performed only after all prior checks
   pass.
 
+### Post-public anonymous verification
+
+```text
+Date: 2026-08-21
+Verified public commit: eab4986
+Authentication: none
+Repository visibility: public
+Default branch: master
+Public master SHA: eab4986
+Repository description: pass
+README: pass
+MIT license: pass
+Public evaluation summary: pass
+Public release audit: pass
+Commit author and committer identity: pass
+Cursor co-author trailer: absent
+Latest GitHub Actions run: pass; CI #5 completed successfully
+Issues: none
+Pull requests: none
+Releases: none
+Result: pass
+Open findings: 11 previously recorded upstream dependency advisories
+```
+
 ## Final publication checklist
 
 - [x] Rounds 1–4 are recorded as `pass`.
@@ -357,3 +381,4 @@ Pass criteria:
 - [x] README links, CI, evaluation summary, and MIT license are valid.
 - [x] GitHub description contains no private project or company terminology.
 - [x] Repository visibility remains private until the final explicit decision.
+- [x] Anonymous post-public verification passes.
