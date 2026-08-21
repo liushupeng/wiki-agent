@@ -194,7 +194,34 @@ replacement to technical terms.
 
 ### Round 1 — Sanitized working tree
 
-Status: pending.
+```text
+Date: 2026-08-21
+Audited commit: f339ef2
+Compared remote commit: 7fb04b6
+Repository state: clean
+Scanner and version: manual privacy scan + Gitleaks 8.30.1
+Tracked-tree scan: pass
+All-history scan: deferred to Round 2; original privacy findings remain reachable
+Sensitive-path reachability: deferred to Round 2
+Ignored-path verification: pass
+Build and tests: pass; 271/271 tests
+Configuration checks: pass
+Public development recall: pass; strict 50/50, Recall@20 100%, Hit@5 100%, Hit@1 100%
+Public Holdout recall: pass; strict 15/15, source-disjoint, Hit@1 100%
+Agent E2E: preflight pass; 12-task paid run deferred until the final rewritten commit
+GitHub non-Git resources: deferred to Round 4
+Result: pass
+Open findings: original sensitive paths remain in pre-rewrite Git history
+```
+
+The public fixture contains 25 tracked technical Markdown documents. Manual
+search found no personal finance, employment, family, identity, workstation
+path, or non-public company fact in the replacement evaluation data.
+
+An unrestricted `gitleaks dir .` scan is not a valid tracked-tree check for
+this local-first repository: it traverses 4.83 GB of intentionally ignored
+private data and model/runtime files. Round 2 and later use `gitleaks git`
+against rewritten commits and clean clones.
 
 Pass criteria:
 
