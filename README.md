@@ -240,4 +240,4 @@ var/                 索引、Trace、评测原始产物，不进入 Git
 
 ## License
 
-ISC
+[MIT](LICENSE)
