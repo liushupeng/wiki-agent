@@ -196,7 +196,7 @@ replacement to technical terms.
 
 ```text
 Date: 2026-08-21
-Audited commit: f339ef2
+Audited commit: f339ef2 (pre-rewrite private snapshot; intentionally unreachable)
 Compared remote commit: 7fb04b6
 Repository state: clean
 Scanner and version: manual privacy scan + Gitleaks 8.30.1
@@ -234,7 +234,7 @@ Pass criteria:
 
 ```text
 Date: 2026-08-21
-Audited commit: a4ab13e
+Audited commit: 97b783c
 Repository state: clean; one local master branch; no tags
 Scanner and version: Gitleaks 8.30.1 + repository-specific privacy searches
 Tracked-tree scan: pass
@@ -252,7 +252,7 @@ Open findings: remote has not been updated
 The rewritten repository retained 84 reviewable engineering commits. Sensitive
 evaluation, Wiki, configuration, documentation, and deleted note paths were
 removed from all earlier commits. Their reviewed public versions were restored
-only in commit `a4ab13e`.
+only in commit `97b783c`.
 
 Pass criteria:
 
@@ -266,13 +266,13 @@ Pass criteria:
 
 ```text
 Date: 2026-08-21
-Audited commit: 8df36cf
+Audited commit: abf44b8
 Clone mode: --no-local --no-hardlinks
 Repository state: clean
 Scanner and version: Gitleaks 8.30.1 + repository-specific privacy searches
 Tracked-tree scan: pass
 All-history scan: pass; 85 commits, 1.72 MB, no Gitleaks finding
-Sensitive-path reachability: pass; restored paths appear only in a4ab13e
+Sensitive-path reachability: pass; restored paths appear only in 97b783c
 Ignored-path verification: pass; no bundle, report, or deny-list file
 npm ci: pass
 Build and tests: pass; 271/271 tests
@@ -280,7 +280,7 @@ Configuration checks: pass with a non-secret placeholder API key
 Knowledge catalog audit: pass
 Public BM25 development recall: pass; strict 50/50, Hit@1 100%
 Public BM25 Holdout recall: pass; strict 15/15, Hit@1 100%
-Agent E2E: TaskContract 10/12; human rubric 12/12; report commit 72de58f
+Agent E2E: TaskContract 10/12; human rubric 12/12; report-equivalent commit a5e7276
 GitHub non-Git resources: deferred to Round 4
 Result: pass
 Open findings: npm audit reports 11 upstream advisories; see note below
@@ -300,6 +300,12 @@ facts were absent and refused to invent values, but used semantically
 equivalent wording outside the contract's exact phrase list. Human review
 therefore passed both negative cases without changing the acceptance contract
 after observing the result.
+
+Before publication, six release-preparation commits received a metadata-only
+rewrite: author and committer email were changed from the GitHub noreply
+address to the repository owner's accepted Foxmail address, and the
+`Co-authored-by: Cursor` trailer was removed. Commit trees and timestamps were
+preserved.
 
 Pass criteria:
 
