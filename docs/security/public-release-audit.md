@@ -264,7 +264,35 @@ Pass criteria:
 
 ### Round 3 — Independent local clone
 
-Status: pending.
+```text
+Date: 2026-08-21
+Audited commit: 8df36cf
+Clone mode: --no-local --no-hardlinks
+Repository state: clean
+Scanner and version: Gitleaks 8.30.1 + repository-specific privacy searches
+Tracked-tree scan: pass
+All-history scan: pass; 85 commits, 1.72 MB, no Gitleaks finding
+Sensitive-path reachability: pass; restored paths appear only in a4ab13e
+Ignored-path verification: pass; no bundle, report, or deny-list file
+npm ci: pass
+Build and tests: pass; 271/271 tests
+Configuration checks: pass with a non-secret placeholder API key
+Knowledge catalog audit: pass
+Public BM25 development recall: pass; strict 50/50, Hit@1 100%
+Public BM25 Holdout recall: pass; strict 15/15, Hit@1 100%
+Agent E2E: deferred until this audit record is committed
+GitHub non-Git resources: deferred to Round 4
+Result: pass
+Open findings: npm audit reports 11 upstream advisories; see note below
+```
+
+The clean clone initially rejected `check:config` because no API key was
+present, as expected. It passed with a non-secret placeholder; no endpoint was
+called. The dependency audit currently reports 1 low, 2 moderate, and 8 high
+advisories, mainly through the local ML/native runtime dependency chain. The
+non-breaking automated fix does not resolve all of them, while the suggested
+full fix downgrades LanceDB across a breaking boundary. This is recorded as a
+separate dependency-hardening item rather than a privacy-release blocker.
 
 Pass criteria:
 
