@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import test from 'node:test';
 import { getIndexPaths, parseRagIndexesConfig, resolveRagIndexProfile } from '../../rag/indexProfiles.js';
 
@@ -28,8 +29,14 @@ test('RAG index profiles use isolated profile directories', () => {
 
     const tf = resolveRagIndexProfile(config);
     const qwen = resolveRagIndexProfile(config, 'qwen3-embedding-v1');
-    assert.equal(getIndexPaths(tf, tf.variants[0]!, config.indexDirectory).dataPath.endsWith('tf-v1\\raw-wiki\\index.json'), true);
-    assert.equal(getIndexPaths(qwen, qwen.variants[0]!, config.indexDirectory).dataPath.endsWith('qwen3-embedding-v1\\raw-wiki\\index.json'), true);
+    assert.equal(
+        getIndexPaths(tf, tf.variants[0]!, config.indexDirectory).dataPath,
+        path.resolve(config.indexDirectory, 'tf-v1', 'raw-wiki', 'index.json')
+    );
+    assert.equal(
+        getIndexPaths(qwen, qwen.variants[0]!, config.indexDirectory).dataPath,
+        path.resolve(config.indexDirectory, 'qwen3-embedding-v1', 'raw-wiki', 'index.json')
+    );
 });
 
 test('RAG index profile requires its active profile to exist', () => {
