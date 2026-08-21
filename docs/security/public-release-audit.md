@@ -232,7 +232,27 @@ Pass criteria:
 
 ### Round 2 — Rewritten local history
 
-Status: pending.
+```text
+Date: 2026-08-21
+Audited commit: a4ab13e
+Repository state: clean; one local master branch; no tags
+Scanner and version: Gitleaks 8.30.1 + repository-specific privacy searches
+Tracked-tree scan: pass
+All-history scan: pass; 84 commits, 1.72 MB, no Gitleaks finding
+Sensitive-path reachability: pass; every rewrite-manifest path has zero historical commits
+Private-text history search: pass
+Ignored-path verification: pass
+Build and tests: deferred to independent clone
+Evaluation: deferred to independent clone
+GitHub non-Git resources: deferred to Round 4
+Result: pass
+Open findings: remote has not been updated
+```
+
+The rewritten repository retained 84 reviewable engineering commits. Sensitive
+evaluation, Wiki, configuration, documentation, and deleted note paths were
+removed from all earlier commits. Their reviewed public versions were restored
+only in commit `a4ab13e`.
 
 Pass criteria:
 
