@@ -20,7 +20,7 @@ raw sources
 - 25 篇仓库内公开技术语料，不依赖个人笔记或公司资料
 - 检索开发集：严格通过 50/50，Recall@20、Hit@5、Hit@1 均为 100%
 - 独立 Holdout：严格通过 15/15，15 个 expected source 与开发集零重叠
-- Agent E2E：12 题公开 TaskContract 已通过离线校验，真实模型结果将在最终脱敏 commit 上发布
+- Agent E2E：TaskContract 10/12，人工 rubric 12/12；两个自动失败均为正确拒答但未逐字命中必需短语
 
 指标、方法、性能和适用边界见[公开评测摘要](docs/evaluation/SUMMARY.md)。公开语料规模较小，100% 检索指标用于证明管线可复现，不能等价为通用问答准确率。
 

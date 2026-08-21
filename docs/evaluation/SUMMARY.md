@@ -45,9 +45,22 @@
 
 本次是新语料上的首次冷启动评测：候选缓存命中率为 0%，本地 CPU BGE Reranker 是主要延迟来源。结果证明公开 fixture 与完整检索管线可以复现，不代表当前配置已达到在线服务延迟要求。
 
-## Agent E2E 状态
+## Agent E2E 结果
 
-公开 E2E 题集已通过 schema、TaskContract、来源存在性和离线测试验证。完整真实模型评测将在历史脱敏完成后的最终 commit 上执行，避免报告引用随后被重写的 Git commit。
+- 日期：2026-08-21
+- 代码 commit：`72de58ff6c822c1e17075f89be3acf6b15bfe6bd`
+- 题集 SHA-256：`8a7bf42b4e09d9b57220010700aebad01bfb9676ea72cd952b927de02eac9f22`
+- 模型：`deepseek-v4-flash`
+- 温度：0.1
+- 检索配置：`hybrid-bge-m3-metadata-source-aggregate-v1`
+- TaskContract：10/12（83.3%）
+- 人工 rubric：12/12
+- 工具执行失败：0
+- 平均步骤：2.67
+- 端到端延迟：P50 83.3 秒，P95 185.4 秒
+- 实际 token：输入 128,052，输出 11,770，共 139,822
+
+两个 TaskContract 失败都来自 `answer.required_phrase`：模型明确拒绝了无证据问题，也没有编造数值，但分别使用“没有记录 / 没有任何……证据”，没有逐字命中契约中的“没有找到 / 未找到 / 证据不足 / 无法确认”。人工复核确认两题均满足 required facts、没有 forbidden claim，因此记录为确定性词面检查的 false negative，而不是 Agent 拒答失败。为避免在验收集上追着结果修改标准，本快照不回改契约。
 
 E2E 题集覆盖：
 
@@ -57,7 +70,7 @@ E2E 题集覆盖：
 - 指定来源解释；
 - 无证据时明确拒答。
 
-结果发布后将补充模型、温度、代码 commit、题集 SHA、TaskContract 通过率和人工 rubric。
+10 个可回答任务的 TaskContract 全部通过；2 个无证据负例均正确拒绝。
 
 ## 评测方法
 

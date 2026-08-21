@@ -280,7 +280,7 @@ Configuration checks: pass with a non-secret placeholder API key
 Knowledge catalog audit: pass
 Public BM25 development recall: pass; strict 50/50, Hit@1 100%
 Public BM25 Holdout recall: pass; strict 15/15, Hit@1 100%
-Agent E2E: deferred until this audit record is committed
+Agent E2E: TaskContract 10/12; human rubric 12/12; report commit 72de58f
 GitHub non-Git resources: deferred to Round 4
 Result: pass
 Open findings: npm audit reports 11 upstream advisories; see note below
@@ -293,6 +293,13 @@ advisories, mainly through the local ML/native runtime dependency chain. The
 non-breaking automated fix does not resolve all of them, while the suggested
 full fix downgrades LanceDB across a breaking boundary. This is recorded as a
 separate dependency-hardening item rather than a privacy-release blocker.
+
+The two deterministic E2E failures were limited to
+`answer.required_phrase`. Both answers explicitly stated that the requested
+facts were absent and refused to invent values, but used semantically
+equivalent wording outside the contract's exact phrase list. Human review
+therefore passed both negative cases without changing the acceptance contract
+after observing the result.
 
 Pass criteria:
 
