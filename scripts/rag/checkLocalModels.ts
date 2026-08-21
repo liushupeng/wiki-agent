@@ -36,7 +36,7 @@ async function runSmokeCheck() {
     const embedder = createEmbedder(denseProfile.embedder);
     const embeddingStarted = performance.now();
     const vectors = await embedder.embedBatch?.([
-        '投资体系的三根支柱是什么？',
+        'Agentic RAG 的证据状态有哪些？',
         'BM25 与稠密向量混合召回'
     ]) ?? [];
     const embeddingMs = performance.now() - embeddingStarted;
@@ -44,8 +44,8 @@ async function runSmokeCheck() {
 
     const reranker = new TransformersJsReranker(retrieval.reranker);
     const rerankStarted = performance.now();
-    const scores = await reranker.score('投资体系的三根支柱是什么？', [
-        '投资体系由投资理念、能力圈和风险控制构成。',
+    const scores = await reranker.score('Agentic RAG 的证据状态有哪些？', [
+        '证据充分性分为 insufficient、partial 和 sufficient。',
         'Linux 系统调用通过软中断进入内核。'
     ]);
     const rerankMs = performance.now() - rerankStarted;
@@ -81,7 +81,7 @@ async function runSmokeCheck() {
 }
 
 async function* toChunks(vectors: number[][]) {
-    const texts = ['投资体系由投资理念、能力圈和风险控制构成。', 'Linux 系统调用通过软中断进入内核。'];
+    const texts = ['证据充分性分为 insufficient、partial 和 sufficient。', 'Linux 系统调用通过软中断进入内核。'];
     for (let index = 0; index < vectors.length; index += 1) {
         yield {
             id: `smoke#${index + 1}`,

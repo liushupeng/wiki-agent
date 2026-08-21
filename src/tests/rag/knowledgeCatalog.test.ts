@@ -46,8 +46,8 @@ test('KnowledgeCatalog decorates chunks for reranking and applies a bounded soft
             quality: 0.9,
             consistencyStatus: 'conditional',
             claims: [
-                { claimId: 'base', entity: '富祥药业', metric: '估值', value: 80, asOf: '2026-08-20', scenario: 'base', method: 'PE', chapter: '估值' },
-                { claimId: 'template', entity: '富祥药业', metric: '估值', value: 75, asOf: '2026-08-20', scenario: 'summary', method: 'template', assumption: '极简结论' }
+                { claimId: 'base', entity: '示例公司', metric: '估值', value: 80, asOf: '2026-08-20', scenario: 'base', method: 'PE', chapter: '估值' },
+                { claimId: 'template', entity: '示例公司', metric: '估值', value: 75, asOf: '2026-08-20', scenario: 'summary', method: 'template', assumption: '极简结论' }
             ]
         }]
     }));
@@ -65,7 +65,7 @@ test('KnowledgeCatalog decorates chunks for reranking and applies a bounded soft
     assert.ok(governanceRankingPrior(chunk) > 0);
     assert.ok(governanceRankingPrior(chunk) < 0.1);
     assert.deepEqual(
-        catalog.findClaims({ entity: '富祥药业', metric: '估值' }).map(item => item.claim.value),
+        catalog.findClaims({ entity: '示例公司', metric: '估值' }).map(item => item.claim.value),
         [80, 75]
     );
 });

@@ -17,12 +17,12 @@ raw sources
 
 当前公开评测快照：
 
-- 检索开发集：严格通过 50/50，Hit@5 100%，Hit@1 90%，MRR@5 0.939
-- 独立 Holdout：严格通过 14/15，expected source 与开发集零重叠
-- Agent E2E：TaskContract 10/12，人工 rubric 11/12
-- Groundedness 12/12、引用准确性 10/10、证据不足负例正确拒答 2/2
+- 25 篇仓库内公开技术语料，不依赖个人笔记或公司资料
+- 检索开发集：严格通过 50/50，Recall@20、Hit@5、Hit@1 均为 100%
+- 独立 Holdout：严格通过 15/15，15 个 expected source 与开发集零重叠
+- Agent E2E：12 题公开 TaskContract 已通过离线校验，真实模型结果将在最终脱敏 commit 上发布
 
-指标、方法、失败样例类型和适用边界见[公开评测摘要](docs/evaluation/SUMMARY.md)。开发集参与过调参，不能代替 Holdout；12 题 E2E 也只是小样本工程验收，不代表通用问答准确率。
+指标、方法、性能和适用边界见[公开评测摘要](docs/evaluation/SUMMARY.md)。公开语料规模较小，100% 检索指标用于证明管线可复现，不能等价为通用问答准确率。
 
 ## 解决的问题
 
@@ -211,6 +211,7 @@ src/                 Agent、RAG、Memory、Tools、Observability
 scripts/             索引、检查、评测和运维脚本
 config/              检索、知识源、MCP、权限与 SLO 配置
 evaluation/          开发集、Holdout、E2E 和 bad cases
+examples/            可公开复现的合成技术知识库
 skills/              按需加载的 Agent skills
 wiki/                Agent 维护的结构化知识层
 docs/                系统指南、公开评测与完整项目参考
