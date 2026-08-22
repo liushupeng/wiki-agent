@@ -48,7 +48,7 @@
 ## Agent E2E 结果
 
 - 日期：2026-08-21
-- 代码 commit：`a5e727688e318b41cb62a83c4167fbbfba59bf2c`
+- 代码版本：公开评测快照对应版本
 - 题集 SHA-256：`8a7bf42b4e09d9b57220010700aebad01bfb9676ea72cd952b927de02eac9f22`
 - 模型：`deepseek-v4-flash`
 - 温度：0.1
@@ -59,8 +59,6 @@
 - 平均步骤：2.67
 - 端到端延迟：P50 83.3 秒，P95 185.4 秒
 - 实际 token：输入 128,052，输出 11,770，共 139,822
-
-评测报告执行时记录的原始 commit 为 `72de58ff6c822c1e17075f89be3acf6b15bfe6bd`；公开发布前仅重写了提交邮箱和 message trailer，其树内容等价的新 commit 为上面的 `a5e7276`。
 
 两个 TaskContract 失败都来自 `answer.required_phrase`：模型明确拒绝了无证据问题，也没有编造数值，但分别使用“没有记录 / 没有任何……证据”，没有逐字命中契约中的“没有找到 / 未找到 / 证据不足 / 无法确认”。人工复核确认两题均满足 required facts、没有 forbidden claim，因此记录为确定性词面检查的 false negative，而不是 Agent 拒答失败。为避免在验收集上追着结果修改标准，本快照不回改契约。
 

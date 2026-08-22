@@ -59,7 +59,7 @@ flowchart LR
     app --> rag["Hybrid RAG"]
     app --> memory["Memory"]
     app --> telemetry["OpenTelemetry"]
-    
+
     rag <--> reranker["BGE Reranker"]
     reranker <--> fusion["RRF Fusion"]
     fusion <--> bm25["BM25"]
@@ -148,8 +148,8 @@ uvx --version
 项目依赖和 MCP server 工具安装：
 
 ```powershell
-# 安装 package.json 中锁定的应用、RAG、MCP 与可观测性依赖
-npm install
+# 按 package-lock.json 安装应用、RAG、MCP 与可观测性依赖
+npm ci
 
 # 安装 Git / SQLite MCP server
 uv tool install mcp-server-git
@@ -173,22 +173,22 @@ npm run check:mcp
 npm run check:config
 npm run check:llm
 
-# 临时检查其他 OpenAI-compatible Provider，例如后续的 HY3 配置
+# 临时检查其他 OpenAI-compatible Provider
 $env:BASE_URL="https://your-provider-api-base-url"
 $env:API_KEY="your_api_key"
 npm run check:llm
 ```
 
-返回 `HTTP 200` 表示网络与认证均正常；`401` 或 `403` 表示服务已可达，但 Key 或权限有问题；DNS、HTTPS 连接失败或超时则说明应检查公司网络、代理或服务端可用性。
+返回 `HTTP 200` 表示网络与认证均正常；`401` 或 `403` 表示服务已可达，但 Key 或权限有问题；DNS、HTTPS 连接失败或超时则说明应检查本地网络、代理或服务端可用性。
 
 ### 常用命令
 
 ```bash
-npm run ask -- "检索我的 Agent 笔记"
+npm run ask -- "readiness probe 失败时 Pod 会发生什么？请给出来源。"
 npm run ask -- --session <sessionId> "继续上一会话的任务"
 npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
 npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector
-npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant both --random-count 3 --seed demo
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --question-ids e2e-single-k8s-readiness evaluation/e2e/questions.json
 npm run check:mcp
 npm run check:knowledge-catalog
 npm run ops:summary -- -- --since-hours 24
@@ -203,7 +203,8 @@ wiki-agent/
 ├── scripts/             # 项目级辅助脚本，例如 RAG 索引和评测
 ├── skills/              # 可按需加载的 skill Markdown
 ├── wiki/                # Agent 维护的结构化 Markdown wiki
-├── notes/               # 默认 Markdown 知识源示例
+├── examples/            # 进入版本控制的公开可复现语料
+├── notes/               # 本地 Markdown 知识源，不进入 Git
 ├── evaluation/          # 开发集、独立 Holdout 与失败案例
 ├── config/              # RAG 索引/检索、知识源、MCP、write scopes 与评测配置
 ├── models/              # 本地 Transformers.js / ONNX 模型缓存
@@ -270,7 +271,7 @@ raw sources
 -> query / eval / bad case loop
 ```
 
-- `notes/` 保存原始资料，尽量作为 source of truth。
+- `notes/` 保存用户自己的本地原始资料，尽量作为 source of truth；该目录不进入 Git。仓库内公开复现使用 `examples/public-knowledge/`。
 - `wiki/` 保存 LLM 维护的结构化知识页，包括 `index.md`、`log.md`、`contradictions.md` 和各类页面目录。
 - `wiki/AGENTS.md` 定义 wiki schema，规定页面类型、frontmatter、引用规则、ingest/query/lint 流程。
 - `evaluation/badcases/` 保存失败样例，后续转成 eval、skill、schema 或 prompt 的改进输入。
@@ -611,8 +612,8 @@ HTTP 是默认协议；如使用 gRPC，设置 `OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 
 实验组严格分开：
 
-- `raw-only`：仅 `notes/`，使用 `bm25-v1/raw-only`。
-- `raw-wiki`：`notes/ + wiki/`，重排时 Wiki 优先，使用 `bm25-v1/raw-wiki`。
+- `raw-only`：仅仓库内 `examples/public-knowledge/`，使用 `bm25-v1/raw-only`。
+- `raw-wiki`：`examples/public-knowledge/ + wiki/`，重排时 Wiki 优先，使用 `bm25-v1/raw-wiki`。
 
 `bm25-v1` 的 variants 在配置中显式绑定 source config。三个资源消耗型命令在无参数时只输出帮助（exit code 0），不会构建索引、运行评测或调用 LLM。实际构建索引必须显式指定 profile；省略 `--variant` 时构建该 profile 的全部 variants。manifest 会记录 profile、variant、数据源配置指纹、文档数和 chunk 数，运行时若任一身份不匹配会拒绝混用：
 
@@ -622,7 +623,7 @@ npm run index:knowledge -- -- --profile bm25-v1 --variant raw-only
 npm run index:knowledge -- -- --profile bm25-v1 --variant raw-wiki
 ```
 
-本地混合检索将物理索引和查询策略分开配置：`rag.indexes.jsonc` 中的 `bm25-v1`、`bge-m3-v1` 负责构建索引；`rag.retrieval.jsonc` 保留纯向量、RRF、Reranker 等消融策略，其 active retrieval profile 为 `hybrid-bge-m3-metadata-source-aggregate-v1`。首次运行会下载较大的 ONNX 模型，先做本机可行性检查，再从同一语料快照重建两个索引：
+本地混合检索将物理索引和查询策略分开配置：`rag.indexes.jsonc` 中的 `bm25-v1`、`bge-m3-v1` 负责构建索引；`rag.retrieval.jsonc` 保留纯向量、RRF、Reranker 等消融策略。配置中的 fallback active profile 是 `hybrid-bge-m3-metadata-source-aggregate-v1`；日常 `.env.example` 使用 `RAG_RETRIEVAL_MODE=balanced`，实际解析为 `hybrid-bge-m3-balanced-v1`，严格评测才显式选择完整 aggregate profile。首次运行会下载较大的 ONNX 模型，先做本机可行性检查，再从同一语料快照重建两个索引：
 
 ```powershell
 npm run check:rag-models
@@ -669,7 +670,7 @@ npm run eval:recall -- -- --variant both --retriever both
 npm run eval:recall -- -- --profile bm25-v1 --variant both --retriever vector
 npm run eval:recall -- -- --profile bm25-v1 --variant raw-wiki --retriever vector --wiki-first false
 npm run eval:recall -- -- --profile bm25-v1 --variant raw-only --retriever vector --probe-candidate-limit 100
-npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector --question-ids investment-pillars,raft-components
+npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector --question-ids http-cache-max-age,k8s-readiness
 ```
 
 `--profile` 选择索引 profile（默认 `bm25-v1`）；`--variant` 选择索引实验组（默认 `both`），`--retriever` 选择检索实现（默认 `vector`）。`--wiki-first true|false` 可覆盖变体默认重排策略，用于分离 Wiki 语料扩展与 Wiki 优先排序；省略时保留变体默认行为。`--probe-candidate-limit <N>` 会仅对正常 Top-20 候选未命中的题追加深度探测，N 必须大于 20。`--question-ids <id1,id2,...>` 可只重跑失败题或指定样本，适合低成本生成排序诊断。召回报告会记录每个变体的实际 Wiki 优先策略、题目范围和 probe 汇总，并写入 `var/evals/recall/<timestamp>/report.json`。
@@ -747,9 +748,9 @@ Hit@5 78%、Hit@1 58%、34/50）计算。召回阶段的迭代路径是：
 Agent 评测会调用模型，默认不导出 Jaeger。为控制成本，必须通过显式 CLI 参数选择可复现样本、指定题目，或用 `--all` 明确允许全量运行；无参数只显示帮助且绝不调用 LLM：
 
 ```powershell
-npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant both --random-count 5 --seed baseline-1
-npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --question-ids investment-pillars,raft-components
-npm run eval:agent -- -- --retrieval-profile bm25-v1 --variant both --random-count 3 --seed bm25-baseline-1
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --random-count 5 --seed baseline-1 evaluation/e2e/questions.json
+npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --question-ids e2e-single-http-cache,e2e-single-k8s-readiness evaluation/e2e/questions.json
+npm run eval:agent -- -- --retrieval-profile bm25-v1 --variant raw-wiki --random-count 3 --seed bm25-baseline-1 evaluation/e2e/questions.json
 ```
 
 ### 12 题小型端到端闭环
@@ -769,7 +770,7 @@ npm run index:knowledge -- -- --profile bge-m3-v1 --variant raw-wiki
 # 免费 preflight：实际执行一次完整 Hybrid 检索并验证 /models，不生成 token
 npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --all --preflight --max-steps 8 --max-output-tokens 2048 evaluation/e2e/questions.json
 
-# 波谷期只付费跑第一道；终端会打印本次输出目录
+# 先付费运行第一道，确认环境和输出；终端会打印本次输出目录
 npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --all --max-steps 8 --max-output-tokens 2048 --max-new-questions 1 evaluation/e2e/questions.json
 
 # 检查第一题后，从同一目录继续剩余题目；已完成 result.json 不会重复调用模型

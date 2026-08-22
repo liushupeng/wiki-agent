@@ -17,7 +17,7 @@ raw sources
 
 当前公开评测快照：
 
-- 25 篇仓库内公开技术语料，不依赖个人笔记或公司资料
+- 25 篇仓库内公开技术语料，作为可直接运行的 fixture，用于快速验证索引、检索与离线评测链路
 - 检索开发集：严格通过 50/50，Recall@20、Hit@5、Hit@1 均为 100%
 - 独立 Holdout：严格通过 15/15，15 个 expected source 与开发集零重叠
 - Agent E2E：TaskContract 10/12，人工 rubric 12/12；两个自动失败均为正确拒答但未逐字命中必需短语
@@ -38,24 +38,71 @@ raw sources
 ## 架构
 
 ```mermaid
-flowchart LR
-    user["CLI / User"] --> agent["WikiAgent Loop"]
-    agent <--> memory["Short / Mid / Long Memory"]
-    agent --> registry["Tool Registry"]
-    registry --> policy["Permission + Budget Policy"]
-    policy --> tools["Local Tools + MCP"]
-    tools --> rag["Hybrid RAG"]
-    rag --> bm25["BM25"]
-    rag --> dense["BGE-M3"]
-    bm25 --> rrf["RRF Fusion"]
-    dense --> rrf
-    rrf --> reranker["BGE Reranker"]
-    reranker --> evidence["Evidence Ledger"]
-    evidence --> agent
-    agent --> trace["OpenTelemetry / JSONL Trace"]
-    trace --> eval["Contract + Human Eval"]
-    eval --> wiki["Maintained Wiki"]
+flowchart TB
+    user["CLI / User / Eval Runner"]
+
+    subgraph runtime["Online Runtime"]
+        agent["WikiAgent Loop<br/>plan → tool → replan → answer"]
+        model["OpenAI-compatible LLM"]
+        memory["Memory<br/>Short / ContextSnapshot / Long"]
+        exposure["Tool Registry + Exposure Controller"]
+        executor["Tool Executor"]
+        policy["Permission / Approval / Failure / Budget Policy"]
+        tools["Local Tools / MCP / Skills"]
+        ragtools["search_notes / grep_notes / read_note"]
+        retrieval["Retrieval Runtime"]
+        sparse["BM25"]
+        dense["BGE-M3 + LanceDB"]
+        fusion["RRF Fusion"]
+        reranker["BGE Reranker<br/>metadata + source-local"]
+        windows["Evidence Windows"]
+        ledger["EvidenceLedger<br/>insufficient / partial / sufficient"]
+        gate["RuntimeEvidencePolicy<br/>budget + groundedness gate"]
+        answer["Cited Answer / Explicit Abstention"]
+
+        agent <--> model
+        agent <--> memory
+        agent --> exposure --> executor
+        executor --> policy --> tools
+        tools --> ragtools --> retrieval
+        retrieval --> sparse --> fusion
+        retrieval --> dense --> fusion
+        fusion --> reranker --> windows --> ledger --> gate --> agent
+        agent --> answer
+    end
+
+    subgraph knowledge["Knowledge and Indexing"]
+        raw["Private Raw Markdown"]
+        wiki["Maintained Wiki"]
+        catalog["KnowledgeCatalog<br/>lifecycle / authority / conflict"]
+        indexer["Offline Index Pipeline<br/>manifest-bound indexes"]
+
+        raw --> indexer
+        wiki --> indexer
+        catalog -. governance .-> indexer
+        indexer --> sparse
+        indexer --> dense
+    end
+
+    subgraph quality["Observability and Offline Quality Loop"]
+        trace["OpenTelemetry + JSONL Trace"]
+        contracts["Dev / Holdout / E2E<br/>TaskContract + Rubric"]
+        verifier["Recall Eval + TrajectoryVerifier"]
+        reports["Metrics / Review Pack / Bad Cases"]
+        iteration["Human-approved<br/>config / skill / wiki iteration"]
+
+        trace --> verifier
+        contracts --> verifier --> reports --> iteration
+        iteration -. update .-> catalog
+        iteration -. skill protocol .-> wiki
+    end
+
+    user --> agent
+    agent -. spans .-> trace
+    executor -. spans .-> trace
 ```
+
+实线表示运行时或索引数据流，虚线表示治理与离线反馈。Wiki 更新目前由 Skill 协议驱动并经过人工审批，不是评测结果自动写回生产知识库。
 
 主要模块：
 
@@ -225,6 +272,7 @@ var/                 索引、Trace、评测原始产物，不进入 Git
 - [公开评测摘要](docs/evaluation/SUMMARY.md)：聚合指标、方法、失败类型与边界
 - [系统指南](docs/wiki-agent-system-guide.md)：端到端系统边界与实现说明
 - [完整项目参考](docs/wiki-agent-project-reference.md)：配置、设计取舍、评测协议和命令细节
+- [安全政策](docs/security/SECURITY.md)：本地数据边界、安全控制、已知限制与漏洞报告建议
 - [环境变量模板](.env.example)：运行时配置说明
 
 ## 项目边界
