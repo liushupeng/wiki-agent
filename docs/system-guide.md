@@ -369,7 +369,7 @@ TaskContract 适合验证工具、预算、证据和终止行为；人工 rubric
 6. `src/rag/`
 7. `scripts/evaluation/`
 8. `docs/evaluation/SUMMARY.md`
-9. `docs/security/SECURITY.md`
+9. `SECURITY.md`
 
 提交变更前至少运行：
 

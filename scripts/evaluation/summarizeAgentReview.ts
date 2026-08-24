@@ -8,6 +8,14 @@ const USAGE = `Usage:
 
 Reads a completed annotation-template.csv, writes review-summary.json, and never calls a model.`;
 
+/**
+ * Agent E2E 人工 rubric 标注汇总入口。
+ *
+ * 通过 `npm run eval:review` 显式调用，读取 review 目录中已填写的
+ * annotation-template.csv，校验各维度评分和失败标签，汇总总体/分维度/
+ * 预期行为通过率与失败类型，并生成包含标注哈希和失败题重跑命令的
+ * review-summary.json；全程离线，不调用 LLM，也不修改原始标注。
+ */
 async function main(): Promise<void> {
     const args = meaningfulArguments(process.argv.slice(2));
     if (args.length === 0 || (args.length === 1 && args[0] === '--help')) {

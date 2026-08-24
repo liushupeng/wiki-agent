@@ -37,6 +37,13 @@ type OperationsSlo = {
     averageTotalTokensMax: number;
 };
 
+/**
+ * Agent 运行指标与 SLO 汇总入口。
+ *
+ * 通过 `npm run ops:summary` 显式调用，递归读取指定时间窗口内的本地 JSONL
+ * Trace，计算完成率、延迟、工具失败率、RAG 缓存与预算、token 等 SLI，
+ * 再与 operations SLO 配置比较并输出 JSON 报告；不调用 LLM，也不修改 Trace。
+ */
 async function main(): Promise<void> {
     const options = parseArgs(process.argv.slice(2));
     const files = await listJsonlFiles(options.directory);

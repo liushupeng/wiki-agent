@@ -5,6 +5,13 @@ import '../../src/env.js';
 import { loadKnowledgeCatalog, KNOWLEDGE_STATUSES } from '../../src/rag/knowledgeCatalog.js';
 import { getKnowledgeSourceRoots } from '../../src/rag/sourceRoots.js';
 
+/**
+ * KnowledgeCatalog 一致性审计入口。
+ *
+ * 通过 `npm run check:knowledge-catalog` 显式调用，适合在修改 Catalog、
+ * 调整知识源或提交变更前运行。它检查来源前缀与路径、deleted 状态和可选
+ * contentHash；只读取本地配置与来源文件，不构建索引，也不调用 LLM。
+ */
 async function main(): Promise<void> {
     const catalog = await loadKnowledgeCatalog();
     const roots = await getKnowledgeSourceRoots();

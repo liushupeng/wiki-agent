@@ -33,15 +33,12 @@ import { createTelemetry, SpanHandle, Telemetry } from '../../src/trace/telemetr
 /**
  * RAG 检索评测入口。
  *
- * 用法：
- * - npm run eval:recall
- * - npm run eval:recall -- -- --variant both --retriever both
- *
- * 不带参数或传入 --help 时只打印帮助，不读取索引或题库。这个脚本只评估检索层，
- * 不调用 LLM。--variant 支持 raw-only、raw-wiki、both；
- * --retriever 支持 vector、grep、both。
- * 它适合在调整 chunker、embedding、vector store 或 grep 策略后，
- * 快速观察 topK 召回是否仍然命中预期笔记和关键词。
+ * 通过 `npm run eval:recall` 显式调用；无参数或 `--help` 只显示帮助，不读取
+ * 题集和索引。正式执行可选择 raw-only/raw-wiki 语料变体以及 vector/grep
+ * 检索器，按题检查候选召回、Top-K 来源与预期关键词，汇总 Recall、Hit@K、
+ * MRR 和严格通过率，并将逐阶段 Trace 与 report.json 写入
+ * var/evals/recall/。适合在调整 chunker、索引、embedding、融合、重排或 grep
+ * 策略后做离线回归；只评估检索层，不调用 LLM，也不修改正式索引。
  */
 async function main() {
     const command = parseRecallEvalCommand(process.argv.slice(2));

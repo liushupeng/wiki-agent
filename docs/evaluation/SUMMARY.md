@@ -79,7 +79,7 @@ E2E 题集覆盖：
 2. 不依赖 LLM Judge 的人工 rubric；
 3. 包含工具调用、证据来源、预算和终止原因的 JSONL Trace。
 
-题集与评测代码位于 [`evaluation/`](../../evaluation/)，公开语料位于 [`examples/public-knowledge/`](../../examples/public-knowledge/)，完整设计见[项目参考文档](../wiki-agent-project-reference.md)。
+题集与评测代码位于 [`evaluation/`](../../evaluation/)，公开语料位于 [`examples/public-knowledge/`](../../examples/public-knowledge/)，完整设计见[项目参考文档](../project-reference.md)。
 
 ## 复现
 

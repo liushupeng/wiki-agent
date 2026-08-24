@@ -18,6 +18,45 @@ import { LanceDbVectorStore } from '../../src/rag/vectorStore.js';
 const execFileAsync = promisify(execFile);
 const BENCHMARK_RESULT_PREFIX = 'RAG_BENCHMARK_RESULT=';
 
+/**
+ * 本地 RAG 模型检查与基准测试入口。
+ *
+ * 通过 `npm run check:rag-models` 显式调用时执行快速 smoke check，验证本地
+ * embedding、reranker 和 LanceDB 检索链路；传入 `--benchmark` 时才运行
+ * 多组 dtype/device/batch size 性能测试。它不调用 LLM，也不构建正式索引。
+ */
+async function main(): Promise<void> {
+    const args = process.argv.slice(2);
+    if (args.includes('--help')) {
+        console.log(usage());
+    } else if (args.includes('--benchmark-worker')) {
+        await runBenchmarkWorker(parseBenchmarkWorkerOptions(args));
+    } else if (args.includes('--benchmark')) {
+        await runBenchmark(parseBenchmarkOptions(args));
+    } else {
+        await runSmokeCheck();
+    }
+}
+
+function usage(): string {
+    return [
+        'usage:',
+        '  npm run check:rag-models',
+        '  npm run check:rag-models -- -- --benchmark [options]',
+        '',
+        'benchmark options:',
+        '  --profile <id>       default: bge-m3-v1',
+        '  --variant <id>       default: raw-only',
+        '  --samples <n>        default: 64',
+        '  --batches <list>     default: 4,8,16',
+        '  --dtypes <list>      default: q4',
+        '  --devices <list>     default: cpu',
+        '',
+        'example:',
+        '  npm run check:rag-models -- -- --benchmark --samples 256 --batches 4,8,16 --dtypes q4,int8 --devices cpu,webgpu'
+    ].join('\n');
+}
+
 async function runSmokeCheck() {
     const indexes = await loadRagIndexesConfig();
     const denseProfile = resolveRagIndexProfile(indexes, process.argv[2] ?? 'bge-m3-v1');
@@ -356,38 +395,6 @@ function readPositiveInteger(value: string, name: string): number {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer`);
     return parsed;
-}
-
-function usage(): string {
-    return [
-        'usage:',
-        '  npm run check:rag-models',
-        '  npm run check:rag-models -- -- --benchmark [options]',
-        '',
-        'benchmark options:',
-        '  --profile <id>       default: bge-m3-v1',
-        '  --variant <id>       default: raw-only',
-        '  --samples <n>        default: 64',
-        '  --batches <list>     default: 4,8,16',
-        '  --dtypes <list>      default: q4',
-        '  --devices <list>     default: cpu',
-        '',
-        'example:',
-        '  npm run check:rag-models -- -- --benchmark --samples 256 --batches 4,8,16 --dtypes q4,int8 --devices cpu,webgpu'
-    ].join('\n');
-}
-
-async function main(): Promise<void> {
-    const args = process.argv.slice(2);
-    if (args.includes('--help')) {
-        console.log(usage());
-    } else if (args.includes('--benchmark-worker')) {
-        await runBenchmarkWorker(parseBenchmarkWorkerOptions(args));
-    } else if (args.includes('--benchmark')) {
-        await runBenchmark(parseBenchmarkOptions(args));
-    } else {
-        await runSmokeCheck();
-    }
 }
 
 main().catch(error => {

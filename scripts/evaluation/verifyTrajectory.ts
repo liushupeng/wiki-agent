@@ -10,6 +10,14 @@ const USAGE = `Usage:
 
 Reads an existing trace and evaluates its TaskContract without creating an Agent or calling a model.`;
 
+/**
+ * 已有 Agent 轨迹的确定性离线复核入口。
+ *
+ * 通过 `npm run eval:verify` 显式调用，读取题目的 TaskContract、JSONL v2
+ * Trace 和可选答案文件，检查答案词面、证据来源、工具使用、预算、终止轨迹
+ * 与安全约束并输出 JSON 报告；不创建 Agent、不调用 LLM、不修改原始 Trace。
+ * hard contract 未通过时返回非零退出码，soft contract 仅报告检查结果。
+ */
 async function main(): Promise<void> {
     const args = parseArgs(process.argv.slice(2));
     if (args.help) {

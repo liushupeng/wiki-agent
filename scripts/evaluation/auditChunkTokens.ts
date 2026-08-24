@@ -14,6 +14,14 @@ const CANDIDATES = [
     { chunkSize: 450, overlap: 60 }
 ];
 
+/**
+ * Chunk token 分布审计入口。
+ *
+ * 通过 `npm run eval:chunks -- <profile> <variant>` 显式调用，使用目标
+ * embedding 模型的真实 tokenizer 比较多组 chunkSize/overlap，统计 chunk
+ * 数量、P95/最大 token 及超出模型 maxLength 的比例，并将报告写入
+ * var/evals/chunk-audit/；不调用 LLM，也不构建或修改正式索引。
+ */
 async function main(): Promise<void> {
     const config = await loadRagIndexesConfig();
     const profile = resolveRagIndexProfile(config, process.argv[2] ?? 'bge-m3-v1');

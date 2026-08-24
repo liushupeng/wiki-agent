@@ -255,7 +255,7 @@ Agent E2E 会调用真实模型，先运行免费 preflight，再显式选择题
 npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-wiki --all --preflight --max-steps 8 --max-output-tokens 2048 evaluation/e2e/questions.json
 ```
 
-完整评测协议、命令和指标定义见[公开评测摘要](docs/evaluation/SUMMARY.md)与[项目参考文档](docs/wiki-agent-project-reference.md)。
+完整评测协议、命令和指标定义见[公开评测摘要](docs/evaluation/SUMMARY.md)与[项目参考文档](docs/project-reference.md)。
 
 ## 目录
 
@@ -276,9 +276,9 @@ var/                 索引、Trace、评测原始产物，不进入 Git
 ## 文档导航
 
 - [公开评测摘要](docs/evaluation/SUMMARY.md)：聚合指标、方法、失败类型与边界
-- [系统指南](docs/wiki-agent-system-guide.md)：端到端系统边界与实现说明
-- [完整项目参考](docs/wiki-agent-project-reference.md)：配置、设计取舍、评测协议和命令细节
-- [安全政策](docs/security/SECURITY.md)：本地数据边界、安全控制、已知限制与漏洞报告建议
+- [系统指南](docs/system-guide.md)：端到端系统边界与实现说明
+- [完整项目参考](docs/project-reference.md)：配置、设计取舍、评测协议和命令细节
+- [安全政策](SECURITY.md)：本地数据边界、安全控制、已知限制与漏洞报告建议
 - [环境变量模板](.env.example)：运行时配置说明
 
 ## 项目边界

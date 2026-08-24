@@ -31,12 +31,6 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-/**
- * Agent 评测入口。
- *
- * 无参数或 --help 只输出帮助，不创建 Agent 且绝不调用 LLM。执行时必须用
- * --all、--random-count 或 --question-ids 显式选择题目，避免意外全量评测。
- */
 type AgentEvalRun = {
     status: 'success' | 'partial';
     questionsFile: string;
@@ -53,6 +47,15 @@ const DEFAULT_EVAL_MAX_STEPS = 8;
 const DEFAULT_EVAL_MAX_OUTPUT_TOKENS = 2_048;
 const EVAL_REQUEST_TIMEOUT_MS = 120_000;
 
+/**
+ * Agent 端到端评测入口。
+ *
+ * 通过 `npm run eval:agent` 显式调用；无参数或 `--help` 只显示帮助，正式执行
+ * 必须用 `--all`、`--random-count` 或 `--question-ids` 选择题目。入口先校验
+ * 题集、干净 Git 快照、完整检索管线和模型端点；`--preflight` 到此停止且不
+ * 生成 token，否则调用真实 LLM 运行 Agent loop，以 TaskContract 复核答案、
+ * 证据、工具预算和轨迹，并写出 checkpoint、Trace、报告及人工 review 包。
+ */
 async function main(): Promise<void> {
     const command = parseAgentEvalCommand(process.argv.slice(2));
     if (command.action === 'help') {
