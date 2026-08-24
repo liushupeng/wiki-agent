@@ -24,6 +24,24 @@ test('appendToolCallDeltas assembles streamed function arguments', () => {
     assert.equal(isFunctionToolCall(toolCalls[0]), true);
 });
 
+test('appendToolCallDeltas accepts tool id and name in later chunks', () => {
+    const buffer: Parameters<typeof buildToolCalls>[0] = [];
+    appendToolCallDeltas(buffer, [{
+        index: 0,
+        function: { arguments: '{"query"' }
+    }]);
+    appendToolCallDeltas(buffer, [{
+        index: 0,
+        id: 'call_late',
+        function: { name: 'search_notes', arguments: ':"agent"}' }
+    }]);
+
+    const [toolCall] = buildToolCalls(buffer);
+    assert.equal(toolCall?.id, 'call_late');
+    assert.equal(toolCall?.function.name, 'search_notes');
+    assert.equal(toolCall?.function.arguments, '{"query":"agent"}');
+});
+
 test('buildSkippedToolResult creates an unsupported tool observation', () => {
     const result = buildSkippedToolResult({ id: 'call_custom', type: 'custom' }, 2);
     const content = JSON.parse(result.toolMessage.content as string);

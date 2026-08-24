@@ -26,10 +26,6 @@ export interface TraceSink {
     write(event: TraceEvent): Promise<void>;
 }
 
-export class NoopTraceSink implements TraceSink {
-    async write(_event: TraceEvent): Promise<void> {}
-}
-
 export class JsonlTraceSink implements TraceSink {
     private filePathValue?: string;
 

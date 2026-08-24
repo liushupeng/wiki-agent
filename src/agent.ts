@@ -10,7 +10,7 @@ import { createTelemetry, preview, runWithSpan, SpanHandle, TerminationReason } 
 import { ToolExecutor } from './tools/executor.js';
 import { estimateMessagesSize, estimateTextSize, estimateToolSchemasSize } from './utils/tokenBudget.js';
 import { parseJsonSafely } from './utils/json.js';
-import { redactSensitiveValues, writePromptArtifact } from './trace/artifacts.js';
+import { redactSensitiveText, redactSensitiveValues, writePromptArtifact } from './trace/artifacts.js';
 import { exportTrace } from './trace/export.js';
 import { buildToolObservation } from './context/toolObservation.js';
 import { EvidenceLedger } from './context/evidenceSufficiency.js';
@@ -97,7 +97,7 @@ export class WikiAgent implements IAgent {
             otlpProtocol: this.config.otlpProtocol
         });
         const runSpan = await telemetry.startSpan('wiki_agent.run', {
-            attributes: { 'wiki_agent.instruction': preview(userInstruction) }
+            attributes: { 'wiki_agent.instruction': preview(redactSensitiveText(userInstruction)) }
         });
 
         let stepCount = 0;
@@ -153,7 +153,7 @@ export class WikiAgent implements IAgent {
                 }
             });
             await telemetry.shutdown();
-            if (this.config.autoExportFileTrace !== false) {
+            if (this.config.autoExportFileTrace === true) {
                 await this.exportFileTrace(telemetry.filePath);
             }
         }
@@ -421,7 +421,8 @@ export class WikiAgent implements IAgent {
         const toolArgsStr = toolCall.function.arguments;
         const startedAt = Date.now();
         const tool = this.registry.getTool(toolName);
-        console.log(Color.magenta(`🔌 [工具激活] [${toolName}] -> 参数: ${toolArgsStr}`));
+        const safeArguments = buildToolArgumentTraceAttributes(toolArgsStr)['tool.arguments.preview'];
+        console.log(Color.magenta(`🔌 [工具激活] [${toolName}] -> 参数: ${String(safeArguments)}`));
 
         const toolSpan = await stepSpan.startChild('tool.execute', {
             attributes: {
@@ -443,8 +444,25 @@ export class WikiAgent implements IAgent {
             if (tool?.permission === 'rag') this.evidencePolicy.recordRagCall();
             observation = await runWithSpan(toolSpan, () => this.toolExecutor.execute(toolName, toolArgsStr));
         }
-        this.evidenceLedger.recordToolResult(toolName, observation);
-        const assessment = this.evidenceLedger.assess();
+        const recordedEvidence = this.evidenceLedger.recordToolResult(toolName, observation);
+        let assessment = this.evidenceLedger.assess();
+        const buildContextObservation = () => buildToolObservation(tool?.permission === 'rag'
+            ? {
+                ...observation,
+                metadata: {
+                    ...observation.metadata,
+                    runtimeEvidencePolicy: this.evidencePolicy.buildModelFeedback(assessment)
+                }
+            }
+            : observation);
+        let observationForContext = buildContextObservation();
+        if (observationForContext.truncated && recordedEvidence.length > 0) {
+            for (const entry of recordedEvidence) {
+                this.evidenceLedger.record({ ...entry, truncated: true });
+            }
+            assessment = this.evidenceLedger.assess();
+            observationForContext = buildContextObservation();
+        }
         if (tool?.permission === 'rag') {
             await toolSpan.addEvent('evidence.sufficiency', {
                 'evidence.state': assessment.state,
@@ -453,10 +471,6 @@ export class WikiAgent implements IAgent {
                 'evidence.reasons': JSON.stringify(assessment.reasons)
             });
         }
-        const observationForContext = buildToolObservation(observation);
-        const contextContent = tool?.permission === 'rag'
-            ? `${observationForContext.content}\n\n${this.evidencePolicy.buildModelFeedback(assessment)}`
-            : observationForContext.content;
         await toolSpan.end({
             status: observation.status === 'success' ? 'ok' : 'error',
             attributes: {
@@ -474,7 +488,7 @@ export class WikiAgent implements IAgent {
             toolMessage: {
                 role: "tool",
                 tool_call_id: toolCall.id,
-                content: contextContent
+                content: observationForContext.content
             }
         };
     }

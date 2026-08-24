@@ -16,7 +16,7 @@ import { verifyTrajectory } from '../../src/evaluation/trajectoryVerifier.js';
 import { getEvaluationExperiment, parseEvaluationMode, getSourceConfigIdentity } from '../../src/evaluation/experiments.js';
 import { agentUsage, parseAgentEvalCommand } from '../../src/evaluation/cli.js';
 import { createCliProgressReporter } from '../../src/evaluation/cliProgress.js';
-import { FileReviewArtifactWriter, NoopReviewTracePublisher, ReviewPair } from '../../src/evaluation/reviewArtifacts.js';
+import { FileReviewArtifactWriter, ReviewPair } from '../../src/evaluation/reviewArtifacts.js';
 import {
     EvalQuestionCheckpoint,
     EvalRunManifest,
@@ -25,7 +25,7 @@ import {
     writeJsonAtomic
 } from '../../src/evaluation/evalCheckpoint.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile, resolveRagIndexVariant } from '../../src/rag/indexProfiles.js';
-import { loadRetrievalProfilesConfig, resolveRetrievalProfile } from '../../src/rag/retrievalProfiles.js';
+import { loadRetrievalProfilesConfig, resolveRetrievalProfile, resolveRuntimeRetrievalSelection } from '../../src/rag/retrievalProfiles.js';
 import { openRetriever } from '../../src/rag/retrievalPipeline.js';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -73,7 +73,13 @@ async function main(): Promise<void> {
     const maxOutputTokens = arguments_.maxOutputTokens ?? DEFAULT_EVAL_MAX_OUTPUT_TOKENS;
     const indexesConfig = await loadRagIndexesConfig();
     const retrievalProfilesConfig = await loadRetrievalProfilesConfig();
-    const retrievalProfile = resolveRetrievalProfile(retrievalProfilesConfig, arguments_.retrievalProfile);
+    const retrievalSelection = resolveRuntimeRetrievalSelection(retrievalProfilesConfig, arguments_.retrievalProfile
+        ? { profileId: arguments_.retrievalProfile }
+        : {
+            profileId: process.env.RAG_RETRIEVAL_PROFILE,
+            mode: process.env.RAG_RETRIEVAL_PROFILE ? undefined : process.env.RAG_RETRIEVAL_MODE
+        });
+    const retrievalProfile = resolveRetrievalProfile(retrievalProfilesConfig, retrievalSelection.primary);
     const variantProfileId = retrievalProfile.mode === 'single'
         ? retrievalProfile.indexProfile
         : retrievalProfile.sparseProfile;
@@ -185,7 +191,7 @@ async function main(): Promise<void> {
                         requestTimeoutMs: EVAL_REQUEST_TIMEOUT_MS,
                         traceDir, telemetryBackend: 'file',
                         capturePromptArtifacts: false, traceArtifactDir: path.join(attemptDirectory, 'prompt-artifacts'),
-                        autoExportFileTrace: false, approvalMode: 'auto', requestApproval: async () => true
+                        autoExportFileTrace: false, approvalMode: 'deny'
                     } satisfies AgentConfig, memory, registry);
                     const answer = await agent.run(question.question, () => {});
                     const trace = await readOnlyTrace(traceDir);
@@ -239,7 +245,6 @@ async function main(): Promise<void> {
         const reviewPairs: ReviewPair[] = Array.from(pairs.values()).map(pair => ({ id: pair.question.id, question: pair.question.question, category: pair.question.category, rawOnly: pair.rawOnly, rawWiki: pair.rawWiki, traceId: pair.traceId, traceFile: pair.traceFile }));
         console.log('[agent] 正在生成复核评测包与报告…');
         const artifacts = await new FileReviewArtifactWriter().write(reviewPairs, path.join(outputDirectory, 'review'));
-        await new NoopReviewTracePublisher().publish({ artifactPath: artifacts.reviewJsonlPath, sha256: artifacts.sha256 });
         const comparisons = reviewPairs.map(pair => ({
             id: pair.id,
             outcome: pair.rawOnly && pair.rawWiki

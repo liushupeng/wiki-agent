@@ -170,7 +170,7 @@ export function agentUsage(): string {
         '  npm run eval:agent',
         '  npm run eval:agent -- -- [--retrieval-profile <retrievalProfileId>] --variant raw-only|raw-wiki|both (--all | --random-count <n> [--seed <seed>] | --question-ids <id1,id2,...>) [--preflight] [--resume <outputDir>] [--max-steps <n>] [--max-output-tokens <n>] [--max-new-questions <n>] [questionsFile]',
         '',
-        'Default retrieval profile: activeRetrievalProfile from config/rag.retrieval.jsonc. --preflight validates every index required by the retrieval pipeline and the model endpoint without generation.'
+        'Default retrieval selection: the same RAG_RETRIEVAL_PROFILE / RAG_RETRIEVAL_MODE resolution used by ask and check:config. --preflight validates every required index and the model endpoint without generation.'
     ].join('\n');
 }
 

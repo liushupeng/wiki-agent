@@ -9,6 +9,13 @@ test('chunkText splits text with overlap and stable chunk ids', () => {
     assert.deepEqual(chunks.map(chunk => chunk.id), ['note.txt#1', 'note.txt#2', 'note.txt#3']);
 });
 
+test('chunkText coordinates match trimmed chunk content', () => {
+    const source = '  alpha beta  ';
+    const [chunk] = chunkText('note.txt', source, 100, 10);
+
+    assert.equal(source.slice(chunk!.start, chunk!.end), chunk!.text);
+});
+
 test('chunkMarkdown preserves frontmatter, title path, tags, and wiki links', () => {
     const chunks = chunkMarkdown('note.md', [
         '---',
@@ -23,6 +30,14 @@ test('chunkMarkdown preserves frontmatter, title path, tags, and wiki links', ()
     assert.deepEqual(chunks[0].titlePath, ['Agent Notes']);
     assert.deepEqual(chunks[0].tags, ['agent', 'rag', 'local-wiki']);
     assert.deepEqual(chunks[0].links, ['Markdown 笔记索引']);
+    const source = [
+        '---',
+        'tags: [agent, rag]',
+        '---',
+        '# Agent Notes',
+        'See [[Markdown 笔记索引]] and #local-wiki.'
+    ].join('\n');
+    assert.equal(source.slice(chunks[0].start, chunks[0].end), chunks[0].text);
 });
 
 test('selectChunker dispatches markdown extensions and falls back to text chunking', () => {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     aggregateSourceCandidates,
+    assembleEvidenceWindows,
     formatRerankDocument,
     includeGlobalSourceCandidate,
     limitPerSource,
@@ -161,8 +162,31 @@ test('source aggregation keeps one ranked candidate with global and local text',
         chunkRankingScore: 20
     }]);
 
-    assert.equal(aggregated.length, 1);
-    assert.match(aggregated[0]!.text, /global answer\n\nlocal answer/);
-    assert.equal(aggregated[0]?.chunkRankingScore, 20);
-    assert.equal(aggregated[0]?.source, 'a.md');
+    assert.equal(aggregated.length, 2);
+    assert.equal(aggregated[0]?.id, 'global-only');
+    const sourceAggregate = aggregated.find(candidate => candidate.source === 'a.md');
+    assert.match(sourceAggregate!.text, /global answer\n\nlocal answer/);
+    assert.equal(sourceAggregate?.chunkRankingScore, 20);
+    assert.deepEqual(sourceAggregate?.constituentAnchorIds, ['global', 'local']);
+});
+
+test('aggregate evidence expansion uses real constituent anchor ids', async () => {
+    const chunks = [
+        { ...result('before-global', 'a.md', 0), text: 'before-global', start: 0, end: 13 },
+        { ...result('global', 'a.md', 0), text: 'global', start: 13, end: 19 },
+        { ...result('local', 'a.md', 0), text: 'local', start: 100, end: 105 },
+        { ...result('after-local', 'a.md', 0), text: 'after-local', start: 105, end: 116 }
+    ];
+    const [anchor] = aggregateSourceCandidates([
+        { ...chunks[1]!, fusionScore: 0.03, chunkRankingScore: 10 }
+    ], [
+        { ...chunks[2]!, fusionScore: 0.01, chunkRankingScore: 20 }
+    ]);
+
+    const evidence = await assembleEvidenceWindows([anchor!], {
+        findBySource: async () => chunks.map(chunk => ({ ...chunk, vector: [1] }))
+    }, 1);
+
+    assert.deepEqual(evidence[0]?.chunkIds, ['before-global', 'global', 'local', 'after-local']);
+    assert.match(evidence[0]!.text, /before-global[\s\S]+after-local/);
 });

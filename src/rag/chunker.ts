@@ -15,15 +15,18 @@ export function chunkText(source: string, text: string, chunkSize = 900, overlap
 
     while (start < normalized.length) {
         const end = Math.min(start + chunkSize, normalized.length);
-        const chunk = normalized.slice(start, end).trim();
+        const raw = normalized.slice(start, end);
+        const leadingWhitespace = raw.length - raw.trimStart().length;
+        const trailingWhitespace = raw.length - raw.trimEnd().length;
+        const chunk = raw.slice(leadingWhitespace, raw.length - trailingWhitespace);
 
         if (chunk) {
             chunks.push({
                 id: `${source}#${chunks.length + 1}`,
                 source,
                 text: chunk,
-                start,
-                end
+                start: start + leadingWhitespace,
+                end: end - trailingWhitespace
             });
         }
 
@@ -175,14 +178,17 @@ function splitMarkdownSections(body: string, offset: number): MarkdownSection[] 
     let currentStart = offset;
     let cursor = offset;
 
-    const flush = (end: number) => {
-        const text = currentLines.join('\n').trim();
+    const flush = (_end: number) => {
+        const raw = currentLines.join('\n');
+        const leadingWhitespace = raw.length - raw.trimStart().length;
+        const trailingWhitespace = raw.length - raw.trimEnd().length;
+        const text = raw.slice(leadingWhitespace, raw.length - trailingWhitespace);
         if (!text) return;
         sections.push({
             titlePath: currentTitlePath,
             text,
-            start: currentStart,
-            end
+            start: currentStart + leadingWhitespace,
+            end: currentStart + raw.length - trailingWhitespace
         });
     };
 

@@ -9,7 +9,9 @@ export type MemoryProposalService = {
 export class ProposeMemoryTool extends BaseAgentTool {
     readonly name = 'propose_memory';
     readonly permission = 'write' as const;
+    readonly riskLevel = 'write' as const;
     readonly isReadOnly = false;
+    readonly requiresApproval = true;
     readonly schema = {
         type: 'function' as const,
         function: {

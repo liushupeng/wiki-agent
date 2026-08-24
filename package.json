@@ -14,6 +14,7 @@
     "ops:summary": "tsx scripts/observability/summarizeOperations.ts",
     "index:knowledge": "tsx scripts/rag/indexKnowledgeBase.ts",
     "eval:recall": "tsx scripts/evaluation/evaluateRecall.ts",
+    "eval:chunks": "tsx scripts/evaluation/auditChunkTokens.ts",
     "eval:agent": "tsx scripts/evaluation/evaluateAgent.ts",
     "eval:verify": "tsx scripts/evaluation/verifyTrajectory.ts",
     "eval:review": "tsx scripts/evaluation/summarizeAgentReview.ts",

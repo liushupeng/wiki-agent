@@ -21,6 +21,7 @@ export type CandidateHit = TextChunk & {
     fusionScore: number;
     chunkRerankScore?: number;
     chunkRankingScore?: number;
+    constituentAnchorIds?: string[];
 };
 
 export type Evidence = TextChunk & {
@@ -661,12 +662,13 @@ export function aggregateSourceCandidates(
         return {
             ...local,
             id: `${local.source}#aggregate-${global.id}-${local.id}`,
+            constituentAnchorIds: [global.id, local.id],
             text: mergeSeparatedChunkText(ordered),
             start: Math.min(global.start, local.start),
             end: Math.max(global.end, local.end)
         };
     });
-    return aggregated.sort(compareRankedCandidates);
+    return [...aggregated, ...globalBySource.values()].sort(compareRankedCandidates);
 }
 
 function compareRankedCandidates(left: CandidateHit, right: CandidateHit): number {
@@ -679,7 +681,7 @@ function candidateRankingScore(candidate: CandidateHit): number {
     return candidate.chunkRankingScore ?? candidate.chunkRerankScore ?? candidate.fusionScore;
 }
 
-async function assembleEvidenceWindows(
+export async function assembleEvidenceWindows(
     anchors: CandidateHit[],
     lookup: Pick<IndexRuntime, 'findBySource'>,
     radius: number
@@ -695,10 +697,16 @@ async function assembleEvidenceWindows(
                 .sort((left, right) => left.start - right.start);
             bySource.set(anchor.source, chunks);
         }
-        const anchorIndex = chunks.findIndex(item => item.id === anchor.id);
-        const selected = anchorIndex < 0
+        const anchorIds = anchor.constituentAnchorIds ?? [anchor.id];
+        const anchorIndexes = anchorIds
+            .map(id => chunks.findIndex(item => item.id === id))
+            .filter(index => index >= 0);
+        const selected = anchorIndexes.length === 0
             ? [anchor]
-            : chunks.slice(Math.max(0, anchorIndex - radius), anchorIndex + radius + 1);
+            : [...new Map(anchorIndexes.flatMap(anchorIndex =>
+                chunks!.slice(Math.max(0, anchorIndex - radius), anchorIndex + radius + 1)
+            ).map(chunk => [chunk.id, chunk])).values()]
+                .sort((left, right) => left.start - right.start);
         const start = Math.min(...selected.map(item => item.start));
         const end = Math.max(...selected.map(item => item.end));
         const key = `${normalizeSource(anchor.source)}:${start}:${end}`;
@@ -707,7 +715,7 @@ async function assembleEvidenceWindows(
         windows.push({
             id: `${anchor.source}#evidence-${start}-${end}`,
             source: anchor.source,
-            text: mergeChunkText(selected),
+            text: mergeSeparatedChunkText(selected),
             start,
             end,
             titlePath: anchor.titlePath,

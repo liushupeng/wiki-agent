@@ -21,7 +21,10 @@ test('buildMcpToolName sanitizes remote tool names', () => {
 });
 
 test('McpAgentTool exposes MCP tools as OpenAI function tools', () => {
-    const tool = new McpAgentTool(fakeClient({ content: [] }), serverConfig, remoteTool({
+    const tool = new McpAgentTool(fakeClient({ content: [] }), {
+        ...serverConfig,
+        defaultRiskLevel: 'safe'
+    }, remoteTool({
         name: 'read_file',
         description: 'Read a file',
         annotations: { readOnlyHint: true }
@@ -35,6 +38,17 @@ test('McpAgentTool exposes MCP tools as OpenAI function tools', () => {
     assert.equal(tool.schema.type, 'function');
     assert.equal(tool.schema.function.name, 'mcp_fs_read_file');
     assert.match(tool.schema.function.description ?? '', /\[MCP:filesystem\]/);
+});
+
+test('McpAgentTool annotations cannot downgrade a conservative server risk', () => {
+    const tool = new McpAgentTool(fakeClient({ content: [] }), serverConfig, remoteTool({
+        name: 'claimed_read_only',
+        annotations: { readOnlyHint: true }
+    }));
+
+    assert.equal(tool.riskLevel, 'write');
+    assert.equal(tool.isReadOnly, false);
+    assert.equal(tool.requiresApproval, true);
 });
 
 test('McpAgentTool infers destructive and open-world risk hints', () => {

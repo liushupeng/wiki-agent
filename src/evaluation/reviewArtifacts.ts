@@ -28,14 +28,6 @@ export interface ReviewArtifactWriter {
     write(pairs: ReviewPair[], outputDirectory: string): Promise<ReviewArtifactResult>;
 }
 
-export interface ReviewTracePublisher {
-    publish(summary: { traceId?: string; artifactPath: string; sha256: string }): Promise<void>;
-}
-
-export class NoopReviewTracePublisher implements ReviewTracePublisher {
-    async publish(_summary: { traceId?: string; artifactPath: string; sha256: string }): Promise<void> {}
-}
-
 export class FileReviewArtifactWriter implements ReviewArtifactWriter {
     constructor(private readonly maxFieldLength = 2_000) {}
 
@@ -78,7 +70,7 @@ export class FileReviewArtifactWriter implements ReviewArtifactWriter {
 
 type ReviewRecord = {
     reviewId: string; questionId: string; category?: string; variant: 'A' | 'B'; query: string; answer: string;
-    candidateSummary: string[]; rerankSummary: string[]; evidence: string[]; toolTraceSummary: string;
+    evidence: string[]; toolTraceSummary: string;
     automaticScore: Pick<AgentEvalResult, 'passed' | 'termCoverage' | 'sourceHit' | 'matchedTerms'>; traceId?: string; traceFile?: string;
     rubric?: AgentEvalRubric;
 };
@@ -99,7 +91,7 @@ function blindPair(pair: ReviewPair): { questionId: string; mapping: Record<'A' 
 function toReviewRecord(pair: ReviewPair, result: AgentEvalResult, variant: 'A' | 'B'): ReviewRecord {
     return {
         reviewId: `${pair.id}-${variant}-${randomUUID().slice(0, 8)}`, questionId: pair.id, category: pair.category, variant,
-        query: pair.question, answer: result.answer, candidateSummary: [], rerankSummary: [],
+        query: pair.question, answer: result.answer,
         evidence: result.sourceEvidence,
         toolTraceSummary: [
             `steps=${result.trace.stepCount}`,

@@ -63,19 +63,20 @@ export class PermissionPolicy {
         }
 
         if (tool.permission === 'shell') {
-            const shellDecision = this.evaluateShellCommand(args);
+            const shellDecision = this.evaluateShellCommand(tool, args);
             if (shellDecision.action === 'deny') return shellDecision;
-        }
-
-        if (this.approvalMode === 'auto') {
-            return { action: 'allow', reason: 'approval mode is auto' };
         }
 
         if (tool.requiresApproval || this.requiresApprovalByRisk(tool.riskLevel)) {
             if (this.approvalMode === 'deny') {
                 return { action: 'deny', reason: `approval required for ${tool.riskLevel} tool, but approval mode is deny` };
             }
-            return { action: 'ask', reason: `approval required for ${tool.riskLevel} tool` };
+            return {
+                action: 'ask',
+                reason: this.approvalMode === 'auto'
+                    ? `explicit user approval is required for ${tool.riskLevel} tool even in auto mode`
+                    : `approval required for ${tool.riskLevel} tool`
+            };
         }
 
         return { action: 'allow', reason: 'safe read-only tool' };
@@ -85,10 +86,12 @@ export class PermissionPolicy {
         return ['write', 'network', 'shell', 'dangerous'].includes(riskLevel);
     }
 
-    private evaluateShellCommand(args: unknown): PermissionDecision {
-        const command = typeof args === 'object' && args !== null && 'command' in args
-            ? String((args as { command?: unknown }).command ?? '').trim()
-            : '';
+    private evaluateShellCommand(tool: IAgentTool, args: unknown): PermissionDecision {
+        const command = tool.name === 'run_tests'
+            ? runTestsCommand(args)
+            : typeof args === 'object' && args !== null && 'command' in args
+                ? String((args as { command?: unknown }).command ?? '').trim()
+                : '';
 
         if (!command) {
             return { action: 'deny', reason: 'shell command is empty' };
@@ -108,6 +111,12 @@ export class PermissionPolicy {
 
         return { action: 'ask', reason: `allowlisted shell command still requires approval: ${executable}` };
     }
+}
+
+function runTestsCommand(args: unknown): string {
+    if (typeof args !== 'object' || args === null) return 'npm test';
+    const script = String((args as { script?: unknown }).script ?? 'test');
+    return script === 'test' ? 'npm test' : `npm run ${script}`;
 }
 
 function escapeRegExp(value: string): string {

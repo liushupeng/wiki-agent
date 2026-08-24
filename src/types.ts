@@ -43,7 +43,7 @@ export type ToolRiskLevel = 'safe' | 'write' | 'network' | 'shell' | 'dangerous'
  * 由 PermissionPolicy 根据 ApprovalMode、工具风险和工具参数计算得到。
  *
  * - prompt: write/shell/network 工具执行前先询问用户。
- * - auto: 不弹出确认，直接执行已通过风险检查的工具；dangerous 工具和被拦截的 shell 命令仍会失败。
+ * - auto: 安全只读工具自动执行；write/shell/network 仍必须取得本次真实人工确认。
  * - deny: 允许安全只读工具，拒绝所有需要审批的工具。
  */
 export const APPROVAL_MODES = ['auto', 'prompt', 'deny'] as const;

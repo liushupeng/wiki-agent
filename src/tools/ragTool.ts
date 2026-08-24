@@ -24,7 +24,7 @@ const DEFAULT_READ_NOTE_MAX_CHUNKS = 8;
 const READ_NOTE_MAX_CHUNKS_LIMIT = 30;
 const DEFAULT_RELATED_NOTES_TOP_K = 5;
 const RELATED_NOTES_TOP_K_LIMIT = 12;
-const RELATED_NOTES_CANDIDATE_LIMIT = 80;
+const RELATED_NOTES_CANDIDATE_LIMIT = 500;
 const REGEX_HINT_PATTERN = /(^|[^\\])(\||\.\*|\.\+|\[[^\]]+\]|\([^)]*\|[^)]*\)|\\d|\\w|\\s|\{\d+(?:,\d*)?\})/;
 
 export type RagToolOptions = {
@@ -188,6 +188,12 @@ function matchesRelatedScope(candidate: SearchResult, notePath: string, scope: R
     }
 
     return getSourceDirectory(normalizedCandidate) === getSourceDirectory(normalizedNotePath);
+}
+
+function relatedNotesCandidateLimit(topK: number, scope: RelatedNotesScope): number {
+    if (scope === 'global') return topK;
+    const multiplier = scope === 'sameDirectory' ? 50 : 25;
+    return Math.min(Math.max(topK * multiplier, 250), RELATED_NOTES_CANDIDATE_LIMIT);
 }
 
 type RelatedNotesScope = 'sameDirectory' | 'sourceRoot' | 'global';
@@ -540,7 +546,13 @@ export class ReadNoteTool extends BaseAgentTool {
                 titlePath: args.titlePath,
                 chunks: chunks.map(formatIndexedChunk)
             };
-            return this.ok(data, withEvidenceMetadata(data, { count: chunks.length, totalChunks: allChunks.length, maxChunks, truncated: chunks.length < titleFilteredChunks.length }));
+            return this.ok(data, withEvidenceMetadata(data, {
+                count: chunks.length,
+                totalChunks: allChunks.length,
+                matchedChunks: rankedChunks.length,
+                maxChunks,
+                truncated: chunks.length < rankedChunks.length
+            }));
         } catch (error: any) {
             await ragSpan?.end({ status: 'error', attributes: { 'error.message': error.message } });
             return this.error(error.message);
@@ -594,7 +606,7 @@ export class RelatedNotesTool extends BaseAgentTool {
             }
         });
         try {
-            const candidateLimit = scope === 'global' ? topK : Math.min(topK * 10, RELATED_NOTES_CANDIDATE_LIMIT);
+            const candidateLimit = relatedNotesCandidateLimit(topK, scope);
             const candidates = await (await openActiveIndex(this.options.indexProfile, this.options.indexVariant)).findRelated(args.notePath, candidateLimit);
             const matches = candidates
                 .filter(candidate => matchesRelatedScope(candidate, args.notePath, scope))

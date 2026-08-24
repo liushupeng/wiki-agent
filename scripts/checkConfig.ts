@@ -3,7 +3,7 @@ import { loadWriteScopes } from '../src/config/writeScopes.js';
 import { loadMcpServerConfigs } from '../src/mcp/config.js';
 import { loadRagIndexesConfig, resolveRagIndexProfile } from '../src/rag/indexProfiles.js';
 import { getKnowledgeSourceRoots } from '../src/rag/sourceRoots.js';
-import { loadRetrievalProfilesConfig, resolveRetrievalMode } from '../src/rag/retrievalProfiles.js';
+import { loadRetrievalProfilesConfig, resolveRuntimeRetrievalSelection } from '../src/rag/retrievalProfiles.js';
 import { loadKnowledgeCatalog } from '../src/rag/knowledgeCatalog.js';
 
 /**
@@ -24,6 +24,10 @@ async function main() {
         loadWriteScopes()
     ]);
     const activeProfile = resolveRagIndexProfile(ragConfig);
+    const retrievalSelection = resolveRuntimeRetrievalSelection(retrievalConfig, {
+        profileId: process.env.RAG_RETRIEVAL_PROFILE,
+        mode: process.env.RAG_RETRIEVAL_PROFILE ? undefined : process.env.RAG_RETRIEVAL_MODE
+    });
     validateEmbeddingEnvironment(activeProfile.embedder, errors);
 
     const mcpConfigs = await loadMcpServerConfigs();
@@ -35,7 +39,7 @@ async function main() {
     console.log(`  LLM model:       ${process.env.MODEL_NAME}`);
     console.log(`  Knowledge roots: ${sourceRoots.map(root => root.prefix).join(', ')}`);
     console.log(`  Active profile:  ${activeProfile.id}`);
-    console.log(`  Retrieval mode:  ${resolveRetrievalMode(retrievalConfig).id}`);
+    console.log(`  Retrieval:       ${retrievalSelection.primary}${retrievalSelection.fallback ? ` -> ${retrievalSelection.fallback}` : ''}`);
     console.log(`  Catalog records: ${knowledgeCatalog.data.records.length}`);
     console.log(`  Write scopes:    ${writeScopes.scopes.map(scope => scope.name).join(', ')}`);
     console.log(`  MCP servers:     ${mcpConfigs.filter(config => config.enabled !== false).length}`);

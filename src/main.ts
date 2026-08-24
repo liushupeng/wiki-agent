@@ -14,7 +14,7 @@ import { createDefaultTools, getLocalToolNamesCoveredByMcp } from './tools/defau
 import { ToolExposureController } from './tools/exposure.js';
 import { ToolRegistry } from './tools/registry.js';
 import { parsePositiveInteger } from './utils/number.js';
-import { loadRetrievalProfilesConfig, resolveRetrievalMode } from './rag/retrievalProfiles.js';
+import { loadRetrievalProfilesConfig, resolveRuntimeRetrievalSelection } from './rag/retrievalProfiles.js';
 
 async function main() {
     console.log("=================================================");
@@ -36,6 +36,7 @@ async function main() {
         otlpProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL === 'grpc' ? 'grpc' : 'http',
         capturePromptArtifacts: process.env.TRACE_CAPTURE_PROMPTS === 'true',
         traceArtifactDir: process.env.TRACE_ARTIFACT_DIR ?? 'var/traces/artifacts',
+        autoExportFileTrace: process.env.TRACE_AUTO_EXPORT_FILE === 'true',
         approvalMode: getApprovalMode(),
         requestApproval: request => askToolApproval(rl, request)
     };
@@ -110,21 +111,11 @@ async function main() {
 async function resolveRuntimeRetrievalProfiles(): Promise<{ primary: string; fallback?: string } | undefined> {
     const explicitProfile = process.env.RAG_RETRIEVAL_PROFILE?.trim();
     const mode = process.env.RAG_RETRIEVAL_MODE?.trim();
-    if (explicitProfile && mode) {
-        throw new Error('RAG_RETRIEVAL_PROFILE and RAG_RETRIEVAL_MODE cannot be configured together');
-    }
-    if (explicitProfile) return { primary: explicitProfile };
-    if (!mode) return undefined;
-    if (mode !== 'fast' && mode !== 'balanced' && mode !== 'deep') {
-        throw new Error('RAG_RETRIEVAL_MODE must be fast, balanced, or deep');
-    }
     const config = await loadRetrievalProfilesConfig();
-    const primary = resolveRetrievalMode(config, mode).id;
-    const fallbackMode = mode === 'fast' ? 'balanced' : mode === 'balanced' ? 'deep' : undefined;
-    return {
-        primary,
-        ...(fallbackMode ? { fallback: resolveRetrievalMode(config, fallbackMode).id } : {})
-    };
+    return resolveRuntimeRetrievalSelection(config, {
+        ...(explicitProfile ? { profileId: explicitProfile } : {}),
+        ...(mode ? { mode } : {})
+    });
 }
 
 function readPositiveEnvironmentInteger(name: string, fallback: number): number {

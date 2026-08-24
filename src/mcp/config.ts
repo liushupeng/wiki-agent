@@ -51,9 +51,11 @@ export async function loadMcpServerConfigs(env: Env = process.env): Promise<McpS
         throw new Error(`invalid MCP config file "${absolutePath}": expected a "servers" array`);
     }
 
-    return configs
+    const normalized = configs
         .map((value, index) => normalizeMcpServerConfig(value as RawMcpServerConfig, index))
         .filter(config => config.enabled);
+    validateMemoryDatabaseIsolation(normalized, env);
+    return normalized;
 }
 
 function readMcpConfigEntries(value: unknown): unknown[] | undefined {
@@ -120,4 +122,17 @@ function isStringRecord(value: unknown): value is Record<string, string> {
     return typeof value === 'object'
         && value !== null
         && Object.values(value).every(item => typeof item === 'string');
+}
+
+function validateMemoryDatabaseIsolation(configs: McpServerConfig[], env: Env): void {
+    const memoryDatabase = path.resolve(env.MEMORY_DIR ?? 'var/memory', 'agent.db').toLowerCase();
+    for (const config of configs) {
+        const flagIndex = config.args.indexOf('--db-path');
+        if (flagIndex < 0 || !config.args[flagIndex + 1]) continue;
+        const cwd = config.cwd ? path.resolve(config.cwd) : process.cwd();
+        const databasePath = path.resolve(cwd, config.args[flagIndex + 1]!).toLowerCase();
+        if (databasePath === memoryDatabase) {
+            throw new Error(`invalid MCP server config "${config.name}": MCP database must not use the MemoryStore database`);
+        }
+    }
 }

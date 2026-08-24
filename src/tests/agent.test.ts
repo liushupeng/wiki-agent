@@ -239,6 +239,7 @@ test('WikiAgent automatically exports its completed file trace to local Jaeger',
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-auto-export-'));
     const agent = createAgent({
         traceDir,
+        autoExportFileTrace: true,
         traceExporter: async options => {
             receivedOptions = options;
             return {
@@ -360,6 +361,60 @@ test('WikiAgent hides RAG tools and reports evidence budget after the runtime li
     const toolMessage = memory.messages.find(message => message.role === 'tool');
     assert.match(String(toolMessage?.content), /RUNTIME_EVIDENCE_POLICY/);
     assert.match(String(toolMessage?.content), /rag_calls_remaining=0/);
+    const parsedToolMessage = JSON.parse(String(toolMessage?.content)) as { metadata?: { runtimeEvidencePolicy?: string } };
+    assert.match(parsedToolMessage.metadata?.runtimeEvidencePolicy ?? '', /rag_calls_remaining=0/);
+});
+
+test('WikiAgent marks evidence truncated when the model receives a compacted RAG observation', async () => {
+    class RagSafeTool extends SafeTool {
+        readonly name = 'search_notes';
+        readonly permission = 'rag' as const;
+        readonly schema = {
+            type: 'function' as const,
+            function: {
+                name: 'search_notes',
+                description: 'test RAG tool',
+                parameters: { type: 'object', properties: {}, required: [] }
+            }
+        };
+    }
+    const previousBudget = process.env.CONTEXT_TOOL_RESULT_MAX_CHARS;
+    process.env.CONTEXT_TOOL_RESULT_MAX_CHARS = '1000';
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-rag-truncated-'));
+    try {
+        const registry = new TestRegistry(new RagSafeTool());
+        registry.nextResult = {
+            status: 'success',
+            data: {
+                matches: [{
+                    source: 'notes/evidence.md',
+                    chunkId: 'evidence#1',
+                    citation: 'notes/evidence.md',
+                    text: 'evidence '.repeat(2000)
+                }]
+            }
+        };
+        const agent = createAgent({ traceDir, registry, maxRagCalls: 1, autoExportFileTrace: false });
+        attachFakeClient(agent, [[{
+            choices: [{
+                delta: {
+                    tool_calls: [{
+                        index: 0,
+                        id: 'call_rag_truncated',
+                        function: { name: 'search_notes', arguments: '{}' }
+                    }]
+                }
+            }]
+        }], [{ choices: [{ delta: { content: 'done' } }] }]]);
+
+        await agent.run('retrieve a large result', () => {});
+
+        assert.equal(agent.evidenceLedger.list()[0]?.truncated, true);
+    } finally {
+        if (previousBudget === undefined) delete process.env.CONTEXT_TOOL_RESULT_MAX_CHARS;
+        else process.env.CONTEXT_TOOL_RESULT_MAX_CHARS = previousBudget;
+        await fs.rm(traceDir, { recursive: true, force: true });
+    }
 });
 
 test('WikiAgent replaces an unsupported final claim after an empty RAG search', async () => {

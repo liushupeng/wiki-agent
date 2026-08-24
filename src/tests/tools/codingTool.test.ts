@@ -57,8 +57,8 @@ test('coding tools validate optional and required arguments', () => {
         'staged must be a boolean',
         'statOnly must be a boolean'
     ]);
-    assert.deepEqual(new RunTestsTool().validateArgs({ command: 123, timeoutMs: 0 }), [
-        'command must be a string',
+    assert.deepEqual(new RunTestsTool().validateArgs({ script: 'arbitrary', timeoutMs: 0 }), [
+        'script must be one of test, build, check:config',
         'timeoutMs must be a positive number'
     ]);
 });
@@ -72,7 +72,35 @@ test('ApplyPatchTool rejects paths outside the runtime workspace', async () => {
         });
 
         assert.equal(result.status, 'error');
-        assert.match(result.error ?? '', /outside workspace/);
+        assert.match(result.error ?? '', /不在工作区内/);
+    });
+});
+
+test('ApplyPatchTool rejects symbolic-link paths inside the workspace', async t => {
+    await withWorkspace(async root => {
+        const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-patch-outside-'));
+        try {
+            await fs.writeFile(path.join(outside, 'note.txt'), 'before', 'utf-8');
+            try {
+                await fs.symlink(outside, path.join(root, 'escape'), 'junction');
+            } catch (error: any) {
+                if (error.code === 'EPERM' || error.code === 'EACCES') {
+                    t.skip('symbolic links are unavailable in this Windows environment');
+                    return;
+                }
+                throw error;
+            }
+            const result = await new ApplyPatchTool().execute({
+                filePath: 'escape/note.txt',
+                oldText: 'before',
+                newText: 'after'
+            });
+            assert.equal(result.status, 'error');
+            assert.match(result.error ?? '', /符号链接/);
+            assert.equal(await fs.readFile(path.join(outside, 'note.txt'), 'utf-8'), 'before');
+        } finally {
+            await fs.rm(outside, { recursive: true, force: true });
+        }
     });
 });
 
@@ -131,9 +159,10 @@ test('GitDiffTool supports staged diff command construction', async () => {
 test('RunTestsTool runs a command inside the runtime workspace', async () => {
     await withWorkspace(async root => {
         await fs.writeFile(path.join(root, 'script.js'), 'console.log("ok from workspace")', 'utf-8');
+        await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node script.js' } }), 'utf-8');
 
         const result = await new RunTestsTool().execute({
-            command: 'node script.js',
+            script: 'test',
             timeoutMs: 5000
         });
 
@@ -143,9 +172,10 @@ test('RunTestsTool runs a command inside the runtime workspace', async () => {
 });
 
 test('RunTestsTool returns execution_failed for failing commands', async () => {
-    await withWorkspace(async () => {
+    await withWorkspace(async root => {
+        await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(7)"' } }), 'utf-8');
         const result = await new RunTestsTool().execute({
-            command: 'node -e "process.exit(7)"',
+            script: 'test',
             timeoutMs: 5000
         });
 

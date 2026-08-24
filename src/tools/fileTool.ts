@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import { BaseAgentTool } from './base.js';
-import { resolveSafePath } from '../sandbox.js';
+import { resolveSafeExistingPath } from '../sandbox.js';
 import { defaultWriteScopes, loadWriteScopes, resolveWriteScopePath, WriteScopesConfig } from '../config/writeScopes.js';
 import { getMaxFileBytes, limitText } from '../limits.js';
 import { ToolResult } from '../types.js';
@@ -33,7 +33,7 @@ export class ListDirTool extends BaseAgentTool {
 
     async execute(args: { relativePath: string }): Promise<ToolResult> {
         try {
-            const safePath = resolveSafePath(args.relativePath || '.');
+            const safePath = await resolveSafeExistingPath(args.relativePath || '.');
             const files = await fs.readdir(safePath, { withFileTypes: true });
 
             const result = files.map(f => ({
@@ -80,7 +80,7 @@ export class ReadFileTool extends BaseAgentTool {
 
     async execute(args: { filename: string; maxBytes?: number }): Promise<ToolResult> {
         try {
-            const safePath = resolveSafePath(args.filename);
+            const safePath = await resolveSafeExistingPath(args.filename);
             const maxBytes = Math.min(args.maxBytes ?? getMaxFileBytes(), getMaxFileBytes());
             const stat = await fs.stat(safePath);
             const handle = await fs.open(safePath, 'r');

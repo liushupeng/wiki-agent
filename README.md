@@ -110,8 +110,8 @@ flowchart TB
 - `src/context/`：上下文快照、EvidenceLedger、证据充分性与运行时策略
 - `src/rag/`：索引、Hybrid Retrieval、Retriever 复用和 KnowledgeCatalog
 - `src/tools/`：统一工具接口、权限和执行器
-- `src/memory/`：会话记忆、压缩与长期记忆提案
-- `src/observability/`：Trace、指标和运行摘要
+- `src/context/`：会话记忆、压缩、证据策略与长期记忆提案
+- `src/trace/`、`scripts/observability/`：Trace、指标和运行摘要
 - `scripts/evaluation/`：Recall、Agent E2E、轨迹复核和人工评测汇总
 
 ## 核心能力
@@ -235,6 +235,12 @@ GitHub Actions 会在 `master`、`main` 分支推送及 Pull Request 上使用 N
 
 ```bash
 npm run eval:recall -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggregate-v1 --variant raw-only --retriever vector
+```
+
+用真实 tokenizer 检查候选 chunk 大小是否超过 embedding 上限：
+
+```bash
+npm run eval:chunks -- bge-m3-v1 raw-wiki
 ```
 
 独立 Holdout：

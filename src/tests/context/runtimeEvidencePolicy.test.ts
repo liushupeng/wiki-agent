@@ -40,6 +40,10 @@ test('RuntimeEvidencePolicy forces abstention only after an empty RAG search', (
     assert.equal(forced.action, 'forced-abstention');
     assert.match(forced.content, /无法确认/);
 
-    const preserved = policy.finalizeAnswer('未找到护照号码，无法确认。', noEvidence);
-    assert.equal(preserved.action, 'allow');
+    const explicitAbstention = policy.finalizeAnswer('未找到护照号码，无法确认。', noEvidence);
+    assert.equal(explicitAbstention.action, 'forced-abstention');
+
+    const mixedClaim = policy.finalizeAnswer('未找到证据，但护照号码是 X123。', noEvidence);
+    assert.equal(mixedClaim.action, 'forced-abstention');
+    assert.doesNotMatch(mixedClaim.content, /X123/);
 });

@@ -3,6 +3,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const SENSITIVE_KEY_PATTERN = /api[-_]?key|authorization|cookie|password|secret|token/i;
+const SENSITIVE_TEXT_PATTERNS: Array<[RegExp, string]> = [
+    [/\b(authorization\s*:\s*bearer)\s+[^\s"'`]+/gi, '$1 [REDACTED]'],
+    [/\bsk-[a-z0-9_-]{10,}\b/gi, '[REDACTED]'],
+    [/\b(api[-_]?key|password|secret|token)\s*[:=]\s*["']?[^\s"',;]+["']?/gi, '$1=[REDACTED]']
+];
 
 export type PromptArtifactInput = {
     traceId: string;
@@ -64,7 +69,15 @@ export async function writePromptArtifact(
 export function redactSensitiveValues(value: unknown, key = ''): unknown {
     if (SENSITIVE_KEY_PATTERN.test(key)) return '[REDACTED]';
     if (Array.isArray(value)) return value.map(item => redactSensitiveValues(item));
+    if (typeof value === 'string') return redactSensitiveText(value);
     if (!value || typeof value !== 'object') return value;
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
         .map(([entryKey, entryValue]) => [entryKey, redactSensitiveValues(entryValue, entryKey)]));
+}
+
+export function redactSensitiveText(value: string): string {
+    return SENSITIVE_TEXT_PATTERNS.reduce(
+        (text, [pattern, replacement]) => text.replace(pattern, replacement),
+        value
+    );
 }

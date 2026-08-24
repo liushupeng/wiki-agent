@@ -79,6 +79,8 @@ function sanitizeToolName(value: string): string {
 function inferRiskLevel(tool: Tool, defaultRiskLevel: ToolRiskLevel): ToolRiskLevel {
     if (tool.annotations?.destructiveHint) return 'write';
     if (tool.annotations?.openWorldHint) return 'network';
+    // Server annotations are advisory and must not downgrade a conservative local policy.
+    if (defaultRiskLevel !== 'safe') return defaultRiskLevel;
     if (tool.annotations?.readOnlyHint) return 'safe';
     return defaultRiskLevel;
 }

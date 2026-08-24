@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseRetrievalProfilesConfig, resolveRetrievalMode, resolveRetrievalProfile } from '../../rag/retrievalProfiles.js';
+import {
+    parseRetrievalProfilesConfig,
+    resolveRetrievalMode,
+    resolveRetrievalProfile,
+    resolveRuntimeRetrievalSelection
+} from '../../rag/retrievalProfiles.js';
 
 test('retrieval profiles keep physical indexes separate from hybrid strategy', () => {
     const config = parseRetrievalProfilesConfig({
@@ -89,6 +94,17 @@ test('retrieval modes map product latency choices to concrete profiles', () => {
 
     assert.equal(resolveRetrievalMode(config).id, 'balanced-v1');
     assert.equal(resolveRetrievalMode(config, 'fast').id, 'bm25-v1');
+    assert.deepEqual(resolveRuntimeRetrievalSelection(config), {
+        primary: 'balanced-v1',
+        fallback: 'deep-v1'
+    });
+    assert.deepEqual(resolveRuntimeRetrievalSelection(config, { profileId: 'deep-v1' }), {
+        primary: 'deep-v1'
+    });
+    assert.throws(
+        () => resolveRuntimeRetrievalSelection(config, { profileId: 'deep-v1', mode: 'balanced' }),
+        /cannot be configured together/
+    );
     assert.throws(() => parseRetrievalProfilesConfig({
         activeRetrievalProfile: 'deep-v1',
         activeRetrievalMode: 'balanced',

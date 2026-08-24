@@ -66,6 +66,11 @@ export type RetrievalProfilesConfig = {
     profiles: RetrievalProfile[];
 };
 
+export type RuntimeRetrievalSelection = {
+    primary: string;
+    fallback?: string;
+};
+
 export async function loadRetrievalProfilesConfig(
     configPath = process.env.RAG_RETRIEVAL_CONFIG_PATH ?? DEFAULT_RAG_RETRIEVAL_CONFIG_PATH
 ): Promise<RetrievalProfilesConfig> {
@@ -116,6 +121,35 @@ export function resolveRetrievalMode(
     const profileId = config.retrievalModes?.[mode];
     if (!profileId) throw new Error(`retrieval mode is not configured: ${mode}`);
     return resolveRetrievalProfile(config, profileId);
+}
+
+export function resolveRuntimeRetrievalSelection(
+    config: RetrievalProfilesConfig,
+    options: { profileId?: string; mode?: string } = {}
+): RuntimeRetrievalSelection {
+    const profileId = options.profileId?.trim();
+    const mode = options.mode?.trim();
+    if (profileId && mode) {
+        throw new Error('RAG_RETRIEVAL_PROFILE and RAG_RETRIEVAL_MODE cannot be configured together');
+    }
+    if (profileId) {
+        return { primary: resolveRetrievalProfile(config, profileId).id };
+    }
+
+    const effectiveMode = mode || config.activeRetrievalMode;
+    if (!effectiveMode) {
+        return { primary: resolveRetrievalProfile(config).id };
+    }
+    if (!['fast', 'balanced', 'deep'].includes(effectiveMode)) {
+        throw new Error('RAG_RETRIEVAL_MODE must be fast, balanced, or deep');
+    }
+    const typedMode = effectiveMode as RetrievalMode;
+    const primary = resolveRetrievalMode(config, typedMode).id;
+    const fallbackMode = typedMode === 'fast' ? 'balanced' : typedMode === 'balanced' ? 'deep' : undefined;
+    return {
+        primary,
+        ...(fallbackMode ? { fallback: resolveRetrievalMode(config, fallbackMode).id } : {})
+    };
 }
 
 function parseRetrievalModes(value: unknown, profileIds: Set<string>): Record<RetrievalMode, string> {

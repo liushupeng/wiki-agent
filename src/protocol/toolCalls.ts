@@ -40,6 +40,12 @@ export function appendToolCallDeltas(
             };
         }
 
+        if (toolCallDelta.id && !buffer[index].id) {
+            buffer[index].id = toolCallDelta.id;
+        }
+        if (toolCallDelta.function?.name && !buffer[index].function.name) {
+            buffer[index].function.name = toolCallDelta.function.name;
+        }
         if (toolCallDelta.function?.arguments) {
             buffer[index].function.arguments += toolCallDelta.function.arguments;
         }

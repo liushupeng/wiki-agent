@@ -89,15 +89,13 @@ export class RuntimeEvidencePolicy {
 
     finalizeAnswer(content: string, assessment: EvidenceAssessment): FinalAnswerPolicyResult {
         const snapshot = this.snapshot(assessment);
-        if (snapshot.ragCallsUsed === 0 || snapshot.evidenceCount > 0 || containsAbstention(content)) {
+        if (snapshot.ragCallsUsed === 0 || snapshot.evidenceCount > 0) {
             return {
                 content,
                 action: 'allow',
                 reason: snapshot.ragCallsUsed === 0
                     ? 'run did not use RAG'
-                    : snapshot.evidenceCount > 0
-                        ? 'retrieved evidence is available for model-level coverage judgment'
-                        : 'model explicitly acknowledged insufficient evidence',
+                    : 'retrieved evidence is available for model-level coverage judgment',
                 snapshot
             };
         }
@@ -108,8 +106,4 @@ export class RuntimeEvidencePolicy {
             snapshot
         };
     }
-}
-
-function containsAbstention(content: string): boolean {
-    return /(没有找到|未找到|证据不足|无法确认|无法从.{0,20}(?:知识库|笔记|来源)|no evidence|cannot confirm|could not find)/i.test(content);
 }

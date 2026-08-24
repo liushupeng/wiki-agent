@@ -90,6 +90,24 @@ test('loadMcpServerConfigs rejects invalid JSON and invalid shapes', async () =>
     });
 });
 
+test('loadMcpServerConfigs rejects MCP access to the MemoryStore database', async () => {
+    const memoryDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-memory-db-'));
+    try {
+        await withMcpConfig([{
+            name: 'sqlite',
+            command: 'mcp-server-sqlite',
+            args: ['--db-path', path.join(memoryDir, 'agent.db')]
+        }], async configPath => {
+            await assert.rejects(
+                () => loadMcpServerConfigs({ MCP_CONFIG_PATH: configPath, MEMORY_DIR: memoryDir }),
+                /must not use the MemoryStore database/
+            );
+        });
+    } finally {
+        await fs.rm(memoryDir, { recursive: true, force: true });
+    }
+});
+
 async function withMcpConfig(value: unknown, run: (configPath: string) => Promise<void>): Promise<void> {
     await withRawMcpConfig(JSON.stringify({ servers: value }), run);
 }

@@ -17,13 +17,13 @@
       "args": ["--repository", "."],
       "toolNamePrefix": "mcp_git",
       "defaultPermission": "mcp",
-      "defaultRiskLevel": "safe",
+      "defaultRiskLevel": "write",
       "enabled": true
     },
     {
       "name": "sqlite",
       "command": "mcp-server-sqlite",
-      "args": ["--db-path", "var\\memory\\agent.db"],
+      "args": ["--db-path", "var\\mcp\\sqlite.db"],
       "toolNamePrefix": "mcp_sqlite",
       "defaultPermission": "mcp",
       "defaultRiskLevel": "write",

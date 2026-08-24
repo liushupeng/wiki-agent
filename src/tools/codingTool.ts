@@ -4,27 +4,14 @@ import path from 'path';
 import { limitText } from '../limits.js';
 import { ToolResult } from '../types.js';
 import { BaseAgentTool } from './base.js';
+import { resolveExistingPathWithinRoot } from '../sandbox.js';
 
 export function getWorkspaceRoot(): string {
     return path.resolve(process.env.AGENT_WORKSPACE_ROOT ?? process.cwd());
 }
 
-function resolveWorkspacePath(targetPath: string): string {
-    const workspaceRoot = getWorkspaceRoot();
-    const resolved = path.resolve(workspaceRoot, targetPath);
-    const relative = path.relative(workspaceRoot, resolved);
-    const root = normalize(workspaceRoot);
-    const target = normalize(resolved);
-
-    if (relative.startsWith('..') || path.isAbsolute(relative) || (target !== root && !target.startsWith(`${root}${path.sep}`))) {
-        throw new Error(`target path is outside workspace: ${targetPath}`);
-    }
-
-    return resolved;
-}
-
-function normalize(value: string): string {
-    return path.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
+async function resolveWorkspacePath(targetPath: string): Promise<string> {
+    return resolveExistingPathWithinRoot(getWorkspaceRoot(), targetPath, '工作区');
 }
 
 function execInWorkspace(command: string, timeoutMs: number): Promise<{ stdout: string; stderr: string; code?: string | number; error?: string }> {
@@ -75,7 +62,7 @@ export class ApplyPatchTool extends BaseAgentTool {
 
     async execute(args: { filePath: string; oldText: string; newText: string }): Promise<ToolResult> {
         try {
-            const target = resolveWorkspacePath(args.filePath);
+            const target = await resolveWorkspacePath(args.filePath);
             const content = await fs.readFile(target, 'utf-8');
             const occurrences = content.split(args.oldText).length - 1;
 
@@ -186,7 +173,11 @@ export class RunTestsTool extends BaseAgentTool {
             parameters: {
                 type: 'object',
                 properties: {
-                    command: { type: 'string', description: '测试命令，默认 npm test' },
+                    script: {
+                        type: 'string',
+                        enum: ['test', 'build', 'check:config'],
+                        description: '允许执行的 npm script，默认 test'
+                    },
                     timeoutMs: { type: 'number', description: '超时时间，默认 30000ms' }
                 },
                 required: []
@@ -196,15 +187,18 @@ export class RunTestsTool extends BaseAgentTool {
 
     validateArgs(args: unknown): string[] {
         if (typeof args !== 'object' || args === null) return [];
-        const typed = args as { command?: unknown; timeoutMs?: unknown };
+        const typed = args as { script?: unknown; timeoutMs?: unknown };
         const errors: string[] = [];
-        if (typed.command !== undefined && typeof typed.command !== 'string') errors.push('command must be a string');
+        if (typed.script !== undefined && !['test', 'build', 'check:config'].includes(String(typed.script))) {
+            errors.push('script must be one of test, build, check:config');
+        }
         if (typed.timeoutMs !== undefined && (typeof typed.timeoutMs !== 'number' || typed.timeoutMs <= 0)) errors.push('timeoutMs must be a positive number');
         return errors;
     }
 
-    async execute(args: { command?: string; timeoutMs?: number } = {}): Promise<ToolResult> {
-        const command = args.command?.trim() || 'npm test';
+    async execute(args: { script?: 'test' | 'build' | 'check:config'; timeoutMs?: number } = {}): Promise<ToolResult> {
+        const script = args.script ?? 'test';
+        const command = script === 'test' ? 'npm test' : `npm run ${script}`;
         const timeoutMs = Math.min(args.timeoutMs ?? 30000, Number(process.env.RUN_TESTS_MAX_TIMEOUT_MS ?? 120000));
         const result = await execInWorkspace(command, timeoutMs);
         const stdout = limitText(result.stdout.trim());

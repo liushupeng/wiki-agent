@@ -47,7 +47,7 @@ export type IndexRuntime = Pick<VectorStore, 'findBySource'> & {
 export async function openActiveIndex(profileId?: string, variantId?: string): Promise<IndexRuntime> {
     const config = await loadRagIndexesConfig();
     const profile = resolveRagIndexProfile(config, profileId);
-    const variant = resolveRagIndexVariant(profile, variantId ?? (profile.id === config.activeProfile ? config.activeVariant : profile.variants[0]!.id));
+    const variant = resolveRagIndexVariant(profile, variantId ?? config.activeVariant);
     return openIndexRuntime(profile, variant, getIndexPaths(profile, variant, config.indexDirectory));
 }
 

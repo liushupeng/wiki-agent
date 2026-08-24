@@ -14,13 +14,18 @@ test('writePromptArtifact redacts sensitive object fields and returns a verifiab
         model: 'test-model',
         temperature: 0,
         reasoningEffort: 'high',
-        messages: [{ role: 'user', content: 'hello', apiKey: 'should-not-persist' }],
+        messages: [{
+            role: 'user',
+            content: 'Authorization: Bearer bearer-secret-value api_key=inline-secret sk-1234567890abcdef',
+            apiKey: 'should-not-persist'
+        }],
         tools: []
     }, artifactDir);
 
     const content = await fs.readFile(path.join(artifactDir, path.basename(reference.path)), 'utf-8');
     assert.match(content, /"\[REDACTED\]"/);
     assert.doesNotMatch(content, /should-not-persist/);
+    assert.doesNotMatch(content, /bearer-secret-value|inline-secret|sk-1234567890abcdef/);
     assert.equal(reference.sha256, createHash('sha256').update(content).digest('hex'));
     assert.equal(reference.chars, content.length);
 });

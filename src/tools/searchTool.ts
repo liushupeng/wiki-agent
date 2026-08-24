@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { BaseAgentTool } from './base.js';
-import { resolveSafePath, toSandboxRelativePath } from '../sandbox.js';
+import { resolveSafeExistingPath, toSandboxRelativePath } from '../sandbox.js';
 import { ToolResult } from '../types.js';
 
 const DEFAULT_IGNORES = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.cache']);
@@ -66,7 +66,7 @@ export class GlobSearchTool extends BaseAgentTool {
 
     async execute(args: { pattern: string; relativePath?: string; maxResults?: number }): Promise<ToolResult> {
         try {
-            const root = resolveSafePath(args.relativePath ?? '.');
+            const root = await resolveSafeExistingPath(args.relativePath ?? '.');
             const maxResults = Math.min(args.maxResults ?? 50, 200);
             const matcher = globToRegExp(args.pattern);
             const files = await walkFiles(root, 5000);
@@ -115,7 +115,7 @@ export class GrepSearchTool extends BaseAgentTool {
 
     async execute(args: { query: string; relativePath?: string; regex?: boolean; maxResults?: number }): Promise<ToolResult> {
         try {
-            const root = resolveSafePath(args.relativePath ?? '.');
+            const root = await resolveSafeExistingPath(args.relativePath ?? '.');
             const maxResults = Math.min(args.maxResults ?? 50, 200);
             const matcher = args.regex ? new RegExp(args.query, 'i') : null;
             const files = await walkFiles(root, 5000);

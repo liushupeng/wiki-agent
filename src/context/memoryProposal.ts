@@ -98,10 +98,6 @@ export function transitionMemoryProposal(
     };
 }
 
-export function isTerminalProposalStatus(status: MemoryProposalStatus): boolean {
-    return ALLOWED_TRANSITIONS[status].length === 0;
-}
-
 function unique(values: readonly string[]): string[] {
     return [...new Set(values.map(value => value.trim()).filter(Boolean))];
 }

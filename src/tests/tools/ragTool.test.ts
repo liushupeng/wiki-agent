@@ -381,6 +381,8 @@ test('ReadNoteTool caps default reads and can filter by query', async () => {
         const filteredResult = await new ReadNoteTool().execute({ notePath: 'large.md', query: 'investment', maxChunks: 3 });
         assert.equal(filteredResult.status, 'success');
         assert.equal(filteredResult.metadata?.count, 1);
+        assert.equal(filteredResult.metadata?.matchedChunks, 1);
+        assert.equal(filteredResult.metadata?.truncated, false);
         const data = filteredResult.data as { chunks: Array<{ text: string }> };
         assert.equal(data.chunks[0].text, 'investment system evidence');
     });
@@ -426,6 +428,29 @@ test('RelatedNotesTool defaults to same-directory matches', async () => {
         assert.equal(result.metadata?.scope, 'sameDirectory');
         const data = result.data as { matches: Array<{ source: string }> };
         assert.deepEqual(data.matches.map(match => match.source), ['raw/invest/peer.md']);
+    });
+});
+
+test('RelatedNotesTool widens global recall before applying a local scope', async () => {
+    const distractors = Array.from({ length: 120 }, (_, index) => createChunk({
+        id: `raw/other/${String(index).padStart(3, '0')}.md#1`,
+        source: `raw/other/${String(index).padStart(3, '0')}.md`,
+        text: 'shared semantic vector'
+    }));
+    await withKnowledgeIndex([
+        createChunk({ id: 'raw/topic/source.md#1', source: 'raw/topic/source.md', text: 'shared semantic vector' }),
+        ...distractors,
+        createChunk({ id: 'raw/topic/z-related.md#1', source: 'raw/topic/z-related.md', text: 'shared semantic vector' })
+    ], async () => {
+        const result = await new RelatedNotesTool().execute({
+            notePath: 'raw/topic/source.md',
+            topK: 1
+        });
+
+        assert.equal(result.status, 'success');
+        const data = result.data as { matches: Array<{ source: string }> };
+        assert.deepEqual(data.matches.map(match => match.source), ['raw/topic/z-related.md']);
+        assert.ok(Number(result.metadata?.candidateCount) > 100);
     });
 });
 
