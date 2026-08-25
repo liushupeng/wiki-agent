@@ -57,20 +57,17 @@ type MemoryProposalRow = {
 /**
  * 可清理的本地会话与长期记忆存储。
  *
- * SQLite 保存可恢复的结构化状态；按日 Markdown 仅记录便于人工浏览的摘要。
- * 二者都位于 `var/memory/`，不属于知识库，也不应提交到版本控制。
+ * SQLite 保存可恢复的结构化状态，位于 `var/memory/`，
+ * 不属于知识库，也不应提交到版本控制。
  */
 export class MemoryStore {
     private readonly database: DatabaseSync;
-    private readonly journalDirectory: string;
 
     constructor(
         readonly directory = process.env.MEMORY_DIR ?? 'var/memory',
         private readonly now: () => Date = () => new Date()
     ) {
         fs.mkdirSync(directory, { recursive: true });
-        this.journalDirectory = path.join(directory, 'journals');
-        fs.mkdirSync(this.journalDirectory, { recursive: true });
         this.database = new DatabaseSync(path.join(directory, 'agent.db'));
         this.database.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
         this.database.exec(`
@@ -171,7 +168,6 @@ export class MemoryStore {
             VALUES (?, ?, ?, ?)
         `).run(sessionId, sequence.next_sequence, timestamp, JSON.stringify(message));
         this.database.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(timestamp, sessionId);
-        this.appendJournal(sessionId, message);
     }
 
     clearSessionMessages(sessionId: string): void {
@@ -366,39 +362,14 @@ export class MemoryStore {
         }
     }
 
-    prune(options: { sessionRetentionDays: number; journalRetentionDays: number }): void {
+    prune(options: { sessionRetentionDays: number }): void {
         const sessionCutoff = this.daysAgo(options.sessionRetentionDays);
         this.database.prepare('DELETE FROM sessions WHERE updated_at < ?').run(sessionCutoff);
         this.database.prepare('DELETE FROM long_term_memories WHERE expires_at IS NOT NULL AND expires_at <= ?').run(this.timestamp());
-
-        const journalCutoff = this.daysAgo(options.journalRetentionDays).slice(0, 10);
-        for (const entry of fs.readdirSync(this.journalDirectory, { withFileTypes: true })) {
-            if (!entry.isFile() || !/^\d{4}-\d{2}-\d{2}\.md$/.test(entry.name)) continue;
-            if (entry.name.slice(0, 10) < journalCutoff) {
-                fs.rmSync(path.join(this.journalDirectory, entry.name), { force: true });
-            }
-        }
     }
 
     close(): void {
         this.database.close();
-    }
-
-    private appendJournal(sessionId: string, message: MemoryMessage): void {
-        if (message.role !== 'user' && message.role !== 'assistant') return;
-        const content = typeof message.content === 'string' ? message.content.trim().replace(/\s+/g, ' ') : '';
-        if (!content) return;
-
-        const date = this.timestamp().slice(0, 10);
-        const journalPath = path.join(this.journalDirectory, `${date}.md`);
-        if (!fs.existsSync(journalPath)) {
-            fs.writeFileSync(journalPath, `# 会话日志：${date}\n`, 'utf-8');
-        }
-        fs.appendFileSync(
-            journalPath,
-            `\n- ${this.timestamp()} [${sessionId}] ${message.role}：${content.slice(0, 400)}\n`,
-            'utf-8'
-        );
     }
 
     private timestamp(): string {

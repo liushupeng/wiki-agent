@@ -5,10 +5,9 @@ import { limitText } from '../limits.js';
 import { ToolResult } from '../types.js';
 import { BaseAgentTool } from './base.js';
 import { resolveExistingPathWithinRoot } from '../sandbox.js';
+import { getWorkspaceRoot } from '../workspace.js';
 
-export function getWorkspaceRoot(): string {
-    return path.resolve(process.env.AGENT_WORKSPACE_ROOT ?? process.cwd());
-}
+export { getWorkspaceRoot } from '../workspace.js';
 
 async function resolveWorkspacePath(targetPath: string): Promise<string> {
     return resolveExistingPathWithinRoot(getWorkspaceRoot(), targetPath, '工作区');

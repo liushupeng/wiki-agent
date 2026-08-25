@@ -51,7 +51,7 @@ test('MemoryManager clears persisted sessions without deleting long-term memory'
     restored.close();
 });
 
-test('MemoryStore writes readable daily journals and prunes old sessions', async () => {
+test('MemoryStore prunes old sessions without writing duplicate journal files', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-memory-'));
     let currentTime = new Date('2026-07-01T12:00:00.000Z');
     const store = new MemoryStore(directory, () => currentTime);
@@ -59,11 +59,10 @@ test('MemoryStore writes readable daily journals and prunes old sessions', async
     store.ensureSession('old-session');
     store.appendSessionMessage('old-session', { role: 'user', content: 'old message' });
     currentTime = new Date('2026-07-10T12:00:00.000Z');
-    store.prune({ sessionRetentionDays: 7, journalRetentionDays: 90 });
+    store.prune({ sessionRetentionDays: 7 });
 
     assert.equal(store.hasSession('old-session'), false);
-    const journal = await fs.readFile(path.join(directory, 'journals', '2026-07-01.md'), 'utf-8');
-    assert.match(journal, /old message/);
+    await assert.rejects(() => fs.access(path.join(directory, 'journals')));
     store.close();
 });
 

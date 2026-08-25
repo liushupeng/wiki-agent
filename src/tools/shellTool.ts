@@ -1,6 +1,6 @@
 import { exec } from 'child_process';
 import { BaseAgentTool } from './base.js';
-import { getSandboxRoot } from '../sandbox.js';
+import { ensureSandboxRoot } from '../sandbox.js';
 import { limitText } from '../limits.js';
 import { ToolResult } from '../types.js';
 
@@ -50,8 +50,8 @@ export class ShellExecuteTool extends BaseAgentTool {
         }
 
         const timeout = Number(process.env.SHELL_TIMEOUT_MS ?? 5000);
+        const sandboxRoot = await ensureSandboxRoot();
         return new Promise<ToolResult>((resolve) => {
-            const sandboxRoot = getSandboxRoot();
             exec(rawCommand, { cwd: sandboxRoot, timeout, maxBuffer: Number(process.env.SHELL_MAX_BUFFER_BYTES ?? 1024 * 1024) }, (error, stdout, stderr) => {
                 const limitedStdout = limitText(stdout.trim());
                 const limitedStderr = limitText(stderr.trim());

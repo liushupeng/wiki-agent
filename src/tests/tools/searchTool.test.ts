@@ -6,17 +6,19 @@ import test from 'node:test';
 import { GlobSearchTool, GrepSearchTool } from '../../tools/searchTool.js';
 
 async function withSandbox<T>(run: (root: string) => Promise<T>): Promise<T> {
-    const previousRoot = process.env.AGENT_SANDBOX_ROOT;
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-search-tool-'));
-    process.env.AGENT_SANDBOX_ROOT = root;
+    const previousRoot = process.env.AGENT_WORKSPACE_ROOT;
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-search-tool-'));
+    const root = path.join(workspaceRoot, 'var', 'sandbox');
+    await fs.mkdir(root, { recursive: true });
+    process.env.AGENT_WORKSPACE_ROOT = workspaceRoot;
 
     try {
         return await run(root);
     } finally {
         if (previousRoot === undefined) {
-            delete process.env.AGENT_SANDBOX_ROOT;
+            delete process.env.AGENT_WORKSPACE_ROOT;
         } else {
-            process.env.AGENT_SANDBOX_ROOT = previousRoot;
+            process.env.AGENT_WORKSPACE_ROOT = previousRoot;
         }
     }
 }

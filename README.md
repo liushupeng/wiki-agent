@@ -184,7 +184,6 @@ cp .env.example .env
 BASE_URL=https://api.deepseek.com
 API_KEY=your_api_key
 MODEL_NAME=your_model
-AGENT_SANDBOX_ROOT=.
 AGENT_WORKSPACE_ROOT=.
 RAG_RETRIEVAL_MODE=balanced
 RAG_INDEX_VARIANT=raw-wiki

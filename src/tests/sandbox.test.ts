@@ -9,30 +9,33 @@ test('resolveSafePath rejects traversal outside sandbox', () => {
     assert.throws(() => resolveSafePath('..\\outside.txt'), /不在安全沙盒内/);
 });
 
-test('sandbox helpers read AGENT_SANDBOX_ROOT at runtime', () => {
-    const previousRoot = process.env.AGENT_SANDBOX_ROOT;
-    const tempRoot = path.join(os.tmpdir(), 'wiki-agent-sandbox-runtime');
-    process.env.AGENT_SANDBOX_ROOT = tempRoot;
+test('sandbox helpers resolve the canonical var/sandbox workspace path', () => {
+    const previousRoot = process.env.AGENT_WORKSPACE_ROOT;
+    const workspaceRoot = path.join(os.tmpdir(), 'wiki-agent-sandbox-runtime');
+    const sandboxRoot = path.join(path.resolve(workspaceRoot), 'var', 'sandbox');
+    process.env.AGENT_WORKSPACE_ROOT = workspaceRoot;
 
     try {
-        assert.equal(getSandboxRoot(), path.resolve(tempRoot));
-        assert.equal(resolveSafePath('notes/a.md'), path.join(path.resolve(tempRoot), 'notes', 'a.md'));
-        assert.equal(toSandboxRelativePath(path.join(path.resolve(tempRoot), 'notes', 'a.md')), 'notes/a.md');
+        assert.equal(getSandboxRoot(), sandboxRoot);
+        assert.equal(resolveSafePath('notes/a.md'), path.join(sandboxRoot, 'notes', 'a.md'));
+        assert.equal(toSandboxRelativePath(path.join(sandboxRoot, 'notes', 'a.md')), 'notes/a.md');
     } finally {
         if (previousRoot === undefined) {
-            delete process.env.AGENT_SANDBOX_ROOT;
+            delete process.env.AGENT_WORKSPACE_ROOT;
         } else {
-            process.env.AGENT_SANDBOX_ROOT = previousRoot;
+            process.env.AGENT_WORKSPACE_ROOT = previousRoot;
         }
     }
 });
 
 test('resolveSafeExistingPath rejects symbolic-link escapes', async t => {
-    const previousRoot = process.env.AGENT_SANDBOX_ROOT;
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-sandbox-root-'));
+    const previousRoot = process.env.AGENT_WORKSPACE_ROOT;
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-sandbox-root-'));
+    const root = path.join(workspaceRoot, 'var', 'sandbox');
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-sandbox-outside-'));
-    process.env.AGENT_SANDBOX_ROOT = root;
+    process.env.AGENT_WORKSPACE_ROOT = workspaceRoot;
     try {
+        await fs.mkdir(root, { recursive: true });
         await fs.writeFile(path.join(outside, 'secret.txt'), 'secret', 'utf-8');
         try {
             await fs.symlink(outside, path.join(root, 'escape'), 'junction');
@@ -45,9 +48,9 @@ test('resolveSafeExistingPath rejects symbolic-link escapes', async t => {
         }
         await assert.rejects(() => resolveSafeExistingPath('escape/secret.txt'), /符号链接/);
     } finally {
-        if (previousRoot === undefined) delete process.env.AGENT_SANDBOX_ROOT;
-        else process.env.AGENT_SANDBOX_ROOT = previousRoot;
-        await fs.rm(root, { recursive: true, force: true });
+        if (previousRoot === undefined) delete process.env.AGENT_WORKSPACE_ROOT;
+        else process.env.AGENT_WORKSPACE_ROOT = previousRoot;
+        await fs.rm(workspaceRoot, { recursive: true, force: true });
         await fs.rm(outside, { recursive: true, force: true });
     }
 });

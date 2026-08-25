@@ -126,7 +126,6 @@ type MemoryManagerOptions = {
     sessionId?: string;
     memoryDirectory?: string;
     sessionRetentionDays?: number;
-    journalRetentionDays?: number;
 };
 
 export class MemoryManager implements IMemory {
@@ -152,8 +151,7 @@ export class MemoryManager implements IMemory {
         if (shouldPersist) {
             this.store = new MemoryStore(options.memoryDirectory);
             this.store.prune({
-                sessionRetentionDays: options.sessionRetentionDays ?? readRetentionDays('MEMORY_SESSION_RETENTION_DAYS', 30),
-                journalRetentionDays: options.journalRetentionDays ?? readRetentionDays('MEMORY_JOURNAL_RETENTION_DAYS', 90)
+                sessionRetentionDays: options.sessionRetentionDays ?? readRetentionDays('MEMORY_SESSION_RETENTION_DAYS', 30)
             });
             this.sessionId = options.sessionId ?? this.store.createSessionId();
             this.resumedSession = this.store.hasSession(this.sessionId);

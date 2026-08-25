@@ -483,21 +483,17 @@ Agent 能调用文件、Git、Shell、MCP 等外部能力，因此安全边界�
 
 ### 沙箱
 
-文件、搜索和通用 Shell 工具使用 `AGENT_SANDBOX_ROOT`：
-
-```env
-AGENT_SANDBOX_ROOT=C:\AgentSandbox
-```
-
-`resolveSafePath()` 会拒绝目录穿越。`ShellExecuteTool` 的 `cwd` 固定为沙箱根目录。
-
-Coding 工具使用独立工作区根目录：
+文件、搜索、通用 Shell 和默认 `write_file` scope 统一使用工作区内的 `var/sandbox`：
 
 ```env
 AGENT_WORKSPACE_ROOT=.
 ```
 
-`ApplyPatchTool`、`GitStatusTool`、`GitDiffTool`、`RunTestsTool` 都在该工作区内运行。
+`resolveSafePath()` 会拒绝目录穿越和符号链接逃逸。`ShellExecuteTool` 的 `cwd` 固定为
+`<AGENT_WORKSPACE_ROOT>/var/sandbox`。
+
+`ApplyPatchTool`、`GitStatusTool`、`GitDiffTool`、`RunTestsTool` 使用工作区根目录本身；
+其余通用文件工具只能访问该工作区下的 `var/sandbox`。
 
 ## Skill 懒加载
 

@@ -5,19 +5,18 @@ import path from 'node:path';
 import test from 'node:test';
 import { ListDirTool, ReadFileTool, WriteFileTool } from '../../tools/fileTool.js';
 
-async function withSandbox<T>(run: (root: string) => Promise<T>): Promise<T> {
-    const previousRoot = process.env.AGENT_SANDBOX_ROOT;
+async function withSandbox<T>(run: (root: string, workspaceRoot: string) => Promise<T>): Promise<T> {
     const previousWorkspace = process.env.AGENT_WORKSPACE_ROOT;
     const previousMaxBytes = process.env.READ_FILE_MAX_BYTES;
     const previousOutputMax = process.env.TOOL_OUTPUT_MAX_CHARS;
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-file-tool-'));
-    process.env.AGENT_SANDBOX_ROOT = root;
-    process.env.AGENT_WORKSPACE_ROOT = root;
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-file-tool-'));
+    const root = path.join(workspaceRoot, 'var', 'sandbox');
+    await fs.mkdir(root, { recursive: true });
+    process.env.AGENT_WORKSPACE_ROOT = workspaceRoot;
 
     try {
-        return await run(root);
+        return await run(root, workspaceRoot);
     } finally {
-        restoreEnv('AGENT_SANDBOX_ROOT', previousRoot);
         restoreEnv('AGENT_WORKSPACE_ROOT', previousWorkspace);
         restoreEnv('READ_FILE_MAX_BYTES', previousMaxBytes);
         restoreEnv('TOOL_OUTPUT_MAX_CHARS', previousOutputMax);
@@ -95,13 +94,13 @@ test('WriteFileTool creates parent directories and writes content inside the run
         });
 
         assert.equal(result.status, 'success');
-        assert.equal(await fs.readFile(path.join(root, 'var', 'sandbox', 'output', 'result.txt'), 'utf-8'), 'hello agent');
+        assert.equal(await fs.readFile(path.join(root, 'output', 'result.txt'), 'utf-8'), 'hello agent');
         assert.equal(result.metadata?.message, 'file written: sandbox/output/result.txt');
     });
 });
 
 test('WriteFileTool exposes configured scopes and writes to an explicit scope', async () => {
-    await withSandbox(async root => {
+    await withSandbox(async (_root, workspaceRoot) => {
         const tool = new WriteFileTool({
             defaultScope: 'sandbox',
             scopes: [
@@ -116,7 +115,7 @@ test('WriteFileTool exposes configured scopes and writes to an explicit scope', 
 
         const result = await tool.execute({ scope: 'wiki', filename: 'concepts/rag.md', content: '# RAG' });
         assert.equal(result.status, 'success');
-        assert.equal(await fs.readFile(path.join(root, 'wiki', 'concepts', 'rag.md'), 'utf-8'), '# RAG');
+        assert.equal(await fs.readFile(path.join(workspaceRoot, 'wiki', 'concepts', 'rag.md'), 'utf-8'), '# RAG');
         assert.deepEqual(result.data, { scope: 'wiki', filename: 'concepts/rag.md', bytesWritten: 5 });
     });
 });

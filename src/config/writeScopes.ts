@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { getWorkspaceRoot } from '../tools/codingTool.js';
 import { parseJsonc } from '../utils/jsonc.js';
+import { getWorkspaceRoot, SANDBOX_RELATIVE_ROOT } from '../workspace.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -42,7 +42,7 @@ export function defaultWriteScopes(): WriteScopesConfig {
         defaultScope: 'sandbox',
         scopes: [{
             name: 'sandbox',
-            root: 'var/sandbox',
+            root: SANDBOX_RELATIVE_ROOT,
             description: '默认隔离输出目录；普通文件写入不指定 scope 时使用此处。'
         }]
     };

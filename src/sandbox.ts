@@ -1,8 +1,15 @@
 import path from 'path';
 import fs from 'node:fs/promises';
+import { getCanonicalSandboxRoot } from './workspace.js';
 
 export function getSandboxRoot(): string {
-    return path.resolve(process.env.AGENT_SANDBOX_ROOT ?? 'C:\\AgentSandbox');
+    return getCanonicalSandboxRoot();
+}
+
+export async function ensureSandboxRoot(): Promise<string> {
+    const root = getSandboxRoot();
+    await fs.mkdir(root, { recursive: true });
+    return root;
 }
 
 export function resolveSafePath(targetPath: string): string {
@@ -14,7 +21,7 @@ export function resolveSafePath(targetPath: string): string {
 }
 
 export async function resolveSafeExistingPath(targetPath: string): Promise<string> {
-    return resolveExistingPathWithinRoot(getSandboxRoot(), targetPath || '.', '安全沙盒');
+    return resolveExistingPathWithinRoot(await ensureSandboxRoot(), targetPath || '.', '安全沙盒');
 }
 
 export async function resolveExistingPathWithinRoot(
