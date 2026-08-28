@@ -125,6 +125,43 @@ test('verifyTrajectory validates abstention phrases and all expected sources', (
     assert.deepEqual(missingSource.summary.failedDimensions, ['evidence.all_sources']);
 });
 
+test('verification summary exposes final policy and replay environment identity', () => {
+    const records: JsonlV2Record[] = [
+        start('identity-run', 'wiki_agent.run', {
+            'gen_ai.request.model': 'model-1',
+            'wiki_agent.build_id': 'build-1'
+        }),
+        start('identity-rag', 'rag.search', {
+            'wiki_agent.rag.profile': 'balanced-v1',
+            'wiki_agent.rag.variant': 'raw-wiki'
+        }),
+        event('identity-rag', 'retrieval.result', {
+            'gen_ai.retrieval.documents': '[]',
+            'wiki_agent.rag.index_identity': '{"id":"index-1"}'
+        }),
+        end('identity-rag', 'ok', {
+            'wiki_agent.rag.index_identity': '{"id":"index-1"}'
+        }),
+        end('identity-run', 'ok', {
+            'wiki_agent.termination_reason': 'completed',
+            'wiki_agent.final_answer.action': 'forced-abstention'
+        })
+    ];
+    const report = verifyTrajectory({
+        contract: { schemaVersion: 1 },
+        question: {},
+        answer: '',
+        records
+    });
+
+    assert.equal(report.summary.finalAnswerAction, 'forced-abstention');
+    assert.deepEqual(report.summary.retrievalProfiles, ['balanced-v1']);
+    assert.deepEqual(report.summary.retrievalVariants, ['raw-wiki']);
+    assert.deepEqual(report.summary.indexIdentities, ['{"id":"index-1"}']);
+    assert.equal(report.summary.model, 'model-1');
+    assert.equal(report.summary.buildId, 'build-1');
+});
+
 function happyTrace(): JsonlV2Record[] {
     return [
         start('run', 'wiki_agent.run'),

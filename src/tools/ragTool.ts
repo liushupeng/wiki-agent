@@ -8,6 +8,7 @@ import { openActiveIndex } from '../rag/indexRuntime.js';
 import { getDefaultRetrievalRuntime, type RetrievalRuntime } from '../rag/retrievalRuntime.js';
 import {
     retrievalCandidatesTraceAttributes,
+    retrievalManagedResultTraceAttributes,
     retrievalRequestTraceAttributes,
     retrievalResultTraceAttributes,
     retrievalStageTraceAttributes,
@@ -306,8 +307,23 @@ export class SearchNotesTool extends BaseAgentTool {
                     await ragSpan?.addEvent('retrieval.source_local_candidates', retrievalStageTraceAttributes(run.sourceLocalCandidates));
                     await ragSpan?.addEvent('retrieval.anchor_candidates', retrievalStageTraceAttributes(run.anchorCandidates));
                 }
-                await ragSpan?.addEvent('retrieval.result', retrievalStageTraceAttributes(run.evidences));
-                await ragSpan?.end({ status: 'ok' });
+                const retrievalElapsedMs = performance.now() - startedAtMs;
+                await ragSpan?.addEvent(
+                    'retrieval.result',
+                    retrievalManagedResultTraceAttributes(run.evidences, retrievalElapsedMs, managed.identity)
+                );
+                await ragSpan?.end({
+                    status: 'ok',
+                    attributes: {
+                        'wiki_agent.rag.match_count': run.evidences.length,
+                        'wiki_agent.rag.latency_ms': Math.round(retrievalElapsedMs),
+                        'wiki_agent.rag.fallback_used': fallbackUsed,
+                        'wiki_agent.rag.profile': run.profile,
+                        ...(managed.identity
+                            ? { 'wiki_agent.rag.index_identity': JSON.stringify(managed.identity) }
+                            : {})
+                    }
+                });
                 const matches: SearchResult[] = run.evidences.map(evidence => ({
                     ...evidence,
                     vector: [],

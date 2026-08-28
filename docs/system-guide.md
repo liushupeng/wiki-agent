@@ -242,17 +242,22 @@ Catalog 提供治理结构，但不会自动判断元数据是否真实。
 
 ## 9. Trace 与评测
 
-运行时通过 `src/trace/` 和 `src/observability/` 记录：
+运行时通过 `src/trace/` 记录，`scripts/observability/` 负责离线汇总与收割：
 
 - Agent run 与 step；
 - 模型调用及估算 token；
 - 工具名称、状态、时延与权限决策；
 - RAG 预算和证据状态；
+- 实际 retrieval profile/variant、fallback、空检索与索引身份；
+- 最终答案策略 `allow | forced-abstention`；
 - 终止原因；
 - 可选的脱敏 prompt artifact。
+- 可选的脱敏 run artifact，包含完整单轮 query 与最终回答。
 
 Trace 可写入本地 JSONL，也可导出到 OTLP 后端。
 原始 Trace 仍可能包含用户输入、来源路径或工具结果，不能仅因存在脱敏逻辑就视为可公开。
+
+`npm run ops:summary` 只读取本地 JSONL，并将运行指标与无金标风险代理指标分开汇总。证据三态只在实际使用 RAG 的运行中统计；它表示证据库存状态，不是答案正确率。报告中的 candidate Trace ID 可由 `npm run trace:harvest` 收割到 `var/evals/candidates/`，再经人工标注后进入离线评测。
 
 离线质量层包含：
 
@@ -262,6 +267,8 @@ Trace 可写入本地 JSONL，也可导出到 OTLP 后端。
 - `TrajectoryVerifier` 对 JSONL Trace 的轨迹检查；
 - 不依赖 LLM Judge 的人工 rubric 和 review artifact；
 - bad case 汇总。
+
+真实运行闭环为：`ops:summary → trace:harvest → 人工补金标 → eval:verify 原轨迹诊断 → eval:agent 当前环境重跑`。`eval:verify` 不创建 Agent、不调用模型；`eval:agent` 会调用真实模型并产生费用。题目 provenance 与 Trace 中的模型、构建、profile、variant 和索引指纹用于报告环境差异，但项目不会自动保存所有历史代码与索引快照。
 
 检索指标证明特定语料、问题集和 profile 上的可复现性，不代表通用问答准确率。
 真实模型 E2E 可能产生费用，因此不会作为默认 CI 步骤运行。

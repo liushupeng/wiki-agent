@@ -29,6 +29,12 @@ export type VerificationReport = {
         stepCount: number;
         terminationReason?: string;
         evidenceSources: string[];
+        finalAnswerAction?: string;
+        retrievalProfiles: string[];
+        retrievalVariants: string[];
+        indexIdentities: string[];
+        model?: string;
+        buildId?: string;
     };
 };
 
@@ -80,7 +86,13 @@ export function verifyTrajectory(input: {
             toolNames: trajectory.toolCalls.map(call => call.name),
             stepCount: trajectory.stepCount,
             ...(trajectory.terminationReason ? { terminationReason: trajectory.terminationReason } : {}),
-            evidenceSources: trajectory.evidenceSources
+            evidenceSources: trajectory.evidenceSources,
+            ...(trajectory.finalAnswerAction ? { finalAnswerAction: trajectory.finalAnswerAction } : {}),
+            retrievalProfiles: trajectory.retrievalProfiles,
+            retrievalVariants: trajectory.retrievalVariants,
+            indexIdentities: trajectory.indexIdentities,
+            ...(trajectory.model ? { model: trajectory.model } : {}),
+            ...(trajectory.buildId ? { buildId: trajectory.buildId } : {})
         }
     };
 }

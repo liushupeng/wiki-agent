@@ -224,6 +224,9 @@ npm run check:knowledge-catalog
 
 # 最近 24 小时运行指标
 npm run ops:summary -- -- --since-hours 24
+
+# 从真实 ask Trace 收割疑似 bad case；只写入 var/，不会自动修改题集
+npm run trace:harvest -- -- --since-hours 24
 ```
 
 GitHub Actions 会在 `master`、`main` 分支推送及 Pull Request 上使用 Node.js 22 执行 `npm ci` 和 `npm test`。CI 不调用付费模型，也不依赖私有语料。
@@ -255,6 +258,8 @@ npm run eval:agent -- -- --retrieval-profile hybrid-bge-m3-metadata-source-aggre
 ```
 
 完整评测协议、命令和指标定义见[公开评测摘要](docs/evaluation/SUMMARY.md)与[项目参考文档](docs/project-reference.md)。
+
+真实运行使用无金标代理指标发现风险，不能直接计算答案准确率。完整闭环为 `ops:summary → trace:harvest → 人工补金标 → eval:verify → eval:agent`；其中 `eval:verify` 只检查已有轨迹，`eval:agent` 才会重新调用模型。
 
 ## 目录
 

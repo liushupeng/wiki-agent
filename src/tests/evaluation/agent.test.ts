@@ -138,6 +138,36 @@ test('validateAgentEvalQuestions preserves E2E rubrics and keeps legacy question
     ]);
 });
 
+test('online-trace provenance is validated and reports replay environment differences', () => {
+    const [question] = validateAgentEvalQuestions([{
+        id: 'badcase-1',
+        question: 'question',
+        provenance: {
+            source: 'online-trace',
+            traceId: 'trace-1',
+            observedAt: '2026-08-25T00:00:00.000Z',
+            model: 'original-model',
+            retrievalProfiles: ['balanced-v1']
+        }
+    }]);
+    const result = scoreAgentAnswer(question!, 'answer', {
+        stepCount: 1,
+        totalToolCallCount: 0,
+        ragToolCallCount: 0,
+        ragToolUsageRate: 0,
+        toolFailures: [],
+        evidenceSources: [],
+        model: 'candidate-model',
+        retrievalProfiles: ['deep-v1'],
+        retrievalVariants: [],
+        indexIdentities: []
+    });
+
+    assert.equal(result.provenance?.traceId, 'trace-1');
+    assert.equal(result.replayEnvironment?.matchesOriginal, false);
+    assert.equal(result.replayEnvironment?.differences.length, 2);
+});
+
 function start(spanId: string, name: string, at: string, attributes: Record<string, unknown> = {}) {
     return {
         type: 'span_start' as const,

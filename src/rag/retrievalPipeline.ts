@@ -77,8 +77,20 @@ export type RetrievalRun = {
     };
 };
 
+export type RetrievalIndexIdentity = {
+    retrievalProfile: string;
+    variant: string;
+    indexes: Array<{
+        profile: string;
+        profileFingerprint: string;
+        chunkFingerprint?: string;
+        sourceConfigFingerprint?: string;
+    }>;
+};
+
 export interface Retriever {
     readonly profile: RetrievalProfile;
+    readonly identity?: RetrievalIndexIdentity;
     retrieve(query: string, options?: { topK?: number; candidateLimit?: number }): Promise<RetrievalRun>;
 }
 
@@ -250,6 +262,7 @@ function createSingleRetriever(
 ): Retriever {
     return {
         profile,
+        identity: retrievalIdentity(profile.id, [index]),
         async retrieve(query, options = {}) {
             const totalStarted = performance.now();
             const rerankerCacheBefore = readCacheStats(reranker);
@@ -355,6 +368,7 @@ function createHybridRetriever(
         : undefined;
     return {
         profile,
+        identity: retrievalIdentity(profile.id, [sparse, dense]),
         async retrieve(query, options = {}) {
             const totalStarted = performance.now();
             const candidateCacheBefore = readCacheStats(candidateCache);
@@ -531,6 +545,21 @@ function createHybridRetriever(
                 }
             };
         }
+    };
+}
+
+function retrievalIdentity(retrievalProfile: string, indexes: IndexRuntime[]): RetrievalIndexIdentity {
+    return {
+        retrievalProfile,
+        variant: indexes[0]?.variant.id ?? 'unknown',
+        indexes: indexes.map(index => ({
+            profile: index.profile.id,
+            profileFingerprint: index.manifest.profileFingerprint,
+            ...(index.manifest.chunkFingerprint ? { chunkFingerprint: index.manifest.chunkFingerprint } : {}),
+            ...(index.manifest.sourceConfig?.fingerprint
+                ? { sourceConfigFingerprint: index.manifest.sourceConfig.fingerprint }
+                : {})
+        }))
     };
 }
 

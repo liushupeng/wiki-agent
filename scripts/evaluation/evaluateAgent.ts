@@ -194,6 +194,8 @@ async function main(): Promise<void> {
                         requestTimeoutMs: EVAL_REQUEST_TIMEOUT_MS,
                         traceDir, telemetryBackend: 'file',
                         capturePromptArtifacts: false, traceArtifactDir: path.join(attemptDirectory, 'prompt-artifacts'),
+                        captureRunArtifacts: false,
+                        buildId: manifest.gitCommit,
                         autoExportFileTrace: false, approvalMode: 'deny'
                     } satisfies AgentConfig, memory, registry);
                     const answer = await agent.run(question.question, () => {});

@@ -6,7 +6,7 @@ import { parseJsonlV2 } from '../../src/evaluation/trajectoryModel.js';
 import { verifyTrajectory } from '../../src/evaluation/trajectoryVerifier.js';
 
 const USAGE = `Usage:
-  npm run eval:verify -- -- --trace <trace.jsonl> --question-id <id> [--questions <questions.json>] [--answer-file <answer.txt>]
+  npm run eval:verify -- -- --trace <trace.jsonl> --question-id <id> [--questions <questions.json>] [--answer-file <answer.txt> | --run-artifact <run.json>]
 
 Reads an existing trace and evaluates its TaskContract without creating an Agent or calling a model.`;
 
@@ -31,11 +31,15 @@ async function main(): Promise<void> {
     if (!question) throw new Error(`unknown question id: ${args.questionId}`);
     if (!question.contract) throw new Error(`question ${args.questionId} has no TaskContract`);
     const contract = validateTaskContract(question.contract, `question ${question.id}.contract`);
-    const [trace, answer] = await Promise.all([
-        fs.readFile(path.resolve(args.trace), 'utf-8'),
-        args.answerFile ? fs.readFile(path.resolve(args.answerFile), 'utf-8') : Promise.resolve('')
-    ]);
-    const report = verifyTrajectory({ contract, question, answer, records: parseJsonlV2(trace) });
+    if (args.answerFile && args.runArtifact) throw new Error('--answer-file and --run-artifact are mutually exclusive');
+    const trace = await fs.readFile(path.resolve(args.trace), 'utf-8');
+    const records = parseJsonlV2(trace);
+    const answer = args.runArtifact
+        ? await readAnswerFromRunArtifact(args.runArtifact, records[0]?.traceId)
+        : args.answerFile
+            ? await fs.readFile(path.resolve(args.answerFile), 'utf-8')
+            : '';
+    const report = verifyTrajectory({ contract, question, answer, records });
     console.log(JSON.stringify(report, null, 2));
     if (!report.passed && contract.strictness === 'hard') process.exitCode = 1;
 }
@@ -46,6 +50,7 @@ type VerifyArgs = {
     questions?: string;
     questionId?: string;
     answerFile?: string;
+    runArtifact?: string;
 };
 
 function parseArgs(args: string[]): VerifyArgs {
@@ -63,9 +68,24 @@ function parseArgs(args: string[]): VerifyArgs {
         else if (arg === '--questions') result.questions = value;
         else if (arg === '--question-id') result.questionId = value;
         else if (arg === '--answer-file') result.answerFile = value;
+        else if (arg === '--run-artifact') result.runArtifact = value;
         else throw new Error(`unknown argument: ${arg}`);
     }
     return result;
+}
+
+async function readAnswerFromRunArtifact(filePath: string, expectedTraceId?: string): Promise<string> {
+    const value = JSON.parse(await fs.readFile(path.resolve(filePath), 'utf-8')) as {
+        traceId?: unknown;
+        response?: { answer?: unknown };
+    };
+    if (expectedTraceId && value.traceId !== expectedTraceId) {
+        throw new Error(`run artifact traceId does not match trace: expected ${expectedTraceId}`);
+    }
+    if (typeof value.response?.answer !== 'string') {
+        throw new Error('run artifact does not contain response.answer');
+    }
+    return value.response.answer;
 }
 
 main().catch(error => {

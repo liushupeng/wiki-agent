@@ -2,93 +2,104 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import '../../src/env.js';
 import { parseJsonc } from '../../src/utils/jsonc.js';
-
-type TraceLine = {
-    type?: string;
-    traceId?: string;
-    spanId?: string;
-    name?: string;
-    startedAt?: string;
-    endedAt?: string;
-    status?: string;
-    attributes?: Record<string, unknown>;
-};
-
-type RunSample = {
-    traceId: string;
-    startedAt: string;
-    durationMs: number;
-    completed: boolean;
-    toolCalls: number;
-    toolFailures: number;
-    ragCalls: number;
-    ragCacheHits: number;
-    ragBudgetExhausted: boolean;
-    totalTokens: number;
-};
+import { parseJsonlV2 } from '../../src/evaluation/trajectoryModel.js';
+import {
+    buildRunQualitySample,
+    summarizeRunQuality,
+    type RunQualitySample
+} from '../../src/observability/runQuality.js';
 
 type OperationsSlo = {
     minimumSampleRuns: number;
+    minimumKnowledgeRuns: number;
     completionRateMin: number;
     p95LatencyMsMax: number;
     toolFailureRateMax: number;
     ragRetrieverCacheHitRateMin: number;
     ragBudgetExhaustionRateMax: number;
     averageTotalTokensMax: number;
+    insufficientEvidenceRateMax: number;
+    partialEvidenceRateMax: number;
+    fallbackRateMax: number;
+    emptyRetrievalRateMax: number;
+    retrievalP95LatencyMsMax: number;
 };
 
 /**
- * Agent 运行指标与 SLO 汇总入口。
+ * Agent 运行与在线代理质量指标汇总。
  *
- * 通过 `npm run ops:summary` 显式调用，递归读取指定时间窗口内的本地 JSONL
- * Trace，计算完成率、延迟、工具失败率、RAG 缓存与预算、token 等 SLI，
- * 再与 operations SLO 配置比较并输出 JSON 报告；不调用 LLM，也不修改 Trace。
+ * 只读取 file telemetry 的 JSONL；直接 OTLP 模式应在观测后端使用相同属性聚合。
+ * evidence 指标只描述检索库存风险，不代表答案正确率。
  */
 async function main(): Promise<void> {
     const options = parseArgs(process.argv.slice(2));
     const files = await listJsonlFiles(options.directory);
     const cutoff = Date.now() - options.sinceHours * 60 * 60 * 1000;
-    const samples = (await Promise.all(files.map(file => readRun(file))))
-        .filter((sample): sample is RunSample => Boolean(sample))
+    const samples = (await Promise.all(files.map(readRun)))
+        .filter((sample): sample is RunQualitySample => Boolean(sample))
         .filter(sample => sample.durationMs >= 0)
         .filter(sample => Date.parse(sample.startedAt) >= cutoff);
-
-    const durations = samples.map(sample => sample.durationMs);
-    const toolCalls = samples.reduce((sum, sample) => sum + sample.toolCalls, 0);
-    const ragCalls = samples.reduce((sum, sample) => sum + sample.ragCalls, 0);
-    const completed = samples.filter(sample => sample.completed).length;
-    const sli = {
-        completionRate: ratio(completed, samples.length),
-        latencyMs: { p50: percentile(durations, 0.5), p95: percentile(durations, 0.95) },
-        toolFailureRate: ratio(samples.reduce((sum, sample) => sum + sample.toolFailures, 0), toolCalls),
-        ragRetrieverCacheHitRate: ratio(samples.reduce((sum, sample) => sum + sample.ragCacheHits, 0), ragCalls),
-        ragBudgetExhaustionRate: ratio(samples.filter(sample => sample.ragBudgetExhausted).length, samples.length),
-        averageTotalTokens: samples.length
-            ? Math.round(samples.reduce((sum, sample) => sum + sample.totalTokens, 0) / samples.length)
-            : null
-    };
+    const summary = summarizeRunQuality(samples, options.maxCandidates);
     const slo = await loadSlo();
     const checks = {
-        completionRate: atLeast(sli.completionRate, slo.completionRateMin),
-        p95LatencyMs: atMost(sli.latencyMs.p95, slo.p95LatencyMsMax),
-        toolFailureRate: atMost(sli.toolFailureRate, slo.toolFailureRateMax),
-        ragRetrieverCacheHitRate: atLeast(sli.ragRetrieverCacheHitRate, slo.ragRetrieverCacheHitRateMin),
-        ragBudgetExhaustionRate: atMost(sli.ragBudgetExhaustionRate, slo.ragBudgetExhaustionRateMax),
-        averageTotalTokens: atMost(sli.averageTotalTokens, slo.averageTotalTokensMax)
+        completionRate: atLeast(summary.sli.completionRate, slo.completionRateMin),
+        p95LatencyMs: atMost(summary.sli.latencyMs.p95, slo.p95LatencyMsMax),
+        toolFailureRate: atMost(summary.sli.toolFailureRate, slo.toolFailureRateMax),
+        ragRetrieverCacheHitRate: atLeast(
+            summary.sli.ragRetrieverCacheHitRate,
+            slo.ragRetrieverCacheHitRateMin
+        ),
+        ragBudgetExhaustionRate: atMost(
+            summary.sli.ragBudgetExhaustionRate,
+            slo.ragBudgetExhaustionRateMax
+        ),
+        averageTotalTokens: atMost(summary.sli.averageTotalTokens, slo.averageTotalTokensMax),
+        insufficientEvidenceRate: atMost(
+            summary.sli.evidence.insufficientRate,
+            slo.insufficientEvidenceRateMax
+        ),
+        partialEvidenceRate: atMost(summary.sli.evidence.partialRate, slo.partialEvidenceRateMax),
+        fallbackRate: atMost(summary.sli.fallbackRate, slo.fallbackRateMax),
+        emptyRetrievalRate: atMost(summary.sli.emptyRetrievalRate, slo.emptyRetrievalRateMax),
+        retrievalP95LatencyMs: atMost(
+            summary.sli.retrievalLatencyMs.p95,
+            slo.retrievalP95LatencyMsMax
+        )
     };
-    const enoughSamples = samples.length >= slo.minimumSampleRuns;
+    const enoughSamples = summary.runs >= slo.minimumSampleRuns;
+    const enoughKnowledgeRuns = summary.knowledgeRuns >= slo.minimumKnowledgeRuns;
+    const operationalChecks = [
+        checks.completionRate,
+        checks.p95LatencyMs,
+        checks.toolFailureRate,
+        checks.ragBudgetExhaustionRate,
+        checks.averageTotalTokens
+    ];
+    const knowledgeChecks = [
+        checks.ragRetrieverCacheHitRate,
+        checks.insufficientEvidenceRate,
+        checks.partialEvidenceRate,
+        checks.fallbackRate,
+        checks.emptyRetrievalRate,
+        checks.retrievalP95LatencyMs
+    ];
+    const healthy = enoughSamples
+        && operationalChecks.every(result => result !== false)
+        && (!enoughKnowledgeRuns || knowledgeChecks.every(result => result !== false));
     console.log(JSON.stringify({
         windowHours: options.sinceHours,
         traceDirectory: options.directory,
-        runs: samples.length,
-        sli,
+        backend: 'file-jsonl',
+        ...summary,
         slo: {
             thresholds: slo,
             enoughSamples,
+            enoughKnowledgeRuns,
             checks,
-            healthy: enoughSamples && Object.values(checks).every(result => result !== false)
+            healthy
         }
     }, null, 2));
+    if (options.failOnUnhealthy && !healthy) process.exitCode = 1;
 }
 
 async function loadSlo(): Promise<OperationsSlo> {
@@ -96,60 +107,13 @@ async function loadSlo(): Promise<OperationsSlo> {
     return parseJsonc(await fs.readFile(sloPath, 'utf-8'), `operations SLO "${sloPath}"`) as OperationsSlo;
 }
 
-async function readRun(file: string): Promise<RunSample | undefined> {
-    const lines = (await fs.readFile(file, 'utf-8')).split(/\r?\n/).filter(Boolean);
-    const starts = new Map<string, TraceLine>();
-    let rootStart: TraceLine | undefined;
-    let rootEnd: TraceLine | undefined;
-    let toolCalls = 0;
-    let toolFailures = 0;
-    let ragCalls = 0;
-    let ragCacheHits = 0;
-    let totalTokens = 0;
-    for (const line of lines) {
-        let event: TraceLine;
-        try {
-            event = JSON.parse(line) as TraceLine;
-        } catch {
-            continue;
-        }
-        if (event.type === 'span_start' && event.spanId) {
-            starts.set(event.spanId, event);
-            if (event.name === 'wiki_agent.run') rootStart = event;
-            if (event.name === 'tool.execute') toolCalls += 1;
-            if (event.name === 'rag.search') ragCalls += 1;
-            continue;
-        }
-        if (
-            event.type === 'span_event'
-            && event.spanId
-            && starts.get(event.spanId)?.name === 'rag.search'
-            && event.attributes?.['wiki_agent.rag.retriever_cache_hit'] === true
-        ) {
-            ragCacheHits += 1;
-            continue;
-        }
-        if (event.type !== 'span_end' || !event.spanId) continue;
-        const start = starts.get(event.spanId);
-        if (start?.name === 'wiki_agent.run') rootEnd = event;
-        if (start?.name === 'tool.execute' && event.status !== 'ok') toolFailures += 1;
-        if (start?.name === 'gen_ai.chat') {
-            totalTokens += asNumber(event.attributes?.['gen_ai.usage.total_tokens']);
-        }
+async function readRun(file: string): Promise<RunQualitySample | undefined> {
+    const content = await fs.readFile(file, 'utf-8');
+    try {
+        return buildRunQualitySample(parseJsonlV2(content), file);
+    } catch {
+        return undefined;
     }
-    if (!rootStart?.traceId || !rootStart.startedAt || !rootEnd?.endedAt) return undefined;
-    return {
-        traceId: rootStart.traceId,
-        startedAt: rootStart.startedAt,
-        durationMs: Date.parse(rootEnd.endedAt) - Date.parse(rootStart.startedAt),
-        completed: rootEnd.attributes?.['wiki_agent.termination_reason'] === 'completed' || rootEnd.status === 'ok',
-        toolCalls,
-        toolFailures,
-        ragCalls,
-        ragCacheHits,
-        ragBudgetExhausted: rootEnd.attributes?.['wiki_agent.rag.budget_exhausted'] === true,
-        totalTokens
-    };
 }
 
 async function listJsonlFiles(directory: string): Promise<string[]> {
@@ -163,29 +127,29 @@ async function listJsonlFiles(directory: string): Promise<string[]> {
     return nested.flat();
 }
 
-function parseArgs(args: string[]): { directory: string; sinceHours: number } {
+function parseArgs(args: string[]): {
+    directory: string;
+    sinceHours: number;
+    maxCandidates: number;
+    failOnUnhealthy: boolean;
+} {
     let directory = path.resolve(process.env.TRACE_DIR ?? 'var/traces');
     let sinceHours = 24;
+    let maxCandidates = 20;
+    let failOnUnhealthy = false;
     for (let index = 0; index < args.length; index += 1) {
+        if (args[index] === '--') continue;
         if (args[index] === '--dir') directory = path.resolve(args[++index] ?? '');
         else if (args[index] === '--since-hours') sinceHours = Number(args[++index]);
+        else if (args[index] === '--max-candidates') maxCandidates = Number(args[++index]);
+        else if (args[index] === '--fail-on-unhealthy') failOnUnhealthy = true;
+        else throw new Error(`unknown argument: ${args[index]}`);
     }
     if (!Number.isFinite(sinceHours) || sinceHours <= 0) throw new Error('--since-hours must be positive');
-    return { directory, sinceHours };
-}
-
-function percentile(values: number[], quantile: number): number | null {
-    if (values.length === 0) return null;
-    const sorted = [...values].sort((left, right) => left - right);
-    return Math.round(sorted[Math.ceil(quantile * sorted.length) - 1]!);
-}
-
-function ratio(numerator: number, denominator: number): number | null {
-    return denominator ? Number((numerator / denominator).toFixed(4)) : null;
-}
-
-function asNumber(value: unknown): number {
-    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    if (!Number.isInteger(maxCandidates) || maxCandidates <= 0) {
+        throw new Error('--max-candidates must be a positive integer');
+    }
+    return { directory, sinceHours, maxCandidates, failOnUnhealthy };
 }
 
 function atLeast(actual: number | null, expected: number): boolean | null {

@@ -1,4 +1,4 @@
-import { openRetriever, type RetrievalRun, type Retriever } from './retrievalPipeline.js';
+import { openRetriever, type RetrievalIndexIdentity, type RetrievalRun, type Retriever } from './retrievalPipeline.js';
 import type { RetrievalProfile } from './retrievalProfiles.js';
 
 export type RetrievalRuntimeRequest = {
@@ -18,6 +18,7 @@ export type RetrievalRuntimeMetrics = {
 export type RetrievalRuntimeResult = {
     run: RetrievalRun;
     profile: RetrievalProfile;
+    identity?: RetrievalIndexIdentity;
     metrics: RetrievalRuntimeMetrics;
 };
 
@@ -56,6 +57,7 @@ export class CachedRetrievalRuntime implements RetrievalRuntime {
         return {
             run,
             profile: retriever.profile,
+            ...(retriever.identity ? { identity: retriever.identity } : {}),
             metrics: {
                 retrieverCacheHit: cached !== undefined,
                 retrieverOpenMs: cached === undefined ? openMs : 0,

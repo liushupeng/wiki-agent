@@ -81,6 +81,8 @@ function createAgent(options: {
     maxRagCalls?: number;
     capturePromptArtifacts?: boolean;
     traceArtifactDir?: string;
+    captureRunArtifacts?: boolean;
+    runArtifactDir?: string;
     autoExportFileTrace?: boolean;
     traceExporter?: (options: TraceExportOptions) => Promise<TraceExportReport>;
 }): WikiAgent {
@@ -94,6 +96,8 @@ function createAgent(options: {
         traceDir: options.traceDir,
         capturePromptArtifacts: options.capturePromptArtifacts,
         traceArtifactDir: options.traceArtifactDir,
+        captureRunArtifacts: options.captureRunArtifacts,
+        runArtifactDir: options.runArtifactDir,
         autoExportFileTrace: options.autoExportFileTrace,
         approvalMode: 'auto'
     };
@@ -168,6 +172,7 @@ test('WikiAgent.run returns final streamed content without tool calls', async ()
     const events = await readTraceEvents(traceDir);
     const runEnd = events.find(event => event.type === 'span_end' && event.spanId === events.find(start => start.name === 'wiki_agent.run')?.spanId);
     assert.equal(runEnd?.status, 'ok');
+    assert.equal((runEnd?.attributes as Record<string, unknown>)?.['wiki_agent.run_artifact.path'], undefined);
 });
 
 test('WikiAgent logs an explicit completion marker after the final step', async () => {
@@ -232,6 +237,35 @@ test('WikiAgent links an optional prompt artifact from its model span', async ()
     assert.match(attributes['wiki_agent.prompt_artifact.path'] as string, /prompt-/);
     assert.match(attributes['wiki_agent.prompt_artifact.sha256'] as string, /^[a-f0-9]{64}$/);
     assert.equal(attributes['wiki_agent.prompt_artifact.redacted'], true);
+});
+
+test('WikiAgent links an optional run artifact from its root span', async () => {
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-run-artifact-trace-'));
+    const artifactDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-run-artifact-'));
+    const agent = createAgent({
+        traceDir,
+        captureRunArtifacts: true,
+        runArtifactDir: artifactDir,
+        autoExportFileTrace: false
+    });
+    attachFakeClient(agent, [[{ choices: [{ delta: { content: 'final answer' } }] }]]);
+
+    await agent.run('complete question', () => {});
+
+    const [artifactName] = await fs.readdir(artifactDir);
+    const artifact = JSON.parse(await fs.readFile(path.join(artifactDir, artifactName!), 'utf-8')) as {
+        request: { instruction: string };
+        response: { answer: string };
+    };
+    assert.equal(artifact.request.instruction, 'complete question');
+    assert.equal(artifact.response.answer, 'final answer');
+    const events = await readTraceEvents(traceDir);
+    const rootId = events.find(event => event.type === 'span_start' && event.name === 'wiki_agent.run')?.spanId;
+    const runEnd = events.find(event => event.type === 'span_end' && event.spanId === rootId);
+    const attributes = runEnd?.attributes as Record<string, unknown>;
+    assert.match(String(attributes['wiki_agent.run_artifact.path']), /run-/);
+    assert.match(String(attributes['wiki_agent.run_artifact.sha256']), /^[a-f0-9]{64}$/);
+    assert.equal(attributes['wiki_agent.run_artifact.redacted'], true);
 });
 
 test('WikiAgent automatically exports its completed file trace to local Jaeger', async () => {
@@ -456,6 +490,13 @@ test('WikiAgent replaces an unsupported final claim after an empty RAG search', 
     assert.equal(visible, result);
     assert.doesNotMatch(visible, /42/);
     assert.equal(memory.messages.at(-1)?.content, result);
+    const events = await readTraceEvents(traceDir);
+    const rootId = events.find(event => event.type === 'span_start' && event.name === 'wiki_agent.run')?.spanId;
+    const runEnd = events.find(event => event.type === 'span_end' && event.spanId === rootId);
+    const attributes = runEnd?.attributes as Record<string, unknown>;
+    assert.equal(attributes['wiki_agent.final_answer.action'], 'forced-abstention');
+    assert.equal(attributes['evidence.state'], 'insufficient');
+    assert.equal(attributes['evidence.distinct_sources'], 0);
 });
 
 test('WikiAgent records bounded tool error messages in failed tool spans', async () => {

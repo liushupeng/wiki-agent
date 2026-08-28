@@ -81,6 +81,12 @@ E2E 题集覆盖：
 
 题集与评测代码位于 [`evaluation/`](../../evaluation/)，公开语料位于 [`examples/public-knowledge/`](../../examples/public-knowledge/)，完整设计见[项目参考文档](../project-reference.md)。
 
+## 真实运行反馈
+
+公开快照是离线门禁，不覆盖真实 `ask` 问法分布。项目使用本地 JSONL Trace 汇总完成率、延迟、工具失败、RAG fallback、空检索、证据三态与拒答等风险代理指标，再由 `trace:harvest` 生成待人工确认的 bad case 候选。
+
+代理指标不能替代正确性金标：`sufficient` 不证明答案正确，拒答也可能是预期行为。候选只有在人工补充 expected sources/terms、TaskContract 与 rubric 后，才使用 `eval:verify` 复核原始轨迹，并使用 `eval:agent` 在当前模型和索引环境重跑。命令与数据契约见[项目参考文档](../project-reference.md#在线健康度与-bad-case-回放)。
+
 ## 复现
 
 构建公开语料上的两个物理索引：

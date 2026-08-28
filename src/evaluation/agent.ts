@@ -9,6 +9,18 @@ export type AgentEvalRubric = {
     failureTags: string[];
 };
 
+export type AgentEvalProvenance = {
+    source: 'online-trace';
+    traceId: string;
+    observedAt: string;
+    retrievalProfiles?: string[];
+    retrievalVariants?: string[];
+    indexIdentities?: string[];
+    model?: string;
+    buildId?: string;
+    failureTags?: string[];
+};
+
 export type AgentEvalQuestion = {
     id: string;
     category?: string;
@@ -21,6 +33,7 @@ export type AgentEvalQuestion = {
     expectedTerms?: string[];
     contract?: TaskContract;
     rubric?: AgentEvalRubric;
+    provenance?: AgentEvalProvenance;
 };
 
 export function validateAgentEvalQuestions(value: unknown): AgentEvalQuestion[] {
@@ -42,9 +55,44 @@ export function validateAgentEvalQuestions(value: unknown): AgentEvalQuestion[] 
             ...(question.expectedSources ? { expectedSources: validateStringArray(question.expectedSources, `question ${question.id}.expectedSources`) } : {}),
             ...(question.expectedTerms ? { expectedTerms: validateStringArray(question.expectedTerms, `question ${question.id}.expectedTerms`) } : {}),
             ...(question.contract ? { contract: validateTaskContract(question.contract, `question ${question.id}.contract`) } : {}),
-            ...(question.rubric ? { rubric: validateAgentEvalRubric(question.rubric, `question ${question.id}.rubric`) } : {})
+            ...(question.rubric ? { rubric: validateAgentEvalRubric(question.rubric, `question ${question.id}.rubric`) } : {}),
+            ...(question.provenance
+                ? { provenance: validateAgentEvalProvenance(question.provenance, `question ${question.id}.provenance`) }
+                : {})
         };
     });
+}
+
+export function validateAgentEvalProvenance(
+    value: unknown,
+    label = 'agent eval provenance'
+): AgentEvalProvenance {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
+    const provenance = value as Partial<AgentEvalProvenance>;
+    if (provenance.source !== 'online-trace') throw new Error(`${label}.source must be online-trace`);
+    if (!provenance.traceId?.trim()) throw new Error(`${label}.traceId must be non-empty`);
+    if (!provenance.observedAt || !Number.isFinite(Date.parse(provenance.observedAt))) {
+        throw new Error(`${label}.observedAt must be an ISO timestamp`);
+    }
+    return {
+        source: 'online-trace',
+        traceId: provenance.traceId,
+        observedAt: provenance.observedAt,
+        ...(provenance.retrievalProfiles
+            ? { retrievalProfiles: validateStringArray(provenance.retrievalProfiles, `${label}.retrievalProfiles`) }
+            : {}),
+        ...(provenance.retrievalVariants
+            ? { retrievalVariants: validateStringArray(provenance.retrievalVariants, `${label}.retrievalVariants`) }
+            : {}),
+        ...(provenance.indexIdentities
+            ? { indexIdentities: validateStringArray(provenance.indexIdentities, `${label}.indexIdentities`) }
+            : {}),
+        ...(provenance.model ? { model: provenance.model } : {}),
+        ...(provenance.buildId ? { buildId: provenance.buildId } : {}),
+        ...(provenance.failureTags
+            ? { failureTags: validateStringArray(provenance.failureTags, `${label}.failureTags`) }
+            : {})
+    };
 }
 
 export function validateAgentEvalRubric(value: unknown, label = 'agent eval rubric'): AgentEvalRubric {
@@ -156,6 +204,11 @@ export type AgentTraceMetrics = {
         estimatedInputTokens: number;
         estimatedOutputTokens: number;
     };
+    retrievalProfiles?: string[];
+    retrievalVariants?: string[];
+    indexIdentities?: string[];
+    model?: string;
+    buildId?: string;
 };
 
 export type AgentEvalResult = {
@@ -174,6 +227,11 @@ export type AgentEvalResult = {
     trace: AgentTraceMetrics;
     verification?: VerificationReport;
     rubric?: AgentEvalRubric;
+    provenance?: AgentEvalProvenance;
+    replayEnvironment?: {
+        matchesOriginal: boolean;
+        differences: string[];
+    };
 };
 
 const RAG_TOOL_NAMES = new Set(['search_notes', 'grep_notes', 'read_note', 'related_notes']);
@@ -197,6 +255,9 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
     const starts = new Map<string, JsonlV2Record>();
     const evidenceSources = new Set<string>();
     const toolFailures: ToolFailure[] = [];
+    const retrievalProfiles = new Set<string>();
+    const retrievalVariants = new Set<string>();
+    const indexIdentities = new Set<string>();
     let stepCount = 0;
     let totalToolCallCount = 0;
     let ragToolCallCount = 0;
@@ -214,6 +275,10 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
         if (record.type === 'span_start') {
             starts.set(record.spanId, record);
             if (record.name === 'wiki_agent.run') runStart = record;
+            if (record.name === 'rag.search') {
+                addSource(retrievalProfiles, stringAttribute(record, 'wiki_agent.rag.profile'));
+                addSource(retrievalVariants, stringAttribute(record, 'wiki_agent.rag.variant'));
+            }
             if (record.name?.startsWith('wiki_agent.step.')) stepCount += 1;
             if (record.name === 'rag.read_note') addSource(evidenceSources, stringAttribute(record, 'wiki_agent.rag.note_path'));
             if (record.name === 'tool.execute') {
@@ -227,6 +292,7 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
             const start = starts.get(record.spanId);
             if (start?.name === 'rag.search' && record.name === 'retrieval.result') {
                 addRetrievedDocumentSources(evidenceSources, stringAttribute(record, 'gen_ai.retrieval.documents'));
+                addSource(indexIdentities, stringAttribute(record, 'wiki_agent.rag.index_identity'));
             }
             continue;
         }
@@ -241,6 +307,11 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
             tokenUsage.estimatedOutputTokens += numberAttribute(record, 'gen_ai.usage.output_tokens.estimated');
         }
         if (start?.name === 'rag.read_note') addSource(evidenceSources, stringAttribute(start, 'wiki_agent.rag.note_path'));
+        if (start?.name === 'rag.search') {
+            addSource(retrievalProfiles, stringAttribute(record, 'wiki_agent.rag.profile'));
+            addSource(retrievalVariants, stringAttribute(record, 'wiki_agent.rag.variant'));
+            addSource(indexIdentities, stringAttribute(record, 'wiki_agent.rag.index_identity'));
+        }
         if (start?.name === 'tool.execute' && record.status !== 'ok') {
             toolFailures.push({
                 name: stringAttribute(start, 'tool.name') || 'unknown',
@@ -261,7 +332,12 @@ export function collectAgentTraceMetrics(records: JsonlV2Record[]): AgentTraceMe
         toolFailures,
         ...(stringAttribute(runEnd, 'wiki_agent.termination_reason') ? { terminationReason: stringAttribute(runEnd, 'wiki_agent.termination_reason') } : {}),
         evidenceSources: Array.from(evidenceSources),
-        tokenUsage
+        tokenUsage,
+        retrievalProfiles: [...retrievalProfiles],
+        retrievalVariants: [...retrievalVariants],
+        indexIdentities: [...indexIdentities],
+        ...(stringAttribute(runStart, 'gen_ai.request.model') ? { model: stringAttribute(runStart, 'gen_ai.request.model') } : {}),
+        ...(stringAttribute(runStart, 'wiki_agent.build_id') ? { buildId: stringAttribute(runStart, 'wiki_agent.build_id') } : {})
     };
 }
 
@@ -280,6 +356,9 @@ export function scoreAgentAnswer(
         ? trace.evidenceSources.filter(source => sourceMatches(source, expectedSources))
         : trace.evidenceSources;
     const sourceHit = expectedSources.length ? sourceEvidence.length > 0 : true;
+    const replayEnvironment = question.provenance
+        ? compareReplayEnvironment(question.provenance, trace)
+        : undefined;
 
     return {
         id: question.id,
@@ -298,8 +377,32 @@ export function scoreAgentAnswer(
             && (question.contract?.strictness === 'hard' ? verification?.passed === true : true),
         trace,
         ...(question.rubric ? { rubric: question.rubric } : {}),
+        ...(question.provenance ? { provenance: question.provenance } : {}),
+        ...(replayEnvironment ? { replayEnvironment } : {}),
         ...(verification ? { verification } : {})
     };
+}
+
+function compareReplayEnvironment(
+    provenance: AgentEvalProvenance,
+    trace: AgentTraceMetrics
+): { matchesOriginal: boolean; differences: string[] } {
+    const differences: string[] = [];
+    compareIdentity('model', provenance.model ? [provenance.model] : [], trace.model ? [trace.model] : [], differences);
+    compareIdentity('build', provenance.buildId ? [provenance.buildId] : [], trace.buildId ? [trace.buildId] : [], differences);
+    compareIdentity('retrieval profiles', provenance.retrievalProfiles ?? [], trace.retrievalProfiles ?? [], differences);
+    compareIdentity('retrieval variants', provenance.retrievalVariants ?? [], trace.retrievalVariants ?? [], differences);
+    compareIdentity('index identities', provenance.indexIdentities ?? [], trace.indexIdentities ?? [], differences);
+    return { matchesOriginal: differences.length === 0, differences };
+}
+
+function compareIdentity(label: string, expected: string[], actual: string[], differences: string[]): void {
+    if (expected.length === 0) return;
+    const normalizedExpected = [...new Set(expected)].sort();
+    const normalizedActual = [...new Set(actual)].sort();
+    if (JSON.stringify(normalizedExpected) !== JSON.stringify(normalizedActual)) {
+        differences.push(`${label}: expected ${normalizedExpected.join(', ')}, observed ${normalizedActual.join(', ') || '<missing>'}`);
+    }
 }
 
 function resolveExpectedSources(question: AgentEvalQuestion): string[] {

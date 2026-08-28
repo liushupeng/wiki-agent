@@ -36,6 +36,9 @@ async function main() {
         otlpProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL === 'grpc' ? 'grpc' : 'http',
         capturePromptArtifacts: process.env.TRACE_CAPTURE_PROMPTS === 'true',
         traceArtifactDir: process.env.TRACE_ARTIFACT_DIR ?? 'var/traces/artifacts',
+        captureRunArtifacts: process.env.TRACE_CAPTURE_RUN_ARTIFACTS === 'true',
+        runArtifactDir: process.env.TRACE_RUN_ARTIFACT_DIR ?? 'var/traces/run-artifacts',
+        buildId: process.env.WIKI_AGENT_BUILD_ID,
         autoExportFileTrace: process.env.TRACE_AUTO_EXPORT_FILE === 'true',
         approvalMode: getApprovalMode(),
         requestApproval: request => askToolApproval(rl, request)

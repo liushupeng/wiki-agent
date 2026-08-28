@@ -588,6 +588,16 @@ TRACE_ARTIFACT_DIR=var/traces/artifacts
 
 根据 Jaeger 中的 `path` 可在本地打开对应 artifact；根据 `sha256` 可校验内容未被修改。artifact 仅做基于字段名的脱敏，启用前应确认本地目录的访问权限与数据保留策略。
 
+为了把真实 `ask` 运行收割为 bad case，可另行启用粒度更小的 run artifact。它只保存本轮脱敏后的完整用户问题、最终回答、模型、构建身份和证据摘要：
+
+```env
+TRACE_CAPTURE_RUN_ARTIFACTS=true
+TRACE_RUN_ARTIFACT_DIR=var/traces/run-artifacts
+WIKI_AGENT_BUILD_ID=<git-sha-or-build-id>
+```
+
+默认关闭该能力。脱敏主要针对密钥类文本，不能保证删除姓名、业务内容等个人或团队信息；artifact 位于不入 Git 的 `var/`，仍需按敏感本地数据管理。
+
 要在运行时直接发送 trace（不写 JSONL），配置：
 
 ```env
@@ -601,6 +611,45 @@ HTTP 是默认协议；如使用 gRPC，设置 `OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 主要 span 为 `wiki_agent.run` → `wiki_agent.step` → `gen_ai.chat` / `tool.execute` → RAG 子 span。模型 token、缓存命中、工具状态、耗时和检索规模均作为对应 span 的 attributes；审批、assistant message 和 memory 压缩作为 span event。
 
 建议排查时先在根 run span 下查看失败或耗时最长的子 span，再沿父子关系定位具体模型调用、工具调用或 RAG 检索。
+
+### 在线健康度与 bad case 回放
+
+在线质量层不使用无金标 Trace 伪造准确率。`ops:summary` 只读取 file telemetry 的 JSONL，汇总运行 SLI 与风险代理指标：
+
+- 运行完成率、工具失败、token、总延迟；
+- RAG 缓存、预算、fallback、空检索和检索延迟；
+- 仅在实际使用 RAG 的 knowledge runs 中统计 `insufficient | partial | sufficient`；
+- 按 retrieval profile/variant 分组，并输出可下钻的 candidate Trace ID。
+
+```powershell
+npm run ops:summary -- -- --since-hours 24
+npm run ops:summary -- -- --since-hours 24 --fail-on-unhealthy
+```
+
+`evidence.state=sufficient` 只表示已检索库存满足通用结构要求，不证明最终答案正确；forced abstention 也可能是正确行为，因此默认只报告、不作为失败阈值。
+
+从真实运行进入回归集的流程为：
+
+```text
+ask Trace
+-> ops:summary 发现风险分布或具体 Trace
+-> trace:harvest 生成本地 candidate JSONL
+-> 人工确认问题、预期来源、事实与 TaskContract
+-> eval:verify 检查原始轨迹（不调用模型）
+-> eval:agent 在当前环境重新执行
+-> 固化到 evaluation/badcases 回归集
+```
+
+```powershell
+npm run trace:harvest -- -- --since-hours 24
+npm run trace:harvest -- -- --trace-id <traceId> --signals partial_evidence,fallback
+npm run eval:verify -- -- --trace <trace.jsonl> --question-id <id> --questions evaluation/badcases/questions.json --run-artifact <run-artifact.json>
+npm run eval:agent -- -- --retrieval-profile <profile> --variant raw-wiki --question-ids <id> evaluation/badcases/questions.json
+```
+
+`trace:harvest` 只写 `var/evals/candidates/`，不会自动改动版本控制题集。候选必须人工补金标后才能进入 `eval:verify` / `eval:agent`。题目的 `provenance` 会保留原 trace、模型、profile、variant、索引指纹和构建身份；重跑报告会列出当前环境与原环境的差异。身份一致只说明配置可比，不代表历史索引快照仍然存在。
+
+直接使用 `TELEMETRY_BACKEND=otlp` 时不会产生本地 JSONL，因此 `ops:summary` 和 `trace:harvest` 不可用；应在 OTLP 后端按同名 attributes 聚合。
 
 ## 检索优化
 

@@ -16,7 +16,7 @@
 
 ## 决策
 
-- 尚无决策页面。
+- [在线评估采用健康度监控与同题回放](decisions/online-evaluation-loop.md)：以 Trace 风险代理、bad case 收割和人工标注后的同题回放替代小流量平台。状态：active。
 
 ## 人物与组织
 

@@ -19,3 +19,10 @@
 - 更新：wiki/index.md
 - 来源：agent-runtime.md, hybrid-retrieval.md, evidence-policy.md
 - 说明：基于公开合成语料沉淀 Agentic RAG 的检索、证据、治理与评测闭环。
+
+## [2026-08-25] decision | 在线评估闭环
+- 输入：真实 ask Trace、运行 SLO、离线 TrajectoryVerifier 与 Agent E2E
+- 创建：wiki/decisions/online-evaluation-loop.md
+- 更新：wiki/index.md
+- 来源：docs/system-guide.md, docs/project-reference.md, src/agent.ts, scripts/observability/
+- 说明：确定采用“离线门禁 + 在线健康度 + bad case 同题回放”，不建设百分比小流量平台。

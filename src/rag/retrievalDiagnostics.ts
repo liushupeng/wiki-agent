@@ -1,4 +1,5 @@
 import { TraceAttributes } from '../trace/telemetry.js';
+import type { RetrievalIndexIdentity } from './retrievalPipeline.js';
 
 export type RetrievalTraceDocument = {
     source: string;
@@ -61,6 +62,19 @@ export function retrievalResultTraceAttributes(decision: RetrievalDecision): Tra
         'gen_ai.retrieval.documents': JSON.stringify(toTraceDocuments(decision.matches)),
         'wiki_agent.rag.match_count': decision.matches.length,
         'wiki_agent.rag.latency_ms': Math.round(decision.elapsedMs)
+    };
+}
+
+export function retrievalManagedResultTraceAttributes(
+    matches: RetrievalTraceDocument[],
+    elapsedMs: number,
+    identity?: RetrievalIndexIdentity
+): TraceAttributes {
+    return {
+        ...retrievalStageTraceAttributes(matches),
+        'wiki_agent.rag.match_count': matches.length,
+        'wiki_agent.rag.latency_ms': Math.round(elapsedMs),
+        ...(identity ? { 'wiki_agent.rag.index_identity': JSON.stringify(identity) } : {})
     };
 }
 

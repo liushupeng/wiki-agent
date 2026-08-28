@@ -25,6 +25,24 @@ export type PromptArtifactReference = {
     chars: number;
 };
 
+export type RunArtifactInput = {
+    traceId: string;
+    instruction: string;
+    finalAnswer: string;
+    model: string;
+    buildId?: string;
+    terminationReason: string;
+    finalAnswerAction?: string;
+    evidence: {
+        state: string;
+        count: number;
+        distinctSources: number;
+        citedCount: number;
+    };
+};
+
+export type RunArtifactReference = PromptArtifactReference;
+
 export async function writePromptArtifact(
     input: PromptArtifactInput,
     artifactDir = 'var/traces/artifacts'
@@ -46,6 +64,52 @@ export async function writePromptArtifact(
     const content = `${JSON.stringify(safePayload, null, 2)}\n`;
     const sha256 = createHash('sha256').update(content).digest('hex');
     const fileName = `prompt-${input.traceId}-${input.spanId}-${randomUUID()}.json`;
+    const absoluteDirectory = path.resolve(artifactDir);
+    const absolutePath = path.join(absoluteDirectory, fileName);
+    const temporaryPath = `${absolutePath}.tmp`;
+
+    await fs.mkdir(absoluteDirectory, { recursive: true });
+    try {
+        await fs.writeFile(temporaryPath, content, { encoding: 'utf-8', flag: 'wx' });
+        await fs.rename(temporaryPath, absolutePath);
+    } catch (error) {
+        await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+        throw error;
+    }
+
+    return {
+        path: path.posix.join(relativeDirectory.replace(/\\/g, '/'), fileName),
+        sha256,
+        chars: content.length
+    };
+}
+
+export async function writeRunArtifact(
+    input: RunArtifactInput,
+    artifactDir = 'var/traces/run-artifacts'
+): Promise<RunArtifactReference> {
+    const relativeDirectory = path.relative(process.cwd(), path.resolve(artifactDir)) || '.';
+    const safePayload = redactSensitiveValues({
+        schemaVersion: 1,
+        capturedAt: new Date().toISOString(),
+        traceId: input.traceId,
+        request: {
+            instruction: input.instruction
+        },
+        response: {
+            answer: input.finalAnswer,
+            terminationReason: input.terminationReason,
+            finalAnswerAction: input.finalAnswerAction
+        },
+        runtime: {
+            model: input.model,
+            buildId: input.buildId,
+            evidence: input.evidence
+        }
+    });
+    const content = `${JSON.stringify(safePayload, null, 2)}\n`;
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    const fileName = `run-${input.traceId}-${randomUUID()}.json`;
     const absoluteDirectory = path.resolve(artifactDir);
     const absolutePath = path.join(absoluteDirectory, fileName);
     const temporaryPath = `${absolutePath}.tmp`;

@@ -10,15 +10,15 @@ import { createTelemetry, preview, runWithSpan, SpanHandle, TerminationReason } 
 import { ToolExecutor } from './tools/executor.js';
 import { estimateMessagesSize, estimateTextSize, estimateToolSchemasSize } from './utils/tokenBudget.js';
 import { parseJsonSafely } from './utils/json.js';
-import { redactSensitiveText, redactSensitiveValues, writePromptArtifact } from './trace/artifacts.js';
+import { redactSensitiveText, redactSensitiveValues, writePromptArtifact, writeRunArtifact } from './trace/artifacts.js';
 import { exportTrace } from './trace/export.js';
 import { buildToolObservation } from './context/toolObservation.js';
 import { EvidenceLedger } from './context/evidenceSufficiency.js';
-import { RuntimeEvidencePolicy } from './context/runtimeEvidencePolicy.js';
+import { RuntimeEvidencePolicy, type FinalAnswerPolicyResult } from './context/runtimeEvidencePolicy.js';
 
 type StepResult =
     | { type: 'continue' }
-    | { type: 'final'; content: string };
+    | { type: 'final'; content: string; policy: FinalAnswerPolicyResult };
 
 const LOCAL_JAEGER_OTLP_HTTP_ENDPOINT = 'http://127.0.0.1:4318/v1/traces';
 const AUTO_TRACE_EXPORT_TIMEOUT_MILLIS = 3_000;
@@ -97,11 +97,17 @@ export class WikiAgent implements IAgent {
             otlpProtocol: this.config.otlpProtocol
         });
         const runSpan = await telemetry.startSpan('wiki_agent.run', {
-            attributes: { 'wiki_agent.instruction': preview(redactSensitiveText(userInstruction)) }
+            attributes: {
+                'wiki_agent.instruction': preview(redactSensitiveText(userInstruction)),
+                'wiki_agent.instruction.sha256': createHash('sha256').update(userInstruction).digest('hex'),
+                'gen_ai.request.model': this.config.modelName,
+                ...(this.config.buildId ? { 'wiki_agent.build_id': this.config.buildId } : {})
+            }
         });
 
         let stepCount = 0;
         let finalOutput = "";
+        let finalAnswerPolicy: FinalAnswerPolicyResult | undefined;
         let terminationReason: TerminationReason = "completed";
 
         try {
@@ -130,6 +136,7 @@ export class WikiAgent implements IAgent {
                         );
                         if (stepResult.type === 'final') {
                             finalOutput = stepResult.content;
+                            finalAnswerPolicy = stepResult.policy;
                             console.log(Color.green(`\n✅ [任务完成] Agent 已在 Step ${stepCount} 生成最终回答，任务正常结束。`));
                             break;
                         }
@@ -142,14 +149,41 @@ export class WikiAgent implements IAgent {
             });
         } finally {
             const evidenceSnapshot = this.evidencePolicy.snapshot(this.evidenceLedger.assess());
+            const runArtifact = await this.captureRunArtifact(
+                runSpan,
+                userInstruction,
+                finalOutput,
+                terminationReason,
+                finalAnswerPolicy,
+                evidenceSnapshot
+            );
             await runSpan.end({
                 status: terminationReason === 'completed' ? 'ok' : 'error',
                 attributes: {
                     'wiki_agent.termination_reason': terminationReason,
+                    'wiki_agent.step_count': stepCount,
                     'wiki_agent.rag.calls_used': evidenceSnapshot.ragCallsUsed,
                     'wiki_agent.rag.budget_exhausted': evidenceSnapshot.ragBudgetExhausted,
                     'evidence.state': evidenceSnapshot.inventoryState,
-                    'evidence.count': evidenceSnapshot.evidenceCount
+                    'evidence.count': evidenceSnapshot.evidenceCount,
+                    'evidence.distinct_sources': evidenceSnapshot.distinctSources,
+                    'evidence.cited_count': evidenceSnapshot.citedCount,
+                    'evidence.truncated_count': evidenceSnapshot.truncatedCount,
+                    'evidence.conflicted_count': evidenceSnapshot.conflictedCount,
+                    'evidence.low_authority_count': evidenceSnapshot.lowAuthorityCount,
+                    ...(evidenceSnapshot.ragCallsRemaining === undefined
+                        ? {}
+                        : { 'wiki_agent.rag.calls_remaining': evidenceSnapshot.ragCallsRemaining }),
+                    ...(finalAnswerPolicy ? {
+                        'wiki_agent.final_answer.action': finalAnswerPolicy.action,
+                        'wiki_agent.final_answer.reason': finalAnswerPolicy.reason
+                    } : {}),
+                    ...(runArtifact ? {
+                        'wiki_agent.run_artifact.path': runArtifact.path,
+                        'wiki_agent.run_artifact.sha256': runArtifact.sha256,
+                        'wiki_agent.run_artifact.chars': runArtifact.chars,
+                        'wiki_agent.run_artifact.redacted': true
+                    } : {})
                 }
             });
             await telemetry.shutdown();
@@ -174,6 +208,39 @@ export class WikiAgent implements IAgent {
         }
     }
 
+    private async captureRunArtifact(
+        runSpan: SpanHandle,
+        instruction: string,
+        finalAnswer: string,
+        terminationReason: TerminationReason,
+        finalAnswerPolicy: FinalAnswerPolicyResult | undefined,
+        evidence: ReturnType<RuntimeEvidencePolicy['snapshot']>
+    ) {
+        if (!this.config.captureRunArtifacts) return undefined;
+        try {
+            return await writeRunArtifact({
+                traceId: runSpan.context.traceId,
+                instruction,
+                finalAnswer,
+                model: this.config.modelName,
+                buildId: this.config.buildId,
+                terminationReason,
+                finalAnswerAction: finalAnswerPolicy?.action,
+                evidence: {
+                    state: evidence.inventoryState,
+                    count: evidence.evidenceCount,
+                    distinctSources: evidence.distinctSources,
+                    citedCount: evidence.citedCount
+                }
+            }, this.config.runArtifactDir);
+        } catch (error: any) {
+            await runSpan.addEvent('run_artifact.capture_failed', {
+                'error.message': preview(error.message, 512)
+            });
+            return undefined;
+        }
+    }
+
     private async runStep(
         step: number,
         runSpan: SpanHandle,
@@ -187,8 +254,9 @@ export class WikiAgent implements IAgent {
         try {
             const aiMessage = await runWithSpan(stepSpan, () => this.callModel(step, stepSpan));
             let assistantText = this.getAssistantText(aiMessage);
+            let finalDecision: FinalAnswerPolicyResult | undefined;
             if (!aiMessage.tool_calls?.length) {
-                const finalDecision = this.evidencePolicy.finalizeAnswer(assistantText, this.evidenceLedger.assess());
+                finalDecision = this.evidencePolicy.finalizeAnswer(assistantText, this.evidenceLedger.assess());
                 assistantText = finalDecision.content;
                 aiMessage.content = assistantText;
                 onTextChunk(assistantText);
@@ -197,7 +265,12 @@ export class WikiAgent implements IAgent {
                     'wiki_agent.final_answer.reason': finalDecision.reason,
                     'wiki_agent.rag.calls_used': finalDecision.snapshot.ragCallsUsed,
                     'evidence.state': finalDecision.snapshot.inventoryState,
-                    'evidence.count': finalDecision.snapshot.evidenceCount
+                    'evidence.count': finalDecision.snapshot.evidenceCount,
+                    'evidence.distinct_sources': finalDecision.snapshot.distinctSources,
+                    'evidence.cited_count': finalDecision.snapshot.citedCount,
+                    'evidence.truncated_count': finalDecision.snapshot.truncatedCount,
+                    'evidence.conflicted_count': finalDecision.snapshot.conflictedCount,
+                    'evidence.low_authority_count': finalDecision.snapshot.lowAuthorityCount
                 });
                 if (finalDecision.action === 'forced-abstention') {
                     console.log(Color.yellow('\n⚠️ [证据闸门] 检索未产生可引用证据，最终回答已降级为明确拒答。'));
@@ -221,7 +294,7 @@ export class WikiAgent implements IAgent {
             }
 
             // 终结条件：大模型没有输出任何 tool_calls，说明它已经通过之前的工具回执完成任务。
-            return { type: 'final', content: assistantText };
+            return { type: 'final', content: assistantText, policy: finalDecision! };
         } finally {
             await stepSpan.end();
         }
@@ -468,6 +541,10 @@ export class WikiAgent implements IAgent {
                 'evidence.state': assessment.state,
                 'evidence.count': assessment.evidenceCount,
                 'evidence.distinct_sources': assessment.distinctSources,
+                'evidence.cited_count': assessment.citedCount,
+                'evidence.truncated_count': assessment.truncatedCount,
+                'evidence.conflicted_count': assessment.conflictedCount,
+                'evidence.low_authority_count': assessment.lowAuthorityCount,
                 'evidence.reasons': JSON.stringify(assessment.reasons)
             });
         }
