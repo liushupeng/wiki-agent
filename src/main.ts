@@ -26,7 +26,7 @@ async function main() {
 
     // 初始化 Agent 运行时配置
     const config: AgentConfig = {
-        modelName: process.env.MODEL_NAME ?? "deepseek-v4-flash",
+        modelName: process.env.MODEL_NAME ?? "deepseek-flash",
         temperature: 0.1,
         maxLoopSteps: Number(process.env.MAX_LOOP_STEPS ?? 20),
         maxRagCalls: readPositiveEnvironmentInteger('MAX_RAG_CALLS', 8),

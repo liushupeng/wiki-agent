@@ -50,7 +50,7 @@
 - 日期：2026-08-21
 - 代码版本：公开评测快照对应版本
 - 题集 SHA-256：`8a7bf42b4e09d9b57220010700aebad01bfb9676ea72cd952b927de02eac9f22`
-- 模型：`deepseek-v4-flash`
+- 模型：`deepseek-flash`
 - 检索配置：`hybrid-bge-m3-metadata-source-aggregate-v1`
 - TaskContract：10/12（83.3%）
 - 人工 rubric：12/12

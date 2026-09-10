@@ -99,7 +99,7 @@ async function main(): Promise<void> {
         selectedQuestionIds: selectedQuestions.map(question => question.id),
         modes: experimentModes,
         retrievalProfile: retrievalProfile.id,
-        model: process.env.MODEL_NAME ?? 'deepseek-v4-flash',
+        model: process.env.MODEL_NAME ?? 'deepseek-flash',
         maxSteps,
         maxOutputTokens,
         gitCommit,
