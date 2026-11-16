@@ -277,6 +277,12 @@ models/              本地模型缓存，不进入 Git
 var/                 索引、Trace、评测原始产物，不进入 Git
 ```
 
+## 姊妹仓库
+
+本仓库是 **TypeScript 主实现**：混合检索、证据治理、可观测与离线评测以这里为准。
+
+[wiki-graph](https://github.com/liushupeng/wiki-graph) 为独立的 **Python / LangGraph** 对照仓，复用同一套产品规则（Agent loop、RAG 预算、证据闸门、评测 fixture），便于对接 LangChain 技术栈；**不是**对本仓库的完整移植或替代。
+
 ## 文档导航
 
 - [公开评测摘要](docs/evaluation/SUMMARY.md)：聚合指标、方法、失败类型与边界
