@@ -24,5 +24,5 @@
 - 输入：真实 ask Trace、运行 SLO、离线 TrajectoryVerifier 与 Agent E2E
 - 创建：wiki/decisions/online-evaluation-loop.md
 - 更新：wiki/index.md
-- 来源：docs/system-guide.md, docs/project-reference.md, src/agent.ts, scripts/observability/
+- 来源：docs/system-guide.md, docs/project-reference.md, src/harness/, scripts/observability/
 - 说明：确定采用“离线门禁 + 在线健康度 + bad case 同题回放”，不建设百分比小流量平台。

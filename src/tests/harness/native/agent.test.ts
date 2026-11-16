@@ -4,10 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import OpenAI from 'openai';
-import { WikiAgent } from '../agent.js';
-import type { TraceExportOptions, TraceExportReport } from '../trace/export.js';
-import { AgentConfig, IAgentTool, IMemory, IToolRegistry, ToolResult } from '../types.js';
-import { SafeTool } from './helpers.js';
+import { NativeAgent } from '../../../harness/native/agent.js';
+import type { TraceExportOptions, TraceExportReport } from '../../../trace/export.js';
+import { AgentConfig, IAgentTool, IMemory, IToolRegistry, ToolResult } from '../../../types.js';
+import { SafeTool } from '../../helpers.js';
 
 type ChatChunk = {
     choices: Array<{
@@ -85,7 +85,7 @@ function createAgent(options: {
     runArtifactDir?: string;
     autoExportFileTrace?: boolean;
     traceExporter?: (options: TraceExportOptions) => Promise<TraceExportReport>;
-}): WikiAgent {
+}): NativeAgent {
     process.env.API_KEY = process.env.API_KEY ?? 'test-api-key';
 
     const config: AgentConfig = {
@@ -102,7 +102,7 @@ function createAgent(options: {
         approvalMode: 'auto'
     };
 
-    return new WikiAgent(
+    return new NativeAgent(
         config,
         options.memory ?? new TestMemory(),
         options.registry ?? new TestRegistry(),
@@ -119,7 +119,7 @@ function createAgent(options: {
     );
 }
 
-function attachFakeClient(agent: WikiAgent, streams: ChatChunk[][], requests: unknown[] = []): void {
+function attachFakeClient(agent: NativeAgent, streams: ChatChunk[][], requests: unknown[] = []): void {
     let callIndex = 0;
     const fakeClient = {
         chat: {
@@ -149,7 +149,7 @@ async function readTraceEvents(traceDir: string): Promise<Array<Record<string, u
     return content.trim().split('\n').map(line => JSON.parse(line));
 }
 
-test('WikiAgent.run returns final streamed content without tool calls', async () => {
+test('NativeAgent.run returns final streamed content without tool calls', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-'));
     const memory = new TestMemory();
     const agent = createAgent({ traceDir, memory });
@@ -175,7 +175,7 @@ test('WikiAgent.run returns final streamed content without tool calls', async ()
     assert.equal((runEnd?.attributes as Record<string, unknown>)?.['wiki_agent.run_artifact.path'], undefined);
 });
 
-test('WikiAgent logs an explicit completion marker after the final step', async () => {
+test('NativeAgent logs an explicit completion marker after the final step', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-completion-log-'));
     const agent = createAgent({ traceDir, autoExportFileTrace: false });
     attachFakeClient(agent, [[{ choices: [{ delta: { content: 'done' } }] }]]);
@@ -191,7 +191,7 @@ test('WikiAgent logs an explicit completion marker after the final step', async 
     assert.match(logs.at(-1) ?? '', /任务完成.*Step 1/);
 });
 
-test('WikiAgent records streamed cache usage on the model span', async () => {
+test('NativeAgent records streamed cache usage on the model span', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-usage-'));
     const agent = createAgent({ traceDir });
     attachFakeClient(agent, [[
@@ -219,7 +219,7 @@ test('WikiAgent records streamed cache usage on the model span', async () => {
     assert.equal(attributes['gen_ai.usage.cache_miss_tokens'], 25);
 });
 
-test('WikiAgent links an optional prompt artifact from its model span', async () => {
+test('NativeAgent links an optional prompt artifact from its model span', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-artifact-trace-'));
     const artifactDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-artifact-'));
     const agent = createAgent({ traceDir, capturePromptArtifacts: true, traceArtifactDir: artifactDir });
@@ -239,7 +239,7 @@ test('WikiAgent links an optional prompt artifact from its model span', async ()
     assert.equal(attributes['wiki_agent.prompt_artifact.redacted'], true);
 });
 
-test('WikiAgent links an optional run artifact from its root span', async () => {
+test('NativeAgent links an optional run artifact from its root span', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-run-artifact-trace-'));
     const artifactDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-run-artifact-'));
     const agent = createAgent({
@@ -268,7 +268,7 @@ test('WikiAgent links an optional run artifact from its root span', async () => 
     assert.equal(attributes['wiki_agent.run_artifact.redacted'], true);
 });
 
-test('WikiAgent automatically exports its completed file trace to local Jaeger', async () => {
+test('NativeAgent automatically exports its completed file trace to local Jaeger', async () => {
     let receivedOptions: TraceExportOptions | undefined;
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-auto-export-'));
     const agent = createAgent({
@@ -297,7 +297,7 @@ test('WikiAgent automatically exports its completed file trace to local Jaeger',
     assert.match(await fs.readFile(receivedOptions!.inputPath, 'utf-8'), /"type":"span_end"/);
 });
 
-test('WikiAgent.run executes tool calls and continues replanning', async () => {
+test('NativeAgent.run executes tool calls and continues replanning', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-'));
     const memory = new TestMemory();
     const registry = new TestRegistry();
@@ -352,7 +352,7 @@ test('WikiAgent.run executes tool calls and continues replanning', async () => {
     assert.equal(events.filter(event => event.type === 'span_end').length > 0, true);
 });
 
-test('WikiAgent hides RAG tools and reports evidence budget after the runtime limit', async () => {
+test('NativeAgent hides RAG tools and reports evidence budget after the runtime limit', async () => {
     class RagSafeTool extends SafeTool {
         readonly name = 'search_notes';
         readonly permission = 'rag' as const;
@@ -399,7 +399,7 @@ test('WikiAgent hides RAG tools and reports evidence budget after the runtime li
     assert.match(parsedToolMessage.metadata?.runtimeEvidencePolicy ?? '', /rag_calls_remaining=0/);
 });
 
-test('WikiAgent marks evidence truncated when the model receives a compacted RAG observation', async () => {
+test('NativeAgent marks evidence truncated when the model receives a compacted RAG observation', async () => {
     class RagSafeTool extends SafeTool {
         readonly name = 'search_notes';
         readonly permission = 'rag' as const;
@@ -451,7 +451,7 @@ test('WikiAgent marks evidence truncated when the model receives a compacted RAG
     }
 });
 
-test('WikiAgent replaces an unsupported final claim after an empty RAG search', async () => {
+test('NativeAgent replaces an unsupported final claim after an empty RAG search', async () => {
     class RagSafeTool extends SafeTool {
         readonly name = 'search_notes';
         readonly permission = 'rag' as const;
@@ -499,7 +499,7 @@ test('WikiAgent replaces an unsupported final claim after an empty RAG search', 
     assert.equal(attributes['evidence.distinct_sources'], 0);
 });
 
-test('WikiAgent records bounded tool error messages in failed tool spans', async () => {
+test('NativeAgent records bounded tool error messages in failed tool spans', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-error-'));
     const registry = new TestRegistry();
     registry.nextResult = {
@@ -534,7 +534,7 @@ test('WikiAgent records bounded tool error messages in failed tool spans', async
     assert.equal(attributes['error.message.truncated'], false);
 });
 
-test('WikiAgent.run stops before model calls when maxLoopSteps is exceeded', async () => {
+test('NativeAgent.run stops before model calls when maxLoopSteps is exceeded', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-agent-agent-'));
     const agent = createAgent({ traceDir, maxLoopSteps: 0 });
     let modelCalls = 0;

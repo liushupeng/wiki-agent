@@ -1,20 +1,26 @@
-// src/agent.ts
+// src/harness/native/agent.ts
 import OpenAI from 'openai';
 import { createHash } from 'node:crypto';
-import './env.js';
-import { IAgent, IMemory, IToolRegistry, AgentConfig, ToolResult } from './types.js';
-import { Color } from './cli/colors.js';
-import { PermissionPolicy } from './permissions.js';
-import { appendToolCallDeltas, buildSkippedToolResult, buildToolCalls, FunctionToolCall, isFunctionToolCall, ToolExecutionResult } from './protocol/toolCalls.js';
-import { createTelemetry, preview, runWithSpan, SpanHandle, TerminationReason } from './trace/telemetry.js';
-import { ToolExecutor } from './tools/executor.js';
-import { estimateMessagesSize, estimateTextSize, estimateToolSchemasSize } from './utils/tokenBudget.js';
-import { parseJsonSafely } from './utils/json.js';
-import { redactSensitiveText, redactSensitiveValues, writePromptArtifact, writeRunArtifact } from './trace/artifacts.js';
-import { exportTrace } from './trace/export.js';
-import { buildToolObservation } from './context/toolObservation.js';
-import { EvidenceLedger } from './context/evidenceSufficiency.js';
-import { RuntimeEvidencePolicy, type FinalAnswerPolicyResult } from './context/runtimeEvidencePolicy.js';
+import '../../env.js';
+import { IAgent, IMemory, IToolRegistry, AgentConfig, ToolResult } from '../../types.js';
+import { Color } from '../../cli/colors.js';
+import { PermissionPolicy } from '../../permissions.js';
+import { appendToolCallDeltas, buildSkippedToolResult, buildToolCalls, FunctionToolCall, isFunctionToolCall, ToolExecutionResult } from '../../protocol/toolCalls.js';
+import { createTelemetry, preview, runWithSpan, SpanHandle, TerminationReason } from '../../trace/telemetry.js';
+import { ToolExecutor } from '../../tools/executor.js';
+import { estimateMessagesSize, estimateTextSize, estimateToolSchemasSize } from '../../utils/tokenBudget.js';
+import { parseJsonSafely } from '../../utils/json.js';
+import {
+    buildToolArgumentTraceAttributes,
+    redactSensitiveText,
+    redactSensitiveValues,
+    writePromptArtifact,
+    writeRunArtifact
+} from '../../trace/artifacts.js';
+import { exportTrace } from '../../trace/export.js';
+import { buildToolObservation } from '../../context/toolObservation.js';
+import { EvidenceLedger } from '../../context/evidenceSufficiency.js';
+import { RuntimeEvidencePolicy, type FinalAnswerPolicyResult } from '../../context/runtimeEvidencePolicy.js';
 
 type StepResult =
     | { type: 'continue' }
@@ -26,7 +32,7 @@ const AUTO_TRACE_EXPORT_TIMEOUT_MILLIS = 3_000;
 /**
  * 核心全自主 Planning 大脑实现
  */
-export class WikiAgent implements IAgent {
+export class NativeAgent implements IAgent {
     private client: OpenAI;
     private toolExecutor: ToolExecutor;
     private readonly evidencePolicy: RuntimeEvidencePolicy;
@@ -587,18 +593,6 @@ function buildToolErrorTraceAttributes(error: string | undefined): Record<string
     return {
         'error.message': truncated ? error.slice(0, MAX_TOOL_ERROR_MESSAGE_CHARS) : error,
         'error.message.truncated': truncated
-    };
-}
-
-function buildToolArgumentTraceAttributes(rawArguments: string): Record<string, string | boolean> {
-    const parsed = parseJsonSafely(rawArguments);
-    const safeValue = parsed.ok ? redactSensitiveValues(parsed.value) : '[invalid JSON arguments]';
-    const serialized = JSON.stringify(safeValue);
-    const maxLength = 512;
-    return {
-        'tool.arguments.preview': serialized.length > maxLength ? `${serialized.slice(0, maxLength)}...` : serialized,
-        'tool.arguments.sha256': createHash('sha256').update(rawArguments).digest('hex'),
-        'tool.arguments.truncated': serialized.length > maxLength
     };
 }
 

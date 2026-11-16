@@ -6,7 +6,7 @@ import { askToolApproval } from './cli/approvalPrompt.js';
 import { getApprovalMode } from './config.js';
 import { MemoryManager } from './context/memory.js';
 import type { MemoryProposalStatus } from './context/memoryProposal.js';
-import { WikiAgent } from './agent.js';
+import { createHarnessAgent, harnessLabel, parseHarnessFromArgv } from './harness/index.js';
 import { registerConfiguredMcpTools } from './mcp/register.js';
 import { WIKI_AGENT_SYSTEM_PROMPT } from './prompts/systemPrompt.js';
 import { buildSkillManifestPrompt, loadSkillManifests } from './skills.js';
@@ -17,12 +17,15 @@ import { parsePositiveInteger } from './utils/number.js';
 import { loadRetrievalProfilesConfig, resolveRuntimeRetrievalSelection } from './rag/retrievalProfiles.js';
 
 async function main() {
+    const { harness, argv } = parseHarnessFromArgv(process.argv.slice(2));
+
     console.log("=================================================");
     console.log("🚀 wiki-agent");
+    console.log(`🧩 [Harness] ${harnessLabel(harness)}`);
     console.log("=================================================\n");
 
     const rl = readline.createInterface({ input, output });
-    const runtimeArguments = parseRuntimeArguments(process.argv.slice(2));
+    const runtimeArguments = parseRuntimeArguments(argv);
 
     // 初始化 Agent 运行时配置
     const config: AgentConfig = {
@@ -80,7 +83,7 @@ async function main() {
     }
     registry.setSchemaFilter(tool => toolExposureController.shouldExpose(tool));
 
-    const agent = new WikiAgent(config, memory, registry);
+    const agent = createHarnessAgent(harness, config, memory, registry);
 
     try {
         // 单次运行模式: npm run ask -- "检索我的 Agent 笔记"
@@ -101,12 +104,19 @@ async function main() {
             if (handleLongTermMemoryCommand(instruction, memory)) continue;
 
             toolExposureController.resetToCore();
-            await agent.run(instruction, chunk => process.stdout.write(chunk));
+            try {
+                await agent.run(instruction, chunk => process.stdout.write(chunk));
+            } catch (error: any) {
+                console.log(`\n❌ [Agent 失败] ${error?.message ?? error}`);
+            }
             process.stdout.write('\n');
         }
     } finally {
         rl.close();
         await mcpRegistration.close();
+        if (harness === 'pi' && 'dispose' in agent && typeof agent.dispose === 'function') {
+            await agent.dispose();
+        }
         memory.close();
     }
 }

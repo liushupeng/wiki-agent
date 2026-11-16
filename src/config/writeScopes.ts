@@ -72,6 +72,7 @@ export async function resolveWriteScopePath(
 
     const target = path.resolve(realScopeRoot, filename);
     assertPathInside(realScopeRoot, target, 'target path');
+    await assertResolvedPathInsideScope(realScopeRoot, target);
 
     const targetDirectory = path.dirname(target);
     await fs.mkdir(targetDirectory, { recursive: true });
@@ -135,5 +136,38 @@ function assertPathInside(root: string, target: string, label: string): void {
     const relative = path.relative(root, target);
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
         throw new Error(`${label} is outside the workspace boundary`);
+    }
+}
+
+/** 逐段解析已存在路径上的符号链接，防止 junction/symlink 把写入锚到 scope 外。 */
+async function assertResolvedPathInsideScope(scopeRoot: string, target: string): Promise<void> {
+    const relative = path.relative(scopeRoot, target);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('target path is outside the workspace boundary');
+    }
+
+    const parts = relative.split(path.sep).filter(part => part.length > 0 && part !== '.');
+    let cursor = scopeRoot;
+    for (const part of parts) {
+        const next = path.join(cursor, part);
+        let stat;
+        try {
+            stat = await fs.lstat(next);
+        } catch (error: any) {
+            if (error?.code === 'ENOENT') return;
+            throw error;
+        }
+        if (stat.isSymbolicLink()) {
+            let real: string;
+            try {
+                real = await fs.realpath(next);
+            } catch {
+                throw new Error('target path is outside the workspace boundary');
+            }
+            assertPathInside(scopeRoot, real, 'target path');
+            cursor = real;
+            continue;
+        }
+        cursor = next;
     }
 }

@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { limitText } from '../limits.js';
@@ -23,6 +23,42 @@ function execInWorkspace(command: string, timeoutMs: number): Promise<{ stdout: 
                 error: error?.message
             });
         });
+    });
+}
+
+function npmExecutable(): string {
+    return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+function npmScriptArgs(script: 'test' | 'build' | 'check:config'): string[] {
+    return script === 'test' ? ['test'] : ['run', script];
+}
+
+function execNpmScriptInWorkspace(
+    script: 'test' | 'build' | 'check:config',
+    timeoutMs: number
+): Promise<{ stdout: string; stderr: string; code?: string | number; error?: string }> {
+    return new Promise(resolve => {
+        execFile(
+            npmExecutable(),
+            npmScriptArgs(script),
+            {
+                cwd: getWorkspaceRoot(),
+                timeout: timeoutMs,
+                maxBuffer: Number(process.env.SHELL_MAX_BUFFER_BYTES ?? 1024 * 1024),
+                // Windows 的 npm.cmd 需要 shell，否则 execFile 会 EINVAL
+                ...(process.platform === 'win32' ? { shell: true } : {})
+            },
+            (error, stdout, stderr) => {
+                const code = error?.code;
+                resolve({
+                    stdout,
+                    stderr,
+                    ...(code === undefined || code === null ? {} : { code }),
+                    error: error?.message
+                });
+            }
+        );
     });
 }
 
@@ -199,7 +235,7 @@ export class RunTestsTool extends BaseAgentTool {
         const script = args.script ?? 'test';
         const command = script === 'test' ? 'npm test' : `npm run ${script}`;
         const timeoutMs = Math.min(args.timeoutMs ?? 30000, Number(process.env.RUN_TESTS_MAX_TIMEOUT_MS ?? 120000));
-        const result = await execInWorkspace(command, timeoutMs);
+        const result = await execNpmScriptInWorkspace(script, timeoutMs);
         const stdout = limitText(result.stdout.trim());
         const stderr = limitText(result.stderr.trim());
 

@@ -42,7 +42,7 @@ flowchart TB
     user["CLI / User / Eval Runner"]
 
     subgraph runtime["Online Runtime"]
-        agent["WikiAgent Loop<br/>plan → tool → replan → answer"]
+        agent["Harness Agent Loop<br/>plan → tool → replan → answer"]
         model["OpenAI-compatible LLM"]
         memory["Memory<br/>Short / ContextSnapshot / Long"]
         exposure["Tool Registry + Exposure Controller"]
@@ -106,7 +106,7 @@ flowchart TB
 
 主要模块：
 
-- `src/agent.ts`：LLM 驱动的规划—工具—回答循环
+- **Harness（可插拔运行时）**：`src/harness/native/` 内置 loop；`src/harness/pi/` 接入 [Pi](https://pi.dev/)（Phase 3：JSONL v2 trace + `eval:agent` 支持 `HARNESS=pi`；wiki 工具、证据闸门与 RAG 预算耗尽后动态藏工具与 native 对齐，见 `pi/evidenceExtension.ts`）。默认 `native`；`npm run ask:pi` 或 `--harness pi`。可选 `PI_KEEP_SESSION=true` 保留 Pi 多轮会话（默认每轮重建 session）。端到端调用模型前建议 `npm run check:llm` 通过。
 - `src/context/`：上下文快照、EvidenceLedger、证据充分性与运行时策略
 - `src/rag/`：索引、Hybrid Retrieval、Retriever 复用和 KnowledgeCatalog
 - `src/tools/`：统一工具接口、权限和执行器

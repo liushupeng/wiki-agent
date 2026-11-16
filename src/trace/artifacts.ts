@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { parseJsonSafely } from '../utils/json.js';
 
 const SENSITIVE_KEY_PATTERN = /api[-_]?key|authorization|cookie|password|secret|token/i;
 const SENSITIVE_TEXT_PATTERNS: Array<[RegExp, string]> = [
@@ -144,4 +145,19 @@ export function redactSensitiveText(value: string): string {
         (text, [pattern, replacement]) => text.replace(pattern, replacement),
         value
     );
+}
+
+const TOOL_ARGUMENT_PREVIEW_MAX_CHARS = 512;
+
+export function buildToolArgumentTraceAttributes(rawArguments: string): Record<string, string | boolean> {
+    const parsed = parseJsonSafely(rawArguments);
+    const safeValue = parsed.ok ? redactSensitiveValues(parsed.value) : '[invalid JSON arguments]';
+    const serialized = JSON.stringify(safeValue);
+    return {
+        'tool.arguments.preview': serialized.length > TOOL_ARGUMENT_PREVIEW_MAX_CHARS
+            ? `${serialized.slice(0, TOOL_ARGUMENT_PREVIEW_MAX_CHARS)}...`
+            : serialized,
+        'tool.arguments.sha256': createHash('sha256').update(rawArguments).digest('hex'),
+        'tool.arguments.truncated': serialized.length > TOOL_ARGUMENT_PREVIEW_MAX_CHARS
+    };
 }

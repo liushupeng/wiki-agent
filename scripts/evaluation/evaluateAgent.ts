@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import '../../src/env.js';
-import { WikiAgent } from '../../src/agent.js';
-import { AgentConfig } from '../../src/types.js';
+import { createHarnessAgent, resolveHarnessFromEnv, harnessLabel } from '../../src/harness/index.js';
+import type { AgentConfig, IAgent } from '../../src/types.js';
 import { MemoryManager } from '../../src/context/memory.js';
 import { registerConfiguredMcpTools } from '../../src/mcp/register.js';
 import { WIKI_AGENT_SYSTEM_PROMPT } from '../../src/prompts/systemPrompt.js';
@@ -184,8 +184,10 @@ async function main(): Promise<void> {
                 const memory = new MemoryManager(systemPrompt, { memoryDirectory: path.join(attemptDirectory, 'memory') });
                 const effectiveMaxSteps = Math.min(maxSteps, question.contract?.trajectory?.maxSteps ?? maxSteps);
                 newQuestionsExecuted += 1;
+                let agent: IAgent | undefined;
                 try {
-                    const agent = new WikiAgent({
+                    const harness = resolveHarnessFromEnv();
+                    agent = createHarnessAgent(harness, {
                         modelName: manifest.model, temperature: 0.1,
                         maxLoopSteps: effectiveMaxSteps,
                         maxRagCalls: question.contract?.tools?.maxRagCalls,
@@ -236,6 +238,9 @@ async function main(): Promise<void> {
                     throw error;
                 } finally {
                     memory.close();
+                    if (agent && 'dispose' in agent && typeof agent.dispose === 'function') {
+                        await agent.dispose();
+                    }
                 }
               }
             } finally {

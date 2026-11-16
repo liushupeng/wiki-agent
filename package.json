@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "ask": "tsx src/main.ts",
+    "ask:native": "tsx src/main.ts --harness native",
+    "ask:pi": "tsx src/main.ts --harness pi",
     "check:config": "tsx scripts/checkConfig.ts",
     "check:llm": "tsx scripts/checkLlm.ts",
     "check:mcp": "tsx scripts/mcp/checkMcpServers.ts",
@@ -33,6 +35,7 @@
   "author": "LiuShuPeng",
   "license": "MIT",
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.87.1",
     "@huggingface/transformers": "^4.2.0",
     "@lancedb/lancedb": "^0.37.1",
     "@modelcontextprotocol/sdk": "^1.29.0",

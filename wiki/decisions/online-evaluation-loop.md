@@ -6,7 +6,7 @@ updated: 2026-08-25
 sources:
   - docs/system-guide.md
   - docs/project-reference.md
-  - src/agent.ts
+  - src/harness/index.ts
   - scripts/observability/summarizeOperations.ts
   - scripts/observability/harvestBadCases.ts
 tags:

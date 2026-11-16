@@ -1,5 +1,6 @@
 import dns from 'node:dns/promises';
 import '../src/env.js';
+import { normalizeOpenAiCompatibleBaseUrl } from '../src/harness/pi/openAiBaseUrl.js';
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 
@@ -57,6 +58,9 @@ async function main() {
         if (error.name === 'AbortError') {
             fail(`HTTPS request timed out after ${elapsedMs} ms. Check the corporate network, proxy, or provider availability.`);
         }
+        if (isTlsCertificateError(error)) {
+            printTlsCertificateRemediation();
+        }
         fail(`HTTPS request failed after ${elapsedMs} ms: ${describeNetworkError(error)}`);
     } finally {
         clearTimeout(timeout);
@@ -80,7 +84,7 @@ function resolveProbeConfig(env = process.env): ProbeConfig {
 
 function buildModelsEndpoint(baseUrl: string): URL {
     try {
-        return new URL('models', `${baseUrl.replace(/\/+$/, '')}/`);
+        return new URL('models', `${normalizeOpenAiCompatibleBaseUrl(baseUrl)}/`);
     } catch {
         throw new Error(`invalid API base URL: ${baseUrl}`);
     }
@@ -95,6 +99,28 @@ function describeNetworkError(error: any): string {
     if (!cause) return error.message;
     const code = cause.code ? `${cause.code}: ` : '';
     return `${error.message} (${code}${cause.message ?? 'unknown network error'})`;
+}
+
+function isTlsCertificateError(error: unknown): boolean {
+    const parts = [error, (error as { cause?: unknown })?.cause];
+    const text = parts.map(value => {
+        if (!value || typeof value !== 'object') return String(value ?? '');
+        const record = value as { code?: string; message?: string };
+        return `${record.code ?? ''} ${record.message ?? ''}`;
+    }).join(' ');
+    return /UNABLE_TO_GET_ISSUER_CERT|SELF_SIGNED_CERT|CERT_|unable to verify the first certificate/i.test(text);
+}
+
+function printTlsCertificateRemediation(): void {
+    console.error([
+        '',
+        'TLS 提示：Node 不信任当前 HTTPS 证书链（常见于 Zscaler 等公司 HTTPS 代理）。',
+        '修复方式（任选其一）：',
+        '  1. 持久：在 Windows 用户环境变量中设置 NODE_OPTIONS=--use-system-ca（需 Node 23+），然后重启终端。',
+        '  2. 当前终端临时：PowerShell 执行 $env:NODE_OPTIONS=\'--use-system-ca\' 后再运行本命令。',
+        '  3. 仅本地临时调试：$env:NODE_TLS_REJECT_UNAUTHORIZED=\'0\'（勿用于生产）。',
+        ''
+    ].join('\n'));
 }
 
 main().catch(error => {

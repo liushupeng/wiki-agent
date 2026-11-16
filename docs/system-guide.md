@@ -23,7 +23,7 @@
 User / CLI / Eval Runner
         |
         v
-WikiAgent Loop <----> OpenAI-compatible LLM
+Harness Agent Loop（native `NativeAgent` / Pi `PiAgent`）<----> OpenAI-compatible LLM
         |
         +---- Memory
         |
@@ -59,7 +59,7 @@ Wiki 维护目前主要由 Markdown skill 协议和人工审批驱动。
 入口位于：
 
 - `src/main.ts`：装配配置、Memory、工具和 Agent；
-- `src/agent.ts`：实现 `WikiAgent` 循环。
+- `src/harness/native/agent.ts`：实现 `NativeAgent` 内置循环；`src/harness/pi/agent.ts` 为 `PiAgent` 接入层（loop 在 Pi `AgentSession`）。
 
 一次运行的主要过程是：
 
@@ -279,7 +279,7 @@ Trace 可写入本地 JSONL，也可导出到 OTLP 后端。
 
 ```text
 user
- -> WikiAgent.run
+ -> `IAgent.run`（`NativeAgent` / `PiAgent`）
  -> model requests search_notes
  -> ToolExecutor
  -> RetrievalRuntime
@@ -370,7 +370,7 @@ TaskContract 适合验证工具、预算、证据和终止行为；人工 rubric
 
 1. `README.md`
 2. `src/main.ts`
-3. `src/agent.ts`
+3. `src/harness/index.ts`（`createHarnessAgent`）、`src/harness/native/agent.ts`、`src/harness/pi/`
 4. `src/tools/registry.ts`、`exposure.ts`、`executor.ts`
 5. `src/context/`
 6. `src/rag/`

@@ -23,7 +23,7 @@
 
 ```mermaid
 flowchart TD
-    userInput["User Input"] --> agentLoop["WikiAgent Loop"]
+    userInput["User Input"] --> agentLoop["Harness Agent Loop"]
     agentLoop --> memory["Memory<br>Short/Mid/Long"]
     agentLoop --> registry["Tool Registry"]
     registry --> toolSchemas["Active Tool Schemas"]
@@ -53,7 +53,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    client["CLI / User"] --> app["WikiAgent"]
+    client["CLI / User"] --> app["IAgent (native|pi)"]
     app --> llm["OpenAI-compatible LLM"]
     app --> tools["Tool System + MCP"]
     app --> rag["Hybrid RAG"]
@@ -79,7 +79,7 @@ flowchart LR
 
 ## 核心设计取舍
 
-- **Agent loop 保持清晰**：`src/agent.ts` 只负责 LLM 驱动的规划-执行循环、模型调用、工具调度和 trace；工具执行、权限判断、协议适配都拆到独立模块。
+- **Harness 可插拔**：`NativeAgent`（`src/harness/native/agent.ts`）与 `PiAgent`（`src/harness/pi/agent.ts`）实现 `IAgent`；Pi 侧 `traceAdapter.ts` 产出与 native 一致的 JSONL v2，`eval:agent` 可通过 `HARNESS=pi` 评测。二者只负责 LLM 规划-执行循环、工具调度与 trace；工具执行、权限判断、协议适配仍拆在独立模块。`createHarnessAgent()` 统一工厂（见 `src/harness/index.ts`）。
 - **Memory 与 Wiki 分层**：短期 memory 负责最近对话，中期 memory 负责压缩后的摘要；用户明确保存的长期 memory 与会话历史存于 `var/memory/`。`wiki/`、skills、evaluation 是独立的长期知识与质量资产，不属于 `MemoryManager`。
 - **工具是广义能力入口**：RAG、grep、skill、MCP、本地文件、Git、Shell、测试命令都通过统一 `IAgentTool` 接口进入 Agent。
 - **检索采用 hybrid + grep 双通道**：语义问题由 `search_notes` 使用 BM25、BGE-M3、RRF 与 Reranker，明确术语、配置名、错误文本优先 `grep_notes`。
@@ -218,8 +218,8 @@ wiki-agent/
 
 ```text
 src/
-├── main.ts              # CLI 入口，初始化 memory、registry、agent
-├── agent.ts             # Agent loop：模型调用、工具调度、span 生命周期
+├── main.ts              # CLI 入口，初始化 memory、registry、harness agent
+├── harness/             # 可插拔运行时：native loop、Pi 接入与 trace 适配
 ├── context/             # 模型上下文：对话记忆、工具结果预算
 ├── trace/               # Telemetry、JSONL v2、artifact 与 OTLP backend
 ├── permissions.ts       # 工具权限决策
@@ -245,7 +245,7 @@ src/
 ```text
 用户输入
 -> MemoryManager 追加 user message
--> WikiAgent 调用 LLM
+-> Harness Agent 调用 LLM
 -> LLM 返回文本或 tool_calls
 -> handleToolCalls 调度工具
 -> ToolExecutor 执行权限检查、审批、参数校验和工具调用
@@ -520,7 +520,7 @@ load_skill({ "name": "..." })
 
 Agent 系统很难只靠最终答案调试，所以项目把 trace、成本估算、RAG eval、bad case 模板作为一等能力。
 
-每次 `WikiAgent.run()` 都会写 trace。当前默认 sink 是 `JsonlTraceSink`，写入本地 JSONL 文件。
+每次 `IAgent.run()`（`NativeAgent` / `PiAgent`）都会写 trace。当前默认 sink 是 `JsonlTraceSink`，写入本地 JSONL 文件。
 
 ```env
 TRACE_DIR=var/traces
